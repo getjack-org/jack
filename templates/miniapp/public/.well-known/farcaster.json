@@ -1,0 +1,15 @@
+{
+	"accountAssociation": {
+		"header": "",
+		"payload": "",
+		"signature": ""
+	},
+	"frame": {
+		"version": "next",
+		"name": "jack-template",
+		"iconUrl": "https://placehold.co/200x200/7c3aed/white?text=jack-template",
+		"splashImageUrl": "https://placehold.co/200x200/7c3aed/white?text=jack-template",
+		"splashBackgroundColor": "#0a0a0a",
+		"homeUrl": "https://jack-template.workers.dev"
+	}
+}

@@ -1,0 +1,24 @@
+{
+	"name": "api",
+	"description": "Hono API with routing",
+	"secrets": [],
+	"hooks": {
+		"postDeploy": [
+			{
+				"action": "copy",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "run",
+				"command": "curl -s {{url}}/health | head -c 200",
+				"message": "Testing API..."
+			},
+			{
+				"action": "box",
+				"title": "Deployed: {{name}}",
+				"lines": ["URL: {{url}}", "", "API is live!"]
+			}
+		]
+	}
+}
