@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
-import { type AgentConfig, readConfig, writeConfig } from "./config.ts";
+import { delimiter, extname, join } from "node:path";
+import { type AgentConfig, type AgentLaunchConfig, readConfig, writeConfig } from "./config.ts";
 
 // Re-export AgentConfig for consumers
 export type { AgentConfig } from "./config.ts";
@@ -23,13 +25,19 @@ export interface AgentDefinition {
 	searchPaths: string[];
 	projectFiles: ProjectFile[];
 	priority: number; // Lower = higher priority for default selection (claude-code=1, codex=2, etc.)
+	launch?: AgentLaunchDefinition;
+}
+
+export interface AgentLaunchDefinition {
+	cliCommands?: Array<{ command: string; args?: string[] }>;
+	appNames?: string[];
 }
 
 /**
  * Result of scanning for agents
  */
 export interface DetectionResult {
-	detected: Array<{ id: string; path: string }>;
+	detected: Array<{ id: string; path: string; launch?: AgentLaunchConfig }>;
 	total: number;
 }
 
@@ -51,6 +59,9 @@ export const AGENT_REGISTRY: AgentDefinition[] = [
 		id: "claude-code",
 		name: "Claude Code",
 		priority: 1,
+		launch: {
+			cliCommands: [{ command: "claude" }],
+		},
 		searchPaths: [
 			"~/.claude",
 			"~/.config/claude",
@@ -65,6 +76,9 @@ export const AGENT_REGISTRY: AgentDefinition[] = [
 		id: "codex",
 		name: "Codex",
 		priority: 2,
+		launch: {
+			cliCommands: [{ command: "codex" }],
+		},
 		searchPaths: [
 			"~/.codex",
 			"%APPDATA%/codex", // Windows
@@ -75,6 +89,10 @@ export const AGENT_REGISTRY: AgentDefinition[] = [
 		id: "cursor",
 		name: "Cursor",
 		priority: 10,
+		launch: {
+			cliCommands: [{ command: "cursor" }],
+			appNames: ["Cursor"],
+		},
 		searchPaths: [
 			"/Applications/Cursor.app",
 			"~/.cursor",
@@ -90,6 +108,10 @@ export const AGENT_REGISTRY: AgentDefinition[] = [
 		id: "windsurf",
 		name: "Windsurf",
 		priority: 10,
+		launch: {
+			cliCommands: [{ command: "windsurf" }],
+			appNames: ["Windsurf"],
+		},
 		searchPaths: [
 			"/Applications/Windsurf.app",
 			"~/.windsurf",
@@ -127,6 +149,106 @@ export function pathExists(path: string): boolean {
 	}
 }
 
+function findExecutable(command: string): string | null {
+	const expanded = expandPath(command);
+	if (expanded.includes("/") || expanded.includes("\\")) {
+		return existsSync(expanded) ? expanded : null;
+	}
+
+	const pathEnv = process.env.PATH ?? "";
+	const paths = pathEnv.split(delimiter).filter(Boolean);
+
+	if (process.platform === "win32") {
+		const extension = extname(command);
+		const extensions =
+			extension.length > 0
+				? [""]
+				: (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
+
+		for (const basePath of paths) {
+			for (const ext of extensions) {
+				const candidate = join(basePath, `${command}${ext}`);
+				if (existsSync(candidate)) {
+					return candidate;
+				}
+			}
+		}
+		return null;
+	}
+
+	for (const basePath of paths) {
+		const candidate = join(basePath, command);
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	return null;
+}
+
+function resolveCliLaunch(definition: AgentDefinition): AgentLaunchConfig | null {
+	const candidates = definition.launch?.cliCommands ?? [];
+	for (const candidate of candidates) {
+		const resolved = findExecutable(candidate.command);
+		if (resolved) {
+			return { type: "cli", command: resolved, args: candidate.args };
+		}
+	}
+	return null;
+}
+
+function resolveAppLaunch(definition: AgentDefinition): AgentLaunchConfig | null {
+	if (process.platform !== "darwin") return null;
+
+	const appPath = definition.searchPaths
+		.map((path) => expandPath(path))
+		.find((path) => path.endsWith(".app") && pathExists(path));
+
+	if (appPath) {
+		return {
+			type: "app",
+			appPath,
+			appName: definition.launch?.appNames?.[0],
+		};
+	}
+
+	const appName = definition.launch?.appNames?.[0];
+	if (appName) {
+		return { type: "app", appName };
+	}
+
+	return null;
+}
+
+function resolveAgentLaunch(definition: AgentDefinition): AgentLaunchConfig | null {
+	return resolveCliLaunch(definition) ?? resolveAppLaunch(definition);
+}
+
+function normalizeLaunchConfig(launch: AgentLaunchConfig): AgentLaunchConfig | null {
+	if (launch.type === "cli") {
+		const resolved = findExecutable(launch.command);
+		if (!resolved) return null;
+		return { type: "cli", command: resolved, args: launch.args };
+	}
+
+	const appPath = launch.appPath ? expandPath(launch.appPath) : undefined;
+	if (appPath && pathExists(appPath)) {
+		return { ...launch, appPath };
+	}
+
+	if (process.platform === "darwin" && launch.appName) {
+		return { type: "app", appName: launch.appName };
+	}
+
+	return null;
+}
+
+function getLaunchPath(launch: AgentLaunchConfig): string | null {
+	if (launch.type === "cli") return launch.command;
+	if (launch.type === "app") return launch.appPath ?? null;
+	return null;
+}
+
 /**
  * Get agent definition by ID
  */
@@ -135,17 +257,16 @@ export function getAgentDefinition(id: string): AgentDefinition | undefined {
 }
 
 /**
- * Scan for installed agents by checking known paths
+ * Scan for installed agents by checking launch commands and app bundles
  */
 export async function scanAgents(): Promise<DetectionResult> {
-	const detected: Array<{ id: string; path: string }> = [];
+	const detected: Array<{ id: string; path: string; launch?: AgentLaunchConfig }> = [];
 
 	for (const agent of AGENT_REGISTRY) {
-		for (const searchPath of agent.searchPaths) {
-			if (pathExists(searchPath)) {
-				detected.push({ id: agent.id, path: expandPath(searchPath) });
-				break; // Use first found path
-			}
+		const launch = resolveAgentLaunch(agent);
+		const installPath = launch ? getLaunchPath(launch) : null;
+		if (launch && installPath && pathExists(installPath)) {
+			detected.push({ id: agent.id, path: installPath, launch });
 		}
 	}
 
@@ -194,25 +315,25 @@ export async function updateAgent(id: string, config: AgentConfig): Promise<void
 /**
  * Add agent to config (auto-detect or use custom path)
  */
-export async function addAgent(id: string, path?: string): Promise<void> {
+export async function addAgent(
+	id: string,
+	options: { path?: string; launch?: AgentLaunchConfig } = {},
+): Promise<void> {
 	const definition = getAgentDefinition(id);
 	if (!definition) {
 		throw new Error(`Unknown agent: ${id}`);
 	}
 
-	// If no custom path, try to detect
-	let detectedPath = path;
-	if (!detectedPath) {
-		for (const searchPath of definition.searchPaths) {
-			if (pathExists(searchPath)) {
-				detectedPath = expandPath(searchPath);
-				break;
-			}
-		}
+	const launchOverride = options.launch ? normalizeLaunchConfig(options.launch) : null;
+	const detectedLaunch = launchOverride ?? resolveAgentLaunch(definition);
+	const detectedPath = options.path ?? (detectedLaunch ? getLaunchPath(detectedLaunch) : null);
+
+	if (!detectedLaunch) {
+		throw new Error(`Could not detect ${definition.name}`);
 	}
 
 	if (!detectedPath) {
-		throw new Error(`Could not detect ${definition.name}`);
+		throw new Error(`Could not determine install path for ${definition.name}`);
 	}
 
 	if (!pathExists(detectedPath)) {
@@ -221,8 +342,9 @@ export async function addAgent(id: string, path?: string): Promise<void> {
 
 	await updateAgent(id, {
 		active: true,
-		path: detectedPath,
+		path: expandPath(detectedPath),
 		detectedAt: new Date().toISOString(),
+		launch: detectedLaunch,
 	});
 }
 
@@ -298,6 +420,157 @@ export async function validateAgentPaths(): Promise<ValidationResult> {
 	return { valid, invalid };
 }
 
+function launchConfigsEqual(
+	left?: AgentLaunchConfig | null,
+	right?: AgentLaunchConfig | null,
+): boolean {
+	if (!left || !right) return left === right;
+	return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export async function getAgentLaunch(id: string): Promise<AgentLaunchConfig | null> {
+	const definition = getAgentDefinition(id);
+	if (!definition) return null;
+
+	const config = await readConfig();
+	const agentConfig = config?.agents?.[id];
+
+	const normalized = agentConfig?.launch ? normalizeLaunchConfig(agentConfig.launch) : null;
+	if (normalized) {
+		if (agentConfig && config && !launchConfigsEqual(normalized, agentConfig.launch)) {
+			agentConfig.launch = normalized;
+			await writeConfig(config);
+		}
+		return normalized;
+	}
+
+	const resolved = resolveAgentLaunch(definition);
+	if (resolved && agentConfig && config) {
+		if (!launchConfigsEqual(resolved, agentConfig.launch)) {
+			agentConfig.launch = resolved;
+			await writeConfig(config);
+		}
+	}
+	return resolved ?? null;
+}
+
+export async function getPreferredLaunchAgent(): Promise<
+	| {
+			id: string;
+			definition: AgentDefinition;
+			launch: AgentLaunchConfig;
+	  }
+	| null
+> {
+	const config = await readConfig();
+	if (!config?.agents) return null;
+
+	const activeAgents: Array<{ id: string; config: AgentConfig; definition: AgentDefinition }> = [];
+	for (const [id, agentConfig] of Object.entries(config.agents)) {
+		if (!agentConfig.active) continue;
+		const definition = getAgentDefinition(id);
+		if (definition) {
+			activeAgents.push({ id, config: agentConfig, definition });
+		}
+	}
+
+	if (activeAgents.length === 0) return null;
+
+	if (config.preferredAgent) {
+		const preferred = activeAgents.find((agent) => agent.id === config.preferredAgent);
+		if (preferred) {
+			const launch = await getAgentLaunch(preferred.id);
+			if (launch) {
+				return { id: preferred.id, definition: preferred.definition, launch };
+			}
+		}
+	}
+
+	activeAgents.sort((a, b) => a.definition.priority - b.definition.priority);
+	for (const agent of activeAgents) {
+		const launch = await getAgentLaunch(agent.id);
+		if (launch) {
+			return { id: agent.id, definition: agent.definition, launch };
+		}
+	}
+
+	return null;
+}
+
+function buildLaunchCommand(
+	launch: AgentLaunchConfig,
+	projectDir: string,
+):
+	| {
+			command: string;
+			args: string[];
+			options: { cwd?: string; stdio: "inherit" | "ignore"; detached?: boolean };
+	  }
+	| null {
+	if (launch.type === "cli") {
+		return {
+			command: launch.command,
+			args: launch.args ?? [],
+			options: { cwd: projectDir, stdio: "inherit" },
+		};
+	}
+
+	const isWindows = process.platform === "win32";
+	const isMac = process.platform === "darwin";
+
+	if (isMac) {
+		const appTarget = launch.appName ?? launch.appPath;
+		if (!appTarget) return null;
+		return {
+			command: "open",
+			args: ["-a", appTarget, projectDir],
+			options: { stdio: "ignore", detached: true },
+		};
+	}
+
+	if (isWindows) {
+		if (!launch.appPath) return null;
+		return {
+			command: "cmd",
+			args: ["/c", "start", "", launch.appPath, projectDir],
+			options: { stdio: "ignore", detached: true },
+		};
+	}
+
+	if (!launch.appPath) return null;
+	return {
+		command: launch.appPath,
+		args: [projectDir],
+		options: { stdio: "ignore", detached: true },
+	};
+}
+
+export async function launchAgent(
+	launch: AgentLaunchConfig,
+	projectDir: string,
+): Promise<{ success: boolean; error?: string; command?: string[] }> {
+	const launchCommand = buildLaunchCommand(launch, projectDir);
+	if (!launchCommand) {
+		return { success: false, error: "No supported launch command found" };
+	}
+
+	const { command, args, options } = launchCommand;
+	const displayCommand = [command, ...args];
+
+	return await new Promise((resolve) => {
+		const child = spawn(command, args, options);
+
+		child.once("error", (err) => {
+			resolve({ success: false, error: err.message, command: displayCommand });
+		});
+
+		child.once("spawn", () => {
+			child.unref();
+			resolve({ success: true, command: displayCommand });
+		});
+	});
+}
+
 /**
  * Get the user's preferred agent ID
  * Falls back to highest priority detected agent if not set
@@ -355,7 +628,7 @@ export async function setPreferredAgent(id: string): Promise<void> {
  * Used during jack init to set initial preference
  */
 export function getDefaultPreferredAgent(
-	detected: Array<{ id: string; path: string }>,
+	detected: Array<{ id: string; path: string; launch?: AgentLaunchConfig }>,
 ): string | null {
 	if (detected.length === 0) return null;
 

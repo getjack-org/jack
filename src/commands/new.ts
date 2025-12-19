@@ -1,7 +1,12 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { generateAgentFiles } from "../lib/agent-files.ts";
-import { getActiveAgents, validateAgentPaths } from "../lib/agents.ts";
+import {
+	getActiveAgents,
+	getPreferredLaunchAgent,
+	launchAgent,
+	validateAgentPaths,
+} from "../lib/agents.ts";
 import { debug, printTimingSummary, time } from "../lib/debug.ts";
 import { generateEnvFile, generateSecretsJson } from "../lib/env-parser.ts";
 import { promptSelect, runHook } from "../lib/hooks.ts";
@@ -351,27 +356,33 @@ export default async function newProject(
 	// Print timing summary if debug mode
 	printTimingSummary(timings);
 
-	// Prompt to open Claude Code (only in interactive TTY)
+	// Prompt to open preferred agent (only in interactive TTY)
 	if (process.stdout.isTTY) {
-		console.error("");
-		console.error("  Open project in Claude Code?");
-		console.error("");
-		const choice = await promptSelect(["Yes", "No"]);
+		const preferred = await getPreferredLaunchAgent();
+		if (preferred) {
+			console.error("");
+			console.error(`  Open project in ${preferred.definition.name}?`);
+			console.error("");
+			const choice = await promptSelect(["Yes", "No"]);
 
-		if (choice === 0) {
-			// Hand off to Claude Code - jack's job is done
-			const { spawn } = await import("node:child_process");
+			if (choice === 0) {
+				// Ensure terminal is in normal state before handoff
+				if (process.stdin.isTTY) {
+					process.stdin.setRawMode(false);
+				}
 
-			// Ensure terminal is in normal state before handoff
-			if (process.stdin.isTTY) {
-				process.stdin.setRawMode(false);
+				const launchResult = await launchAgent(preferred.launch, targetDir);
+				if (!launchResult.success) {
+					output.warn(`Failed to launch ${preferred.definition.name}`);
+					if (launchResult.command?.length) {
+						output.info(`Run manually: ${launchResult.command.join(" ")}`);
+					}
+				}
 			}
-
-			spawn("claude", [], {
-				cwd: targetDir,
-				stdio: "inherit",
-				detached: true,
-			}).unref();
+		} else {
+			console.error("");
+			output.info("No launchable AI agent detected");
+			output.info("Run: jack agents scan");
 		}
 	}
 }
