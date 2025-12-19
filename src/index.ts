@@ -24,6 +24,7 @@ const cli = meow(
     open [name]         Open project in browser
     projects            Manage project registry
     services            Manage project services
+    mcp serve           Start MCP server for AI agents
     telemetry           Manage anonymous usage data
     about               The story behind jack
 
@@ -44,6 +45,7 @@ const cli = meow(
     --local         Filter by local projects
     --deployed      Filter by deployed projects
     --cloud         Filter by cloud-backed projects
+    --skip-mcp      Skip MCP config installation during init
 
   Examples
     $ jack init           Set up once
@@ -105,6 +107,10 @@ const cli = meow(
 				type: "string",
 				shortFlag: "p",
 			},
+			skipMcp: {
+				type: "boolean",
+				default: false,
+			},
 		},
 	},
 );
@@ -128,7 +134,7 @@ identify({
 switch (command) {
 	case "init": {
 		const { default: init } = await import("./commands/init.ts");
-		await withTelemetry("init", init)();
+		await withTelemetry("init", init)({ skipMcp: cli.flags.skipMcp });
 		break;
 	}
 	case "new":
@@ -217,6 +223,12 @@ switch (command) {
 		await withTelemetry("services", services)(args[0], args.slice(1), {
 			project: cli.flags.project,
 		});
+		break;
+	}
+	case "mcp": {
+		const { default: mcp } = await import("./commands/mcp.ts");
+		// Note: Don't use withTelemetry wrapper for MCP serve - it runs indefinitely
+		await mcp(args[0], { project: cli.flags.project });
 		break;
 	}
 	case "ls": {

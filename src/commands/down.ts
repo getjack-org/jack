@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { select } from "@inquirer/prompts";
 import {
@@ -7,8 +8,57 @@ import {
 	exportDatabase,
 } from "../lib/cloudflare-api.ts";
 import { error, info, item, output, success, warn } from "../lib/output.ts";
-import { getProject, updateProject } from "../lib/registry.ts";
+import {
+	type Project,
+	getProject,
+	getProjectDatabaseName,
+	updateProject,
+	updateProjectDatabase,
+} from "../lib/registry.ts";
 import { deleteCloudProject, getProjectNameFromDir } from "../lib/storage/index.ts";
+
+/**
+ * Get database name for a project, with fallback to wrangler config
+ */
+async function resolveDbName(project: Project): Promise<string | null> {
+	// First check registry
+	const dbFromRegistry = getProjectDatabaseName(project);
+	if (dbFromRegistry) {
+		return dbFromRegistry;
+	}
+
+	// Fallback: read from wrangler config file
+	if (project.localPath && existsSync(project.localPath)) {
+		const jsoncPath = join(project.localPath, "wrangler.jsonc");
+		if (existsSync(jsoncPath)) {
+			try {
+				const content = await Bun.file(jsoncPath).text();
+				const jsonContent = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+				const config = JSON.parse(jsonContent);
+				if (config.d1_databases?.[0]?.database_name) {
+					return config.d1_databases[0].database_name;
+				}
+			} catch {
+				// Ignore parse errors
+			}
+		}
+
+		const tomlPath = join(project.localPath, "wrangler.toml");
+		if (existsSync(tomlPath)) {
+			try {
+				const content = await Bun.file(tomlPath).text();
+				const match = content.match(/database_name\s*=\s*"([^"]+)"/);
+				if (match?.[1]) {
+					return match[1];
+				}
+			} catch {
+				// Ignore read errors
+			}
+		}
+	}
+
+	return null;
+}
 
 export interface DownFlags {
 	force?: boolean;
@@ -78,11 +128,9 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		if (project?.workerUrl) {
 			item(`URL: ${project.workerUrl}`);
 		}
-		if (project?.resources.d1Databases && project.resources.d1Databases.length > 0) {
-			item(`Databases: ${project.resources.d1Databases.length}`);
-			for (const db of project.resources.d1Databases) {
-				item(`  - ${db}`);
-			}
+		const dbName = project ? await resolveDbName(project) : null;
+		if (dbName) {
+			item(`Database: ${dbName}`);
 		}
 		console.error("");
 
@@ -101,11 +149,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			return;
 		}
 
-		// Handle D1 databases if they exist
-		const databases = project?.resources.d1Databases || [];
-		const databasesToDelete: string[] = [];
+		// Handle database if it exists
+		let shouldDeleteDb = false;
 
-		for (const dbName of databases) {
+		if (dbName) {
 			console.error("");
 			info(`Found database: ${dbName}`);
 
@@ -118,9 +165,8 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 					{ name: "2. No", value: "no" },
 				],
 			});
-			const shouldExport = exportAction === "yes";
 
-			if (shouldExport) {
+			if (exportAction === "yes") {
 				const exportPath = join(process.cwd(), `${dbName}-backup.sql`);
 				output.start(`Exporting database to ${exportPath}...`);
 				try {
@@ -155,9 +201,7 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 				],
 			});
 
-			if (deleteAction === "yes") {
-				databasesToDelete.push(dbName);
-			}
+			shouldDeleteDb = deleteAction === "yes";
 		}
 
 		// Handle R2 backup deletion
@@ -192,13 +236,16 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			process.exit(1);
 		}
 
-		// Delete databases
-		for (const dbName of databasesToDelete) {
+		// Delete database if requested
+		if (shouldDeleteDb && dbName) {
 			output.start(`Deleting database '${dbName}'...`);
 			try {
 				await deleteDatabase(dbName);
 				output.stop();
 				success(`Database '${dbName}' deleted`);
+
+				// Update registry
+				await updateProjectDatabase(name, null);
 			} catch (err) {
 				output.stop();
 				warn(
@@ -226,23 +273,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 
 		// Update registry - keep entry but clear worker URL
 		if (project) {
-			const updates: {
-				workerUrl: null;
-				lastDeployed: null;
-				resources?: { d1Databases: string[] };
-			} = {
+			await updateProject(name, {
 				workerUrl: null,
 				lastDeployed: null,
-			};
-
-			// Remove deleted databases from registry
-			if (databasesToDelete.length > 0) {
-				updates.resources = {
-					d1Databases: databases.filter((db) => !databasesToDelete.includes(db)),
-				};
-			}
-
-			await updateProject(name, updates);
+			});
 		}
 
 		console.error("");

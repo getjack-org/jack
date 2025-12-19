@@ -15,10 +15,7 @@ export interface Project {
 		workerId: string;
 	};
 	resources: {
-		// Legacy field - kept for backwards compatibility
-		d1Databases?: string[];
-		// New normalized services structure
-		services?: {
+		services: {
 			db: string | null;
 		};
 	};
@@ -119,16 +116,11 @@ export async function getAllProjects(): Promise<Record<string, Project>> {
 }
 
 /**
- * Get database name for a project, handling backwards compatibility
+ * Get database name for a project
  * @returns Database name or null if no database is configured
  */
 export function getProjectDatabaseName(project: Project): string | null {
-	// Prefer new structure
-	if (project.resources.services?.db !== undefined) {
-		return project.resources.services.db;
-	}
-	// Fall back to old d1Databases array (first item)
-	return project.resources.d1Databases?.[0] ?? null;
+	return project.resources?.services?.db ?? null;
 }
 
 /**
