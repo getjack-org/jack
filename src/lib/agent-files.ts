@@ -51,43 +51,6 @@ Never run \`wrangler\` commands directly. All deployment is handled by jack.
 }
 
 /**
- * Template for .cursorrules
- */
-function generateCursorrules(): string {
-	return `# Cursor Rules
-
-See AGENTS.md for project context and deployment instructions.
-
-## Deployment Commands
-
-- Deploy: \`jack ship\`
-- Logs: \`jack logs\`
-- Dev server: \`jack dev\`
-
-Do not suggest \`wrangler\` commands - all deployment is handled by jack.
-`;
-}
-
-/**
- * Template for .windsurfrules
- */
-function generateWindsurfrules(): string {
-	return `# Windsurf Rules
-
-See AGENTS.md for project context and deployment instructions.
-
-## Deployment
-
-This project uses jack for deployment:
-- \`jack ship\` - Deploy to production
-- \`jack logs\` - View logs
-- \`jack dev\` - Local development
-
-Never suggest wrangler commands directly.
-`;
-}
-
-/**
  * Generate content for a specific template type
  */
 function generateFileContent(
@@ -100,10 +63,6 @@ function generateFileContent(
 			return generateAgentsMd(projectName, template);
 		case "claude-md":
 			return generateClaudeMd();
-		case "cursorrules":
-			return generateCursorrules();
-		case "windsurfrules":
-			return generateWindsurfrules();
 		default:
 			throw new Error(`Unknown template type: ${templateType}`);
 	}

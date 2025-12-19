@@ -4,6 +4,7 @@ dist/
 
 # Test projects created during development
 tmp/
+docs/
 
 # IDE and tool configs
 .claude/
