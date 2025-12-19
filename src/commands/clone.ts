@@ -1,0 +1,79 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { select } from "@inquirer/prompts";
+import { formatSize } from "../lib/format.ts";
+import { box, error, info, spinner, success } from "../lib/output.ts";
+import { cloneFromCloud, getRemoteManifest } from "../lib/storage/index.ts";
+
+export interface CloneFlags {
+	as?: string;
+}
+
+export default async function clone(projectName?: string, flags: CloneFlags = {}): Promise<void> {
+	// Validate project name
+	if (!projectName) {
+		error("Project name required");
+		info("Usage: jack clone <project> [--as <directory>]");
+		process.exit(1);
+	}
+
+	// Determine target directory
+	const targetDir = resolve(flags.as ?? projectName);
+
+	// Check if target directory exists
+	if (existsSync(targetDir)) {
+		// If not TTY, error immediately
+		if (!process.stdout.isTTY) {
+			error(`Directory ${flags.as ?? projectName} already exists`);
+			process.exit(1);
+		}
+
+		// Prompt user for action
+		const action = await select({
+			message: `Directory ${flags.as ?? projectName} already exists. What would you like to do?`,
+			choices: [
+				{ value: "overwrite", name: "Overwrite (delete and recreate)" },
+				{ value: "merge", name: "Merge (keep existing files)" },
+				{ value: "cancel", name: "Cancel" },
+			],
+		});
+
+		if (action === "cancel") {
+			info("Clone cancelled");
+			process.exit(0);
+		}
+
+		if (action === "overwrite") {
+			// Delete directory
+			await Bun.$`rm -rf ${targetDir}`.quiet();
+		}
+	}
+
+	// Fetch remote manifest
+	const spin = spinner(`Fetching from jack-storage/${projectName}/...`);
+	const manifest = await getRemoteManifest(projectName);
+
+	if (!manifest) {
+		spin.error(`Project not found: ${projectName}`);
+		process.exit(1);
+	}
+
+	// Show file count and size
+	const totalSize = manifest.files.reduce((sum, f) => sum + f.size, 0);
+	spin.success(`Found ${manifest.files.length} file(s) (${formatSize(totalSize)})`);
+
+	// Download files
+	const downloadSpin = spinner("Downloading...");
+	const result = await cloneFromCloud(projectName, targetDir);
+
+	if (!result.success) {
+		downloadSpin.error("Clone failed");
+		error(result.error || "Unknown error");
+		process.exit(1);
+	}
+
+	downloadSpin.success(`Restored to ./${flags.as ?? projectName}/`);
+
+	// Show next steps
+	box("Next steps:", [`cd ${flags.as ?? projectName}`, "bun install", "jack ship"]);
+}
