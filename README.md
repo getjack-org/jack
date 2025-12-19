@@ -1,14 +1,49 @@
-# jack
+<p align="center">
+  <h1 align="center">jack</h1>
+  <p align="center"><strong>Ship before you forget why you started.</strong></p>
+</p>
 
-CLI for vibecoders to rapidly deploy to Cloudflare Workers.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@getjack/jack"><img src="https://img.shields.io/npm/v/@getjack/jack" alt="npm"></a>
+  <a href="https://github.com/getjack-org/jack/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license"></a>
+</p>
 
-## Install
+---
+
+You're vibecoding. Ideas are flowing. You want to ship.
+
+But first: config files, deployment setup, secret management, debugging infrastructure errors...
+
+**30 minutes later, the spark is gone.**
+
+jack removes the friction between your idea and a live URL.
 
 ```bash
-# Install Bun (if needed)
-curl -fsSL https://bun.sh/install | bash
+bunx @getjack/jack new my-app   # → deployed. live. done.
+```
 
-# Run directly
+That's it. Write code. Ship again with `jack ship`. Stay in flow.
+
+---
+
+## ✨ Why jack
+
+**⚡ Instant deployment** — `jack new` creates AND deploys. You have a live URL before your first commit.
+
+**🤖 Works with your agent** — Claude Code, Cursor, Codex, whatever. Every project includes AI context files so your agent understands the stack from prompt one.
+
+**🔑 Roaming secrets** — Configure once, use across all projects. No more per-project secret ceremony.
+
+**📋 Project tracking** — 100 experiments scattered everywhere? `jack list` finds them all.
+
+**🚪 No lock-in** — Standard config files, standard TypeScript. Your projects work without jack installed.
+
+---
+
+## 🚀 Quick Start
+
+```bash
+# One command to create and deploy
 bunx @getjack/jack new my-app
 
 # Or install globally
@@ -16,40 +51,44 @@ bun add -g @getjack/jack
 jack new my-app
 ```
 
-## Usage
+You'll need [Bun](https://bun.sh) and a Cloudflare account (free tier works).
 
-```bash
-# Create a new project
-jack new my-app
+---
 
-# Deploy to Cloudflare Workers
-jack ship
+## 📦 Commands
 
-# List your projects
-jack list
-```
+| Command | What it does |
+|---------|--------------|
+| `jack new <name>` | Create and deploy a new project |
+| `jack ship` | Deploy current project |
+| `jack list` | Show all your projects |
+| `jack open` | Open project in browser |
+| `jack status` | Check deployment status |
 
-## Requirements
+---
 
-- [Bun](https://bun.sh) >= 1.0.0
-- Cloudflare account (for deployments)
+## 🎯 Who This Is For
 
-## Releasing
+Vibecoders. People who ship 10 experiments a week. Solo devs with more ideas than weekends.
 
-This project uses [Semantic Versioning](https://semver.org/).
+You don't want deployment pipelines and approval flows. You want to build something and share it. jack keeps you there.
 
-```bash
-# Bump version, commit, and tag
-npm version patch   # 0.1.1 → 0.1.2 (bug fixes)
-npm version minor   # 0.1.1 → 0.2.0 (new features)
-npm version major   # 0.1.1 → 1.0.0 (breaking changes)
+---
 
-# Push to trigger publish
-git push && git push --tags
-```
+## 🧠 Philosophy
 
-GitHub Actions automatically publishes to npm when a version tag is pushed.
+In Gibson's *Neuromancer*, "jacking in" means plugging directly into cyberspace. The body becomes irrelevant—you're pure thought in the matrix.
 
-## License
+jack handles the infrastructure so you stay in creative flow. The boring parts disappear. You just build.
+
+Read the full philosophy in [SPIRIT.md](docs/SPIRIT.md).
+
+---
+
+## 📄 License
 
 Apache-2.0
+
+<p align="center">
+  <i>Every deployment friction point is a creative thought lost.</i>
+</p>
