@@ -159,6 +159,10 @@ export async function track(event: EventName, properties?: Record<string, unknow
 // THE MAGIC: withTelemetry() wrapper
 // Commands wrapped with this get automatic tracking
 // ============================================
+export interface TelemetryOptions {
+	platform?: "cli" | "mcp";
+}
+
 /**
  * Wrap a command function with automatic telemetry tracking
  * Tracks command_invoked, command_completed, and command_failed events
@@ -167,22 +171,27 @@ export async function track(event: EventName, properties?: Record<string, unknow
 export function withTelemetry<T extends (...args: any[]) => Promise<any>>(
 	commandName: string,
 	fn: T,
+	options?: TelemetryOptions,
 ): T {
+	const platform = options?.platform ?? "cli";
+
 	return (async (...args: Parameters<T>) => {
 		// Fire-and-forget: don't await track() to avoid blocking command execution
-		track(Events.COMMAND_INVOKED, { command: commandName });
+		track(Events.COMMAND_INVOKED, { command: commandName, platform });
 		const start = Date.now();
 
 		try {
 			const result = await fn(...args);
 			track(Events.COMMAND_COMPLETED, {
 				command: commandName,
+				platform,
 				duration_ms: Date.now() - start,
 			});
 			return result;
 		} catch (error) {
 			track(Events.COMMAND_FAILED, {
 				command: commandName,
+				platform,
 				error_type: classifyError(error),
 				duration_ms: Date.now() - start,
 			});

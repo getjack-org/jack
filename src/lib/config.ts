@@ -11,11 +11,6 @@ export type AgentLaunchConfig =
 			type: "cli";
 			command: string;
 			args?: string[];
-	  }
-	| {
-			type: "app";
-			appName?: string;
-			appPath?: string;
 	  };
 
 export interface AgentConfig {

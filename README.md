@@ -34,6 +34,22 @@ jack list
 - [Bun](https://bun.sh) >= 1.0.0
 - Cloudflare account (for deployments)
 
+## Releasing
+
+This project uses [Semantic Versioning](https://semver.org/).
+
+```bash
+# Bump version, commit, and tag
+npm version patch   # 0.1.1 → 0.1.2 (bug fixes)
+npm version minor   # 0.1.1 → 0.2.0 (new features)
+npm version major   # 0.1.1 → 1.0.0 (breaking changes)
+
+# Push to trigger publish
+git push && git push --tags
+```
+
+GitHub Actions automatically publishes to npm when a version tag is pushed.
+
 ## License
 
 Apache-2.0

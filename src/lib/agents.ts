@@ -22,7 +22,6 @@ export interface ProjectFile {
 export interface AgentDefinition {
 	id: string;
 	name: string;
-	searchPaths: string[];
 	projectFiles: ProjectFile[];
 	priority: number; // Lower = higher priority for default selection (claude-code=1, codex=2, etc.)
 	launch?: AgentLaunchDefinition;
@@ -30,7 +29,6 @@ export interface AgentDefinition {
 
 export interface AgentLaunchDefinition {
 	cliCommands?: Array<{ command: string; args?: string[] }>;
-	appNames?: string[];
 }
 
 /**
@@ -62,11 +60,6 @@ export const AGENT_REGISTRY: AgentDefinition[] = [
 		launch: {
 			cliCommands: [{ command: "claude" }],
 		},
-		searchPaths: [
-			"~/.claude",
-			"~/.config/claude",
-			"%APPDATA%/Claude", // Windows
-		],
 		projectFiles: [
 			{ path: "CLAUDE.md", template: "claude-md" },
 			{ path: "AGENTS.md", template: "agents-md", shared: true },
@@ -79,48 +72,7 @@ export const AGENT_REGISTRY: AgentDefinition[] = [
 		launch: {
 			cliCommands: [{ command: "codex" }],
 		},
-		searchPaths: [
-			"~/.codex",
-			"%APPDATA%/codex", // Windows
-		],
 		projectFiles: [{ path: "AGENTS.md", template: "agents-md", shared: true }],
-	},
-	{
-		id: "cursor",
-		name: "Cursor",
-		priority: 10,
-		launch: {
-			cliCommands: [{ command: "cursor" }],
-			appNames: ["Cursor"],
-		},
-		searchPaths: [
-			"/Applications/Cursor.app",
-			"~/.cursor",
-			"%PROGRAMFILES%/Cursor", // Windows
-			"/usr/share/cursor", // Linux
-		],
-		projectFiles: [
-			{ path: ".cursorrules", template: "cursorrules" },
-			{ path: "AGENTS.md", template: "agents-md", shared: true },
-		],
-	},
-	{
-		id: "windsurf",
-		name: "Windsurf",
-		priority: 10,
-		launch: {
-			cliCommands: [{ command: "windsurf" }],
-			appNames: ["Windsurf"],
-		},
-		searchPaths: [
-			"/Applications/Windsurf.app",
-			"~/.windsurf",
-			"%PROGRAMFILES%/Windsurf", // Windows
-		],
-		projectFiles: [
-			{ path: ".windsurfrules", template: "windsurfrules" },
-			{ path: "AGENTS.md", template: "agents-md", shared: true },
-		],
 	},
 ];
 
@@ -197,31 +149,8 @@ function resolveCliLaunch(definition: AgentDefinition): AgentLaunchConfig | null
 	return null;
 }
 
-function resolveAppLaunch(definition: AgentDefinition): AgentLaunchConfig | null {
-	if (process.platform !== "darwin") return null;
-
-	const appPath = definition.searchPaths
-		.map((path) => expandPath(path))
-		.find((path) => path.endsWith(".app") && pathExists(path));
-
-	if (appPath) {
-		return {
-			type: "app",
-			appPath,
-			appName: definition.launch?.appNames?.[0],
-		};
-	}
-
-	const appName = definition.launch?.appNames?.[0];
-	if (appName) {
-		return { type: "app", appName };
-	}
-
-	return null;
-}
-
 function resolveAgentLaunch(definition: AgentDefinition): AgentLaunchConfig | null {
-	return resolveCliLaunch(definition) ?? resolveAppLaunch(definition);
+	return resolveCliLaunch(definition);
 }
 
 function normalizeLaunchConfig(launch: AgentLaunchConfig): AgentLaunchConfig | null {
@@ -230,22 +159,11 @@ function normalizeLaunchConfig(launch: AgentLaunchConfig): AgentLaunchConfig | n
 		if (!resolved) return null;
 		return { type: "cli", command: resolved, args: launch.args };
 	}
-
-	const appPath = launch.appPath ? expandPath(launch.appPath) : undefined;
-	if (appPath && pathExists(appPath)) {
-		return { ...launch, appPath };
-	}
-
-	if (process.platform === "darwin" && launch.appName) {
-		return { type: "app", appName: launch.appName };
-	}
-
 	return null;
 }
 
 function getLaunchPath(launch: AgentLaunchConfig): string | null {
 	if (launch.type === "cli") return launch.command;
-	if (launch.type === "app") return launch.appPath ?? null;
 	return null;
 }
 
@@ -257,7 +175,7 @@ export function getAgentDefinition(id: string): AgentDefinition | undefined {
 }
 
 /**
- * Scan for installed agents by checking launch commands and app bundles
+ * Scan for installed agents by checking launch commands
  */
 export async function scanAgents(): Promise<DetectionResult> {
 	const detected: Array<{ id: string; path: string; launch?: AgentLaunchConfig }> = [];
@@ -317,7 +235,7 @@ export async function updateAgent(id: string, config: AgentConfig): Promise<void
  */
 export async function addAgent(
 	id: string,
-	options: { path?: string; launch?: AgentLaunchConfig } = {},
+	options: { launch?: AgentLaunchConfig } = {},
 ): Promise<void> {
 	const definition = getAgentDefinition(id);
 	if (!definition) {
@@ -326,7 +244,7 @@ export async function addAgent(
 
 	const launchOverride = options.launch ? normalizeLaunchConfig(options.launch) : null;
 	const detectedLaunch = launchOverride ?? resolveAgentLaunch(definition);
-	const detectedPath = options.path ?? (detectedLaunch ? getLaunchPath(detectedLaunch) : null);
+	const detectedPath = detectedLaunch ? getLaunchPath(detectedLaunch) : null;
 
 	if (!detectedLaunch) {
 		throw new Error(`Could not detect ${definition.name}`);
@@ -409,10 +327,12 @@ export async function validateAgentPaths(): Promise<ValidationResult> {
 
 	for (const [id, agentConfig] of Object.entries(agents)) {
 		if (agentConfig.active) {
-			if (pathExists(agentConfig.path)) {
-				valid.push({ id, path: agentConfig.path });
+			const launch = agentConfig.launch ? normalizeLaunchConfig(agentConfig.launch) : null;
+			const path = launch ? getLaunchPath(launch) : agentConfig.path;
+			if (launch && path && pathExists(path)) {
+				valid.push({ id, path });
 			} else {
-				invalid.push({ id, path: agentConfig.path });
+				invalid.push({ id, path: path ?? agentConfig.path });
 			}
 		}
 	}
@@ -505,56 +425,29 @@ function buildLaunchCommand(
 			command: string;
 			args: string[];
 			options: { cwd?: string; stdio: "inherit" | "ignore"; detached?: boolean };
+			waitForExit: boolean;
 	  }
 	| null {
-	if (launch.type === "cli") {
-		return {
-			command: launch.command,
-			args: launch.args ?? [],
-			options: { cwd: projectDir, stdio: "inherit" },
-		};
-	}
+	if (launch.type !== "cli") return null;
 
-	const isWindows = process.platform === "win32";
-	const isMac = process.platform === "darwin";
-
-	if (isMac) {
-		const appTarget = launch.appName ?? launch.appPath;
-		if (!appTarget) return null;
-		return {
-			command: "open",
-			args: ["-a", appTarget, projectDir],
-			options: { stdio: "ignore", detached: true },
-		};
-	}
-
-	if (isWindows) {
-		if (!launch.appPath) return null;
-		return {
-			command: "cmd",
-			args: ["/c", "start", "", launch.appPath, projectDir],
-			options: { stdio: "ignore", detached: true },
-		};
-	}
-
-	if (!launch.appPath) return null;
 	return {
-		command: launch.appPath,
-		args: [projectDir],
-		options: { stdio: "ignore", detached: true },
+		command: launch.command,
+		args: launch.args ?? [],
+		options: { cwd: projectDir, stdio: "inherit" },
+		waitForExit: true,
 	};
 }
 
 export async function launchAgent(
 	launch: AgentLaunchConfig,
 	projectDir: string,
-): Promise<{ success: boolean; error?: string; command?: string[] }> {
+): Promise<{ success: boolean; error?: string; command?: string[]; exitCode?: number | null }> {
 	const launchCommand = buildLaunchCommand(launch, projectDir);
 	if (!launchCommand) {
 		return { success: false, error: "No supported launch command found" };
 	}
 
-	const { command, args, options } = launchCommand;
+	const { command, args, options, waitForExit } = launchCommand;
 	const displayCommand = [command, ...args];
 
 	return await new Promise((resolve) => {
@@ -565,9 +458,17 @@ export async function launchAgent(
 		});
 
 		child.once("spawn", () => {
-			child.unref();
-			resolve({ success: true, command: displayCommand });
+			if (!waitForExit) {
+				child.unref();
+				resolve({ success: true, command: displayCommand });
+			}
 		});
+
+		if (waitForExit) {
+			child.once("exit", (code) => {
+				resolve({ success: true, command: displayCommand, exitCode: code });
+			});
+		}
 	});
 }
 

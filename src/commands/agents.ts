@@ -121,14 +121,6 @@ async function scanAndPrompt(): Promise<void> {
 	info("Future projects will include context files for these agents");
 }
 
-function getFlagValue(args: string[], flag: string): string | undefined {
-	const index = args.indexOf(flag);
-	if (index >= 0 && args[index + 1]) {
-		return args[index + 1];
-	}
-	return undefined;
-}
-
 function getFlagValues(args: string[], flag: string): string[] {
 	const values: string[] = [];
 	for (let i = 0; i < args.length; i++) {
@@ -148,7 +140,7 @@ async function addAgentCommand(args: string[]): Promise<void> {
 
 	if (!agentId) {
 		error("Agent ID required");
-		info("Usage: jack agents add <id> [--path /custom/path] [--command cmd] [--arg value]");
+		info("Usage: jack agents add <id> [--command cmd] [--arg value]");
 		info(`Available IDs: ${AGENT_REGISTRY.map((a) => a.id).join(", ")}`);
 		process.exit(1);
 	}
@@ -161,13 +153,18 @@ async function addAgentCommand(args: string[]): Promise<void> {
 	}
 
 	// Parse flags
-	const customPath = getFlagValue(rest, "--path");
-	const customCommand = getFlagValue(rest, "--command");
+	let customCommand: string | undefined;
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "--command" && rest[i + 1]) {
+			customCommand = rest[i + 1];
+			break;
+		}
+	}
 	const customArgs = getFlagValues(rest, "--arg");
 
 	if (customArgs.length > 0 && !customCommand) {
 		error("Use --command with --arg");
-		info("Usage: jack agents add <id> [--path /custom/path] [--command cmd] [--arg value]");
+		info("Usage: jack agents add <id> [--command cmd] [--arg value]");
 		process.exit(1);
 	}
 
@@ -180,7 +177,7 @@ async function addAgentCommand(args: string[]): Promise<void> {
 			  }
 			: undefined;
 
-		await addAgent(agentId, { path: customPath, launch: launchOverride });
+		await addAgent(agentId, { launch: launchOverride });
 
 		success(`Added ${definition.name}`);
 		const config = await readConfig();
