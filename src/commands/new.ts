@@ -308,6 +308,8 @@ export default async function newProject(
 		const { getAccountId } = await import("../lib/cloudflare-api.ts");
 
 		const accountId = await getAccountId();
+		const dbName = await getD1DatabaseName(targetDir);
+
 		await registerProject(projectName, {
 			localPath: targetDir,
 			workerUrl: urlMatch ? urlMatch[0] : null,
@@ -318,7 +320,9 @@ export default async function newProject(
 				workerId: projectName,
 			},
 			resources: {
-				d1Databases: [], // Can be enhanced later to detect from template
+				services: {
+					db: dbName,
+				},
 			},
 		});
 	} catch {
