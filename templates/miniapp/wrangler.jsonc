@@ -1,0 +1,16 @@
+{
+	"name": "jack-template",
+	"main": "src/worker.ts",
+	"compatibility_date": "2024-12-01",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "jack-template-db"
+		}
+	]
+}
