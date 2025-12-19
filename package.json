@@ -1,0 +1,38 @@
+{
+	"name": "@getjack/jack",
+	"version": "0.1.0",
+	"description": "CLI for vibecoders to rapidly deploy to Cloudflare Workers",
+	"license": "Apache-2.0",
+	"type": "module",
+	"bin": {
+		"jack": "./src/index.ts"
+	},
+	"files": ["src", "templates"],
+	"engines": {
+		"bun": ">=1.0.0"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/getjack-org/jack"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"keywords": ["cli", "cloudflare", "workers", "deploy", "vibecode"],
+	"scripts": {
+		"dev": "bun run src/index.ts",
+		"build": "bun build --compile src/index.ts --outfile dist/jack",
+		"lint": "biome check .",
+		"format": "biome format --write ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.0",
+		"bun-types": "latest"
+	},
+	"dependencies": {
+		"@inquirer/prompts": "^7.0.0",
+		"meow": "^14.0.0",
+		"posthog-node": "^5.17.4",
+		"yocto-spinner": "^1.0.0"
+	}
+}
