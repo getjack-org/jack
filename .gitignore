@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.log
+
+# Test projects created during development
+tmp/
+
+# IDE and tool configs
+.claude/
+.wrangler/
+.env
+.env.*
+.dev.vars
+.secrets.json
+*.log
+.DS_Store
