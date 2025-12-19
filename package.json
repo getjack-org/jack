@@ -1,6 +1,6 @@
 {
   "name": "@getjack/jack",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "CLI for vibecoders to rapidly deploy to Cloudflare Workers",
   "license": "Apache-2.0",
   "type": "module",
