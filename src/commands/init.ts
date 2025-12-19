@@ -5,7 +5,11 @@ import {
 	updateAgent,
 } from "../lib/agents.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
-import { getIdeDisplayName, installMcpConfigsToAllIdes } from "../lib/mcp-config.ts";
+import {
+	getIdeDisplayName,
+	installMcpConfigsToAllIdes,
+	saveMcpConfig,
+} from "../lib/mcp-config.ts";
 import { info, item, spinner, success } from "../lib/output.ts";
 import { ensureAuth, ensureWrangler, isAuthenticated } from "../lib/wrangler.ts";
 
@@ -94,6 +98,12 @@ export default async function init(options: InitOptions = {}): Promise<void> {
 			mcpSpinner.stop();
 			// Don't fail init if MCP install fails - just warn
 			info("Could not install MCP configs (non-critical)");
+		}
+
+		try {
+			await saveMcpConfig();
+		} catch {
+			// Non-critical; config persistence shouldn't block init
 		}
 	}
 

@@ -11,15 +11,16 @@
 	"hooks": {
 		"preDeploy": [
 			{
-				"action": "checkSecret",
-				"secret": "NEYNAR_API_KEY",
+				"action": "require",
+				"source": "secret",
+				"key": "NEYNAR_API_KEY",
 				"message": "NEYNAR_API_KEY is required for Farcaster miniapps",
 				"setupUrl": "https://neynar.com"
 			}
 		],
 		"postDeploy": [
 			{
-				"action": "copy",
+				"action": "clipboard",
 				"text": "{{url}}",
 				"message": "Deploy URL copied to clipboard"
 			},
@@ -29,12 +30,12 @@
 				"lines": ["URL: {{url}}", "", "Next: Generate a manifest, then preview your miniapp"]
 			},
 			{
-				"action": "link",
+				"action": "url",
 				"url": "https://farcaster.xyz/~/developers/mini-apps/manifest?domain={{domain}}",
 				"label": "Generate manifest"
 			},
 			{
-				"action": "link",
+				"action": "url",
 				"url": "https://farcaster.xyz/~/developers/mini-apps/preview?url={{url}}",
 				"label": "Preview in Farcaster"
 			}

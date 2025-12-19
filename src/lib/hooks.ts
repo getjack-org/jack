@@ -11,6 +11,10 @@ export interface HookContext {
 	projectDir?: string; // absolute path to project directory
 }
 
+export interface HookOptions {
+	interactive?: boolean;
+}
+
 /**
  * Prompt user with numbered options (Claude Code style)
  * Returns the selected option index (0-based) or -1 if cancelled
@@ -197,7 +201,13 @@ async function checkEnvExists(env: string, projectDir?: string): Promise<boolean
  * Execute a single hook action
  * Returns true if should continue, false if should abort
  */
-async function executeAction(action: HookAction, context: HookContext): Promise<boolean> {
+async function executeAction(
+	action: HookAction,
+	context: HookContext,
+	options?: HookOptions,
+): Promise<boolean> {
+	const interactive = options?.interactive !== false;
+
 	switch (action.action) {
 		case "message": {
 			output.info(substituteVars(action.text, context));
@@ -211,11 +221,21 @@ async function executeAction(action: HookAction, context: HookContext): Promise<
 			return true;
 		}
 
-		case "link": {
+		case "url": {
 			const url = substituteVars(action.url, context);
 			const label = action.label ?? "Link";
+			if (!interactive) {
+				output.info(`${label}: ${url}`);
+				return true;
+			}
 			console.error("");
 			console.error(`  ${label}: \x1b[36m${url}\x1b[0m`);
+
+			if (action.open) {
+				output.info(`Opening: ${url}`);
+				await openBrowser(url);
+				return true;
+			}
 
 			if (action.prompt !== false) {
 				console.error("");
@@ -228,45 +248,48 @@ async function executeAction(action: HookAction, context: HookContext): Promise<
 			return true;
 		}
 
-		case "open": {
-			const url = substituteVars(action.url, context);
-			output.info(`Opening: ${url}`);
-			await openBrowser(url);
-			return true;
-		}
+		case "require": {
+			if (action.source === "secret") {
+				const result = await checkSecretExists(action.key, context.projectDir);
+				if (!result.exists) {
+					const message = action.message ?? `Missing required secret: ${action.key}`;
+					output.error(message);
+					output.info(`Run: jack secrets add ${action.key}`);
 
-		case "checkSecret": {
-			const result = await checkSecretExists(action.secret, context.projectDir);
-			if (!result.exists) {
-				const message = action.message ?? `Missing required secret: ${action.secret}`;
-				output.error(message);
-				output.info(`Run: jack secrets add ${action.secret}`);
-
-				// Offer to open setup URL if provided
-				if (action.setupUrl) {
-					console.error("");
-					const choice = await promptSelect(["Open setup page", "Skip"]);
-					if (choice === 0) {
-						await openBrowser(action.setupUrl);
+					if (action.setupUrl) {
+						if (interactive) {
+							console.error("");
+							const choice = await promptSelect(["Open setup page", "Skip"]);
+							if (choice === 0) {
+								await openBrowser(action.setupUrl);
+							}
+						} else {
+							output.info(`Setup: ${action.setupUrl}`);
+						}
 					}
+					return false;
+				}
+				return true;
+			}
+
+			const exists = await checkEnvExists(action.key, context.projectDir);
+			if (!exists) {
+				const message = action.message ?? `Missing required env var: ${action.key}`;
+				output.error(message);
+				if (action.setupUrl) {
+					output.info(`Setup: ${action.setupUrl}`);
 				}
 				return false;
 			}
 			return true;
 		}
 
-		case "checkEnv": {
-			const exists = await checkEnvExists(action.env, context.projectDir);
-			if (!exists) {
-				const message = action.message ?? `Missing required env var: ${action.env}`;
-				output.error(message);
-				return false;
-			}
-			return true;
-		}
-
-		case "copy": {
+		case "clipboard": {
 			const text = substituteVars(action.text, context);
+			if (!interactive) {
+				output.info(text);
+				return true;
+			}
 			const success = await copyToClipboard(text);
 			if (success) {
 				const message = action.message ?? "Copied to clipboard";
@@ -277,22 +300,27 @@ async function executeAction(action: HookAction, context: HookContext): Promise<
 			return true;
 		}
 
-		case "wait": {
+		case "pause": {
+			if (!interactive) {
+				return true;
+			}
 			await waitForEnter(action.message);
 			return true;
 		}
 
-		case "run": {
+		case "shell": {
 			const command = substituteVars(action.command, context);
 			if (action.message) {
 				output.info(action.message);
 			}
 			const cwd = action.cwd === "project" ? context.projectDir : undefined;
 			// Resume stdin in case previous prompts paused it
-			process.stdin.resume();
+			if (interactive) {
+				process.stdin.resume();
+			}
 			const proc = Bun.spawn(["sh", "-c", command], {
 				cwd,
-				stdin: "inherit",
+				stdin: interactive ? "inherit" : "ignore",
 				stdout: "inherit",
 				stderr: "inherit",
 			});
@@ -309,9 +337,13 @@ async function executeAction(action: HookAction, context: HookContext): Promise<
  * Run a list of hook actions
  * Returns true if all succeeded, false if any failed (for preDeploy checks)
  */
-export async function runHook(actions: HookAction[], context: HookContext): Promise<boolean> {
+export async function runHook(
+	actions: HookAction[],
+	context: HookContext,
+	options?: HookOptions,
+): Promise<boolean> {
 	for (const action of actions) {
-		const shouldContinue = await executeAction(action, context);
+		const shouldContinue = await executeAction(action, context, options);
 		if (!shouldContinue) {
 			return false;
 		}
