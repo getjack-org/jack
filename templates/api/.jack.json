@@ -5,12 +5,12 @@
 	"hooks": {
 		"postDeploy": [
 			{
-				"action": "copy",
+				"action": "clipboard",
 				"text": "{{url}}",
 				"message": "Deploy URL copied to clipboard"
 			},
 			{
-				"action": "run",
+				"action": "shell",
 				"command": "curl -s {{url}}/health | head -c 200",
 				"message": "Testing API..."
 			},

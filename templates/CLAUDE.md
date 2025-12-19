@@ -127,13 +127,21 @@ Templates can define hooks in `.jack.json` that run at specific lifecycle points
 |--------|---------|---------|
 | `message` | Print info message | `{"action": "message", "text": "Setting up..."}` |
 | `box` | Display boxed message | `{"action": "box", "title": "Done", "lines": ["URL: {{url}}"]}` |
-| `link` | Show URL with open prompt | `{"action": "link", "url": "{{url}}", "label": "Open site"}` |
-| `open` | Open URL in browser (no prompt) | `{"action": "open", "url": "{{url}}"}` |
-| `copy` | Copy text to clipboard | `{"action": "copy", "text": "{{url}}", "message": "Copied!"}` |
-| `run` | Execute shell command | `{"action": "run", "command": "curl {{url}}/health"}` |
-| `wait` | Wait for Enter key | `{"action": "wait", "message": "Press Enter..."}` |
-| `checkSecret` | Verify secret exists (preDeploy) | `{"action": "checkSecret", "secret": "API_KEY"}` |
-| `checkEnv` | Verify env var exists | `{"action": "checkEnv", "env": "NODE_ENV"}` |
+| `url` | Show URL (optional prompt/open) | `{"action": "url", "url": "{{url}}", "label": "Open site", "prompt": true}` |
+| `clipboard` | Copy text to clipboard | `{"action": "clipboard", "text": "{{url}}", "message": "Copied!"}` |
+| `shell` | Execute shell command | `{"action": "shell", "command": "curl {{url}}/health"}` |
+| `pause` | Wait for Enter key | `{"action": "pause", "message": "Press Enter..."}` |
+| `require` | Verify secret or env | `{"action": "require", "source": "secret", "key": "API_KEY"}` |
+
+### Non-Interactive Mode
+
+Hooks run in a non-interactive mode for MCP/silent execution. In this mode:
+
+- `url` prints `Label: URL` (no prompt, no auto-open)
+- `clipboard` prints the text (no clipboard access)
+- `pause` is skipped
+- `require` still validates; if `setupUrl` exists it prints `Setup: ...`
+- `shell` runs with stdin ignored to avoid hangs
 
 ### Hook Variables
 
@@ -151,8 +159,8 @@ These variables are substituted at runtime (different from template placeholders
 {
   "hooks": {
     "postDeploy": [
-      {"action": "copy", "text": "{{url}}", "message": "URL copied"},
-      {"action": "run", "command": "curl -s {{url}}/health"},
+      {"action": "clipboard", "text": "{{url}}", "message": "URL copied"},
+      {"action": "shell", "command": "curl -s {{url}}/health"},
       {"action": "box", "title": "{{name}}", "lines": ["{{url}}", "", "API is live!"]}
     ]
   }
@@ -165,13 +173,13 @@ These variables are substituted at runtime (different from template placeholders
 {
   "hooks": {
     "preDeploy": [
-      {"action": "checkSecret", "secret": "NEYNAR_API_KEY", "setupUrl": "https://neynar.com"}
+      {"action": "require", "source": "secret", "key": "NEYNAR_API_KEY", "setupUrl": "https://neynar.com"}
     ],
     "postDeploy": [
-      {"action": "copy", "text": "{{url}}"},
+      {"action": "clipboard", "text": "{{url}}"},
       {"action": "box", "title": "Deployed: {{name}}", "lines": ["URL: {{url}}"]},
-      {"action": "link", "url": "https://farcaster.xyz/.../manifest?domain={{domain}}", "label": "Generate manifest"},
-      {"action": "link", "url": "https://farcaster.xyz/.../preview?url={{url}}", "label": "Preview"}
+      {"action": "url", "url": "https://farcaster.xyz/.../manifest?domain={{domain}}", "label": "Generate manifest"},
+      {"action": "url", "url": "https://farcaster.xyz/.../preview?url={{url}}", "label": "Preview"}
     ]
   }
 }
