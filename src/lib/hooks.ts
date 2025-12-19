@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { HookAction } from "../templates/types";
-import { output } from "./output";
 import { getSavedSecrets } from "./secrets";
 
 export interface HookContext {
@@ -11,9 +10,26 @@ export interface HookContext {
 	projectDir?: string; // absolute path to project directory
 }
 
+export interface HookOutput {
+	info(message: string): void;
+	warn(message: string): void;
+	error(message: string): void;
+	success(message: string): void;
+	box(title: string, lines: string[]): void;
+}
+
 export interface HookOptions {
 	interactive?: boolean;
+	output?: HookOutput;
 }
+
+const noopOutput: HookOutput = {
+	info() {},
+	warn() {},
+	error() {},
+	success() {},
+	box() {},
+};
 
 /**
  * Prompt user with numbered options (Claude Code style)
@@ -207,17 +223,18 @@ async function executeAction(
 	options?: HookOptions,
 ): Promise<boolean> {
 	const interactive = options?.interactive !== false;
+	const ui = options?.output ?? noopOutput;
 
 	switch (action.action) {
 		case "message": {
-			output.info(substituteVars(action.text, context));
+			ui.info(substituteVars(action.text, context));
 			return true;
 		}
 
 		case "box": {
 			const title = substituteVars(action.title, context);
 			const lines = action.lines.map((line) => substituteVars(line, context));
-			output.box(title, lines);
+			ui.box(title, lines);
 			return true;
 		}
 
@@ -225,14 +242,14 @@ async function executeAction(
 			const url = substituteVars(action.url, context);
 			const label = action.label ?? "Link";
 			if (!interactive) {
-				output.info(`${label}: ${url}`);
+				ui.info(`${label}: ${url}`);
 				return true;
 			}
 			console.error("");
 			console.error(`  ${label}: \x1b[36m${url}\x1b[0m`);
 
 			if (action.open) {
-				output.info(`Opening: ${url}`);
+				ui.info(`Opening: ${url}`);
 				await openBrowser(url);
 				return true;
 			}
@@ -242,7 +259,7 @@ async function executeAction(
 				const choice = await promptSelect(["Open in browser", "Skip"]);
 				if (choice === 0) {
 					await openBrowser(url);
-					output.success("Opened in browser");
+					ui.success("Opened in browser");
 				}
 			}
 			return true;
@@ -253,8 +270,8 @@ async function executeAction(
 				const result = await checkSecretExists(action.key, context.projectDir);
 				if (!result.exists) {
 					const message = action.message ?? `Missing required secret: ${action.key}`;
-					output.error(message);
-					output.info(`Run: jack secrets add ${action.key}`);
+					ui.error(message);
+					ui.info(`Run: jack secrets add ${action.key}`);
 
 					if (action.setupUrl) {
 						if (interactive) {
@@ -264,7 +281,7 @@ async function executeAction(
 								await openBrowser(action.setupUrl);
 							}
 						} else {
-							output.info(`Setup: ${action.setupUrl}`);
+							ui.info(`Setup: ${action.setupUrl}`);
 						}
 					}
 					return false;
@@ -275,9 +292,9 @@ async function executeAction(
 			const exists = await checkEnvExists(action.key, context.projectDir);
 			if (!exists) {
 				const message = action.message ?? `Missing required env var: ${action.key}`;
-				output.error(message);
+				ui.error(message);
 				if (action.setupUrl) {
-					output.info(`Setup: ${action.setupUrl}`);
+					ui.info(`Setup: ${action.setupUrl}`);
 				}
 				return false;
 			}
@@ -287,15 +304,15 @@ async function executeAction(
 		case "clipboard": {
 			const text = substituteVars(action.text, context);
 			if (!interactive) {
-				output.info(text);
+				ui.info(text);
 				return true;
 			}
 			const success = await copyToClipboard(text);
 			if (success) {
 				const message = action.message ?? "Copied to clipboard";
-				output.success(message);
+				ui.success(message);
 			} else {
-				output.warn("Could not copy to clipboard");
+				ui.warn("Could not copy to clipboard");
 			}
 			return true;
 		}
@@ -311,7 +328,7 @@ async function executeAction(
 		case "shell": {
 			const command = substituteVars(action.command, context);
 			if (action.message) {
-				output.info(action.message);
+				ui.info(action.message);
 			}
 			const cwd = action.cwd === "project" ? context.projectDir : undefined;
 			// Resume stdin in case previous prompts paused it

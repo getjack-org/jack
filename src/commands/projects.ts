@@ -1,19 +1,14 @@
-import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { select } from "@inquirer/prompts";
-import { checkWorkerExists } from "../lib/cloudflare-api.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
-import { getAllProjects, getProject, removeProject } from "../lib/registry.ts";
-import { getProjectNameFromDir, getRemoteManifest } from "../lib/storage/index.ts";
-
-interface ProjectStatus {
-	name: string;
-	localPath: string | null;
-	local: boolean;
-	deployed: boolean;
-	backedUp: boolean;
-	missing: boolean;
-}
+import {
+	cleanupStaleProjects,
+	getProjectStatus,
+	listAllProjects,
+	scanStaleProjects,
+	type ProjectStatus,
+} from "../lib/project-operations.ts";
+import { getProjectNameFromDir } from "../lib/storage/index.ts";
 
 /**
  * Main projects command - handles all project management
@@ -46,52 +41,16 @@ async function listProjects(args: string[]): Promise<void> {
 		cloud: args.includes("--cloud"),
 	};
 
-	const projects = await getAllProjects();
-	const projectNames = Object.keys(projects);
+	// Determine status for each project (with spinner for API calls)
+	outputSpinner.start("Checking project status...");
+	const statuses: ProjectStatus[] = await listAllProjects();
+	outputSpinner.stop();
 
-	if (projectNames.length === 0) {
+	if (statuses.length === 0) {
 		info("No projects found");
 		info("Create a project with: jack new <name>");
 		return;
 	}
-
-	// Determine status for each project (with spinner for API calls)
-	outputSpinner.start("Checking project status...");
-
-	const statuses: ProjectStatus[] = await Promise.all(
-		projectNames.map(async (name) => {
-			const project = projects[name];
-			if (!project) {
-				return null;
-			}
-
-			const local = project.localPath ? existsSync(project.localPath) : false;
-			const missing = project.localPath ? !local : false;
-
-			// Check if deployed (use cached URL or check API)
-			let deployed = false;
-			if (project.workerUrl) {
-				deployed = true;
-			} else {
-				deployed = await checkWorkerExists(name);
-			}
-
-			// Check if backed up
-			const manifest = await getRemoteManifest(name);
-			const backedUp = manifest !== null;
-
-			return {
-				name,
-				localPath: project.localPath,
-				local,
-				deployed,
-				backedUp,
-				missing,
-			};
-		}),
-	).then((results) => results.filter((s): s is ProjectStatus => s !== null));
-
-	outputSpinner.stop();
 
 	// Filter based on flags
 	let filteredStatuses = statuses;
@@ -249,40 +208,33 @@ async function infoProject(args: string[]): Promise<void> {
 		}
 	}
 
-	const project = await getProject(name);
+	// Check actual status (with spinner for API calls)
+	outputSpinner.start("Fetching project info...");
+	const status = await getProjectStatus(name);
+	outputSpinner.stop();
 
-	if (!project) {
+	if (!status) {
 		error(`Project "${name}" not found in registry`);
 		info("List projects with: jack projects list");
 		process.exit(1);
 	}
 
-	// Check actual status (with spinner for API calls)
-	outputSpinner.start("Fetching project info...");
-	const localExists = project.localPath ? existsSync(project.localPath) : false;
-	const [workerExists, manifest] = await Promise.all([
-		checkWorkerExists(name),
-		getRemoteManifest(name),
-	]);
-	const backedUp = manifest !== null;
-	outputSpinner.stop();
-
 	console.error("");
-	info(`Project: ${name}`);
+	info(`Project: ${status.name}`);
 	console.error("");
 
 	// Status section
 	const statuses: string[] = [];
-	if (localExists) {
+	if (status.local) {
 		statuses.push("local");
 	}
-	if (workerExists || project.workerUrl) {
+	if (status.deployed) {
 		statuses.push("deployed");
 	}
-	if (backedUp) {
+	if (status.backedUp) {
 		statuses.push("backed-up");
 	}
-	if (project.localPath && !localExists) {
+	if (status.missing) {
 		statuses.push("missing");
 	}
 
@@ -290,48 +242,53 @@ async function infoProject(args: string[]): Promise<void> {
 	console.error("");
 
 	// Local info
-	if (project.localPath) {
-		item(`Local path: ${project.localPath}`);
-		if (!localExists) {
+	if (status.localPath) {
+		item(`Local path: ${status.localPath}`);
+		if (status.missing) {
 			warn("  Path no longer exists");
 		}
 		console.error("");
 	}
 
 	// Deployment info
-	if (project.workerUrl) {
-		item(`Worker URL: ${project.workerUrl}`);
+	if (status.workerUrl) {
+		item(`Worker URL: ${status.workerUrl}`);
 	}
-	if (project.lastDeployed) {
-		item(`Last deployed: ${new Date(project.lastDeployed).toLocaleString()}`);
+	if (status.lastDeployed) {
+		item(`Last deployed: ${new Date(status.lastDeployed).toLocaleString()}`);
 	}
-	if (workerExists || project.workerUrl) {
+	if (status.deployed) {
 		console.error("");
 	}
 
 	// Cloud info
-	if (backedUp && manifest) {
-		item(`Cloud backup: ${manifest.files.length} files`);
-		item(`Last synced: ${new Date(manifest.lastSync).toLocaleString()}`);
-		console.error("");
-	}
-
-	// Account info
-	item(`Account ID: ${project.cloudflare.accountId}`);
-	item(`Worker ID: ${project.cloudflare.workerId}`);
-	console.error("");
-
-	// Resources
-	if (project.resources.d1Databases.length > 0) {
-		item("Databases:");
-		for (const db of project.resources.d1Databases) {
-			item(`  - ${db}`);
+	if (status.backedUp && status.backupFiles !== null) {
+		item(`Cloud backup: ${status.backupFiles} files`);
+		if (status.backupLastSync) {
+			item(`Last synced: ${new Date(status.backupLastSync).toLocaleString()}`);
 		}
 		console.error("");
 	}
 
+	// Account info
+	if (status.accountId) {
+		item(`Account ID: ${status.accountId}`);
+	}
+	if (status.workerId) {
+		item(`Worker ID: ${status.workerId}`);
+	}
+	console.error("");
+
+	// Resources
+	if (status.dbName) {
+		item(`Database: ${status.dbName}`);
+		console.error("");
+	}
+
 	// Timestamps
-	item(`Created: ${new Date(project.createdAt).toLocaleString()}`);
+	if (status.createdAt) {
+		item(`Created: ${new Date(status.createdAt).toLocaleString()}`);
+	}
 	console.error("");
 }
 
@@ -341,49 +298,16 @@ async function infoProject(args: string[]): Promise<void> {
 async function cleanupProjects(): Promise<void> {
 	outputSpinner.start("Scanning for stale projects...");
 
-	const projects = await getAllProjects();
-	const projectNames = Object.keys(projects);
-
-	if (projectNames.length === 0) {
+	const scan = await scanStaleProjects();
+	if (scan.total === 0) {
 		outputSpinner.stop();
 		info("No projects to clean up");
 		return;
 	}
 
-	interface StaleProject {
-		name: string;
-		reason: string;
-	}
-
-	const staleProjects: StaleProject[] = [];
-
-	// Check each project for issues
-	for (const name of projectNames) {
-		const project = projects[name];
-		if (!project) continue;
-
-		// Check if local folder was deleted
-		if (project.localPath && !existsSync(project.localPath)) {
-			staleProjects.push({
-				name,
-				reason: "local folder deleted",
-			});
-			continue;
-		}
-
-		// Check if service was undeployed externally
-		const workerExists = await checkWorkerExists(name);
-		if (project.workerUrl && !workerExists) {
-			staleProjects.push({
-				name,
-				reason: "undeployed from cloud",
-			});
-		}
-	}
-
 	outputSpinner.stop();
 
-	if (staleProjects.length === 0) {
+	if (scan.stale.length === 0) {
 		success("No stale projects found");
 		return;
 	}
@@ -397,18 +321,16 @@ async function cleanupProjects(): Promise<void> {
 	console.error("");
 
 	// Show found issues
-	warn(`Found ${staleProjects.length} stale project(s):`);
+	warn(`Found ${scan.stale.length} stale project(s):`);
 	console.error("");
 
 	// Check which have deployed workers
-	const deployedStale = staleProjects.filter((s) => {
-		const proj = projects[s.name];
-		return proj?.workerUrl;
-	});
+	const deployedStale = scan.stale.filter((stale) => stale.workerUrl);
 
-	for (const stale of staleProjects) {
-		const proj = projects[stale.name];
-		const hasWorker = proj?.workerUrl ? ` ${colors.yellow}(still deployed)${colors.reset}` : "";
+	for (const stale of scan.stale) {
+		const hasWorker = stale.workerUrl
+			? ` ${colors.yellow}(still deployed)${colors.reset}`
+			: "";
 		item(`${stale.name}: ${stale.reason}${hasWorker}`);
 	}
 	console.error("");
@@ -435,12 +357,10 @@ async function cleanupProjects(): Promise<void> {
 	}
 
 	// Remove stale entries
-	for (const stale of staleProjects) {
-		await removeProject(stale.name);
-	}
+	await cleanupStaleProjects(scan.stale.map((stale) => stale.name));
 
 	console.error("");
-	success(`Removed ${staleProjects.length} entry/entries from jack's registry`);
+	success(`Removed ${scan.stale.length} entry/entries from jack's registry`);
 	if (deployedStale.length > 0) {
 		info("Note: Deployed services are still live");
 	}
