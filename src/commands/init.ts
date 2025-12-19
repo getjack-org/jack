@@ -5,6 +5,7 @@ import {
 	updateAgent,
 } from "../lib/agents.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
+import { getIdeDisplayName, installMcpConfigsToAllIdes } from "../lib/mcp-config.ts";
 import { info, item, spinner, success } from "../lib/output.ts";
 import { ensureAuth, ensureWrangler, isAuthenticated } from "../lib/wrangler.ts";
 
@@ -14,7 +15,11 @@ export async function isInitialized(): Promise<boolean> {
 	return await isAuthenticated();
 }
 
-export default async function init(): Promise<void> {
+interface InitOptions {
+	skipMcp?: boolean;
+}
+
+export default async function init(options: InitOptions = {}): Promise<void> {
 	// Immediate feedback
 	const spin = spinner("Checking setup...");
 
@@ -47,7 +52,7 @@ export default async function init(): Promise<void> {
 	let preferredAgent: string | undefined;
 	if (detectionResult.detected.length > 0) {
 		success(`Found ${detectionResult.detected.length} agent(s)`);
-		for (const { id, path } of detectionResult.detected) {
+		for (const { id, path, launch } of detectionResult.detected) {
 			const definition = getAgentDefinition(id);
 			item(`${definition?.name}: ${path}`);
 
@@ -56,6 +61,7 @@ export default async function init(): Promise<void> {
 				active: true,
 				path: path,
 				detectedAt: new Date().toISOString(),
+				launch,
 			});
 		}
 
@@ -69,7 +75,29 @@ export default async function init(): Promise<void> {
 		info("No agents detected (you can add them later with: jack agents add)");
 	}
 
-	// Step 4: Save config (preserve existing agents, just update init status)
+	// Step 4: Install MCP configs to detected IDEs (unless --skip-mcp)
+	if (!options.skipMcp) {
+		const mcpSpinner = spinner("Installing MCP server configs...");
+		try {
+			const installedIdes = await installMcpConfigsToAllIdes();
+			mcpSpinner.stop();
+
+			if (installedIdes.length > 0) {
+				success(`MCP server installed to ${installedIdes.length} IDE(s)`);
+				for (const ideId of installedIdes) {
+					item(`  ${getIdeDisplayName(ideId)}`);
+				}
+			} else {
+				info("No supported IDEs detected for MCP installation");
+			}
+		} catch (err) {
+			mcpSpinner.stop();
+			// Don't fail init if MCP install fails - just warn
+			info("Could not install MCP configs (non-critical)");
+		}
+	}
+
+	// Step 5: Save config (preserve existing agents, just update init status)
 	const existingConfig = await readConfig();
 	await writeConfig({
 		version: 1,

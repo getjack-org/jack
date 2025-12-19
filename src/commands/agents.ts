@@ -103,7 +103,7 @@ async function scanAndPrompt(): Promise<void> {
 
 	console.error("");
 	success(`Found ${newAgents.length} new agent(s):`);
-	for (const { id, path } of newAgents) {
+	for (const { id, path, launch } of newAgents) {
 		const definition = getAgentDefinition(id);
 		item(`${definition?.name}: ${path}`);
 
@@ -112,12 +112,32 @@ async function scanAndPrompt(): Promise<void> {
 			active: true,
 			path,
 			detectedAt: new Date().toISOString(),
+			launch,
 		});
 	}
 
 	console.error("");
 	success("New agents enabled");
 	info("Future projects will include context files for these agents");
+}
+
+function getFlagValue(args: string[], flag: string): string | undefined {
+	const index = args.indexOf(flag);
+	if (index >= 0 && args[index + 1]) {
+		return args[index + 1];
+	}
+	return undefined;
+}
+
+function getFlagValues(args: string[], flag: string): string[] {
+	const values: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === flag && args[i + 1]) {
+			values.push(args[i + 1]);
+			i++;
+		}
+	}
+	return values;
 }
 
 /**
@@ -128,7 +148,7 @@ async function addAgentCommand(args: string[]): Promise<void> {
 
 	if (!agentId) {
 		error("Agent ID required");
-		info("Usage: jack agents add <id> [--path /custom/path]");
+		info("Usage: jack agents add <id> [--path /custom/path] [--command cmd] [--arg value]");
 		info(`Available IDs: ${AGENT_REGISTRY.map((a) => a.id).join(", ")}`);
 		process.exit(1);
 	}
@@ -140,15 +160,27 @@ async function addAgentCommand(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
-	// Parse --path flag
-	const pathIndex = rest.indexOf("--path");
-	let customPath: string | undefined;
-	if (pathIndex >= 0 && rest[pathIndex + 1]) {
-		customPath = rest[pathIndex + 1];
+	// Parse flags
+	const customPath = getFlagValue(rest, "--path");
+	const customCommand = getFlagValue(rest, "--command");
+	const customArgs = getFlagValues(rest, "--arg");
+
+	if (customArgs.length > 0 && !customCommand) {
+		error("Use --command with --arg");
+		info("Usage: jack agents add <id> [--path /custom/path] [--command cmd] [--arg value]");
+		process.exit(1);
 	}
 
 	try {
-		await addAgent(agentId, customPath);
+		const launchOverride = customCommand
+			? {
+					type: "cli" as const,
+					command: customCommand,
+					args: customArgs.length ? customArgs : undefined,
+			  }
+			: undefined;
+
+		await addAgent(agentId, { path: customPath, launch: launchOverride });
 
 		success(`Added ${definition.name}`);
 		const config = await readConfig();
@@ -161,7 +193,9 @@ async function addAgentCommand(args: string[]): Promise<void> {
 		if (err instanceof Error) {
 			error(err.message);
 			if (err.message.includes("Could not detect")) {
-				info(`Specify path manually: jack agents add ${agentId} --path /path/to/agent`);
+				info(
+					`Specify launch manually: jack agents add ${agentId} --command /path/to/command`,
+				);
 			}
 		}
 		process.exit(1);
