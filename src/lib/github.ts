@@ -2,6 +2,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
+import { parseJsonc } from "./jsonc.ts";
 import type { Template } from "../templates/types";
 
 /**
@@ -108,6 +109,27 @@ export async function fetchFromGitHub(input: string): Promise<Template> {
 		if (!hasWorkerFiles) {
 			console.warn("\n⚠ This doesn't look like a Cloudflare Worker");
 			console.warn("  (no wrangler.toml or worker entry point found)\n");
+		}
+
+		// Read .jack.json metadata if it exists
+		const jackJsonContent = files[".jack.json"];
+		if (jackJsonContent) {
+			try {
+				const metadata = parseJsonc(jackJsonContent);
+				// Remove .jack.json from files (not needed in project)
+				const { ".jack.json": _, ...filesWithoutJackJson } = files;
+				return {
+					description: metadata.description || `GitHub: ${owner}/${repo}`,
+					secrets: metadata.secrets,
+					capabilities: metadata.capabilities,
+					requires: metadata.requires,
+					hooks: metadata.hooks,
+					agentContext: metadata.agentContext,
+					files: filesWithoutJackJson,
+				};
+			} catch {
+				// Invalid JSON, fall through to default
+			}
 		}
 
 		return {
