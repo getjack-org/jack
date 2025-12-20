@@ -9,7 +9,7 @@ import {
 	listAllProjects,
 } from "../../lib/project-operations.ts";
 import { Events, track, withTelemetry } from "../../lib/telemetry.ts";
-import type { McpServerOptions } from "../types.ts";
+import type { DebugLogger, McpServerOptions } from "../types.ts";
 import { formatErrorResponse, formatSuccessResponse } from "../utils.ts";
 
 // Tool schemas
@@ -40,9 +40,14 @@ const ListProjectsSchema = z.object({
 		.describe("Filter projects by status (defaults to 'all')"),
 });
 
-export function registerTools(server: McpServer, _options: McpServerOptions) {
+export function registerTools(
+	server: McpServer,
+	_options: McpServerOptions,
+	debug: DebugLogger,
+) {
 	// Register tool list handler
 	server.setRequestHandler(ListToolsRequestSchema, async () => {
+		debug("tools/list requested");
 		return {
 			tools: [
 				{
@@ -80,7 +85,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions) {
 				{
 					name: "get_project_status",
 					description:
-						"Get detailed status information for a specific project, including deployment status, local path, and cloud backup status.",
+						"Get detailed status information for a specific project, including deployment status, local path, and backup status.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -98,7 +103,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions) {
 				{
 					name: "list_projects",
 					description:
-						"List all known projects with their status information. Can filter by local, deployed, or cloud-backed projects.",
+						"List all known projects with their status information. Can filter by local, deployed, or backup projects.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -117,9 +122,12 @@ export function registerTools(server: McpServer, _options: McpServerOptions) {
 	// Register single tools/call handler that dispatches to individual tool implementations
 	server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		const startTime = Date.now();
+		const toolName = request.params.name;
+
+		debug("tools/call requested", { tool: toolName, args: request.params.arguments });
 
 		try {
-			switch (request.params.name) {
+			switch (toolName) {
 				case "create_project": {
 					const args = CreateProjectSchema.parse(request.params.arguments ?? {});
 
@@ -244,9 +252,15 @@ export function registerTools(server: McpServer, _options: McpServerOptions) {
 				}
 
 				default:
-					throw new Error(`Unknown tool: ${request.params.name}`);
+					throw new Error(`Unknown tool: ${toolName}`);
 			}
 		} catch (error) {
+			const duration = Date.now() - startTime;
+			debug("tools/call failed", {
+				tool: toolName,
+				duration_ms: duration,
+				error: error instanceof Error ? error.message : String(error),
+			});
 			return {
 				content: [
 					{

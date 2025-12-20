@@ -26,4 +26,10 @@ export { JackErrorCode as McpErrorCode } from "../lib/errors.ts";
  */
 export interface McpServerOptions {
 	projectPath?: string;
+	debug?: boolean;
 }
+
+/**
+ * Debug logger function type
+ */
+export type DebugLogger = (message: string, data?: unknown) => void;
