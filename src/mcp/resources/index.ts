@@ -5,11 +5,16 @@ import {
 	ListResourcesRequestSchema,
 	ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { McpServerOptions } from "../types.ts";
+import type { DebugLogger, McpServerOptions } from "../types.ts";
 
-export function registerResources(server: McpServer, options: McpServerOptions) {
+export function registerResources(
+	server: McpServer,
+	options: McpServerOptions,
+	debug: DebugLogger,
+) {
 	// Register resource list handler
 	server.setRequestHandler(ListResourcesRequestSchema, async () => {
+		debug("resources/list requested");
 		return {
 			resources: [
 				{
@@ -26,6 +31,7 @@ export function registerResources(server: McpServer, options: McpServerOptions) 
 	// Register resource read handler
 	server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 		const uri = request.params.uri;
+		debug("resources/read requested", { uri });
 
 		if (uri === "agents://context") {
 			const projectPath = options.projectPath ?? process.cwd();

@@ -6,8 +6,8 @@ import {
 } from "../lib/agents.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import {
-	getIdeDisplayName,
-	installMcpConfigsToAllIdes,
+	getAppDisplayName,
+	installMcpConfigsToAllApps,
 	saveMcpConfig,
 } from "../lib/mcp-config.ts";
 import { info, item, spinner, success } from "../lib/output.ts";
@@ -79,20 +79,20 @@ export default async function init(options: InitOptions = {}): Promise<void> {
 		info("No agents detected (you can add them later with: jack agents add)");
 	}
 
-	// Step 4: Install MCP configs to detected IDEs (unless --skip-mcp)
+	// Step 4: Install MCP configs to detected apps (unless --skip-mcp)
 	if (!options.skipMcp) {
 		const mcpSpinner = spinner("Installing MCP server configs...");
 		try {
-			const installedIdes = await installMcpConfigsToAllIdes();
+			const installedApps = await installMcpConfigsToAllApps();
 			mcpSpinner.stop();
 
-			if (installedIdes.length > 0) {
-				success(`MCP server installed to ${installedIdes.length} IDE(s)`);
-				for (const ideId of installedIdes) {
-					item(`  ${getIdeDisplayName(ideId)}`);
+			if (installedApps.length > 0) {
+				success(`MCP server installed to ${installedApps.length} app(s)`);
+				for (const appId of installedApps) {
+					item(`  ${getAppDisplayName(appId)}`);
 				}
 			} else {
-				info("No supported IDEs detected for MCP installation");
+				info("No supported apps detected for MCP installation");
 			}
 		} catch (err) {
 			mcpSpinner.stop();

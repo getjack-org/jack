@@ -14,18 +14,18 @@ export interface McpServerConfig {
 }
 
 /**
- * IDE-specific MCP configuration paths and settings
+ * App-specific MCP configuration paths and settings
  */
-interface IdeMcpConfig {
+interface AppMcpConfig {
 	path: string;
 	key: string;
 }
 
 /**
- * IDE MCP configuration paths
- * Maps IDE ID to its config file path and MCP servers key
+ * App MCP configuration paths
+ * Maps app ID to its config file path and MCP servers key
  */
-export const IDE_MCP_CONFIGS: Record<string, IdeMcpConfig> = {
+export const APP_MCP_CONFIGS: Record<string, AppMcpConfig> = {
 	"claude-code": {
 		path: join(homedir(), ".claude.json"),
 		key: "mcpServers",
@@ -49,64 +49,92 @@ const JACK_MCP_CONFIG_PATH = join(JACK_MCP_CONFIG_DIR, "config.json");
 
 /**
  * Returns the jack MCP server configuration
+ * Includes PATH with common install locations so Claude Desktop can find jack
  */
 export function getJackMcpConfig(): McpServerConfig {
+	// Build PATH with common locations where jack might be installed
+	// ~/.bun/bin is where `bun link` installs global commands
+	const bunBin = join(homedir(), ".bun", "bin");
+	const npmBin = join(homedir(), ".npm-global", "bin");
+	const defaultPaths = [
+		bunBin,
+		npmBin,
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+	];
+
 	return {
 		command: "jack",
 		args: ["mcp", "serve"],
+		env: {
+			PATH: defaultPaths.join(":"),
+		},
 	};
 }
 
 /**
- * Get display name for IDE
+ * Get display name for app
  */
-export function getIdeDisplayName(ideId: string): string {
+export function getAppDisplayName(appId: string): string {
 	const displayNames: Record<string, string> = {
 		"claude-code": "Claude Code",
 		"claude-desktop": "Claude Desktop",
 	};
-	return displayNames[ideId] || ideId;
+	return displayNames[appId] || appId;
 }
 
 /**
- * Check if an IDE's config directory exists (indicating it's installed)
+ * Check if an app is installed
+ *
+ * Detection strategies per app:
+ * - claude-code: Check for ~/.claude/ directory (created when Claude Code is installed/run)
+ * - claude-desktop: Check if config directory exists (created when app is first run)
  */
-export function isIdeInstalled(ideId: string): boolean {
-	const ideConfig = IDE_MCP_CONFIGS[ideId];
-	if (!ideConfig) return false;
+export function isAppInstalled(appId: string): boolean {
+	const appConfig = APP_MCP_CONFIGS[appId];
+	if (!appConfig) return false;
 
-	// Check if the parent directory exists (config file itself may not exist yet)
-	const configDir = dirname(ideConfig.path);
+	if (appId === "claude-code") {
+		// Claude Code creates ~/.claude/ directory when installed
+		// Don't use parent of ~/.claude.json (that's ~, which always exists)
+		const claudeCodeDataDir = join(homedir(), ".claude");
+		return existsSync(claudeCodeDataDir);
+	}
+
+	// For other apps (claude-desktop), check if config directory exists
+	const configDir = dirname(appConfig.path);
 	return existsSync(configDir);
 }
 
 /**
- * Install MCP config to a single IDE
+ * Install MCP config to a single app
  * Reads existing config, merges jack server, writes back
  * Returns true on success
  */
-export async function installMcpConfigToIde(ideId: string): Promise<boolean> {
-	const ideConfig = IDE_MCP_CONFIGS[ideId];
-	if (!ideConfig) {
-		throw new Error(`Unknown IDE: ${ideId}`);
+export async function installMcpConfigToApp(appId: string): Promise<boolean> {
+	const appConfig = APP_MCP_CONFIGS[appId];
+	if (!appConfig) {
+		throw new Error(`Unknown app: ${appId}`);
 	}
 
 	// Ensure parent directory exists
-	const configDir = dirname(ideConfig.path);
+	const configDir = dirname(appConfig.path);
 	if (!existsSync(configDir)) {
 		try {
 			await mkdir(configDir, { recursive: true });
 		} catch (error) {
-			// Directory doesn't exist and can't be created - IDE not installed
+			// Directory doesn't exist and can't be created - app not installed
 			return false;
 		}
 	}
 
 	// Read existing config or start with empty object
 	let existingConfig: Record<string, unknown> = {};
-	if (existsSync(ideConfig.path)) {
+	if (existsSync(appConfig.path)) {
 		try {
-			existingConfig = await Bun.file(ideConfig.path).json();
+			existingConfig = await Bun.file(appConfig.path).json();
 		} catch {
 			// Invalid JSON - treat as empty config
 			existingConfig = {};
@@ -114,17 +142,17 @@ export async function installMcpConfigToIde(ideId: string): Promise<boolean> {
 	}
 
 	// Get or create mcpServers object
-	const mcpServers = (existingConfig[ideConfig.key] as Record<string, unknown>) || {};
+	const mcpServers = (existingConfig[appConfig.key] as Record<string, unknown>) || {};
 
 	// Add/update jack MCP server
 	mcpServers.jack = getJackMcpConfig();
 
 	// Merge back into config
-	existingConfig[ideConfig.key] = mcpServers;
+	existingConfig[appConfig.key] = mcpServers;
 
 	// Write updated config
 	try {
-		await Bun.write(ideConfig.path, JSON.stringify(existingConfig, null, 2));
+		await Bun.write(appConfig.path, JSON.stringify(existingConfig, null, 2));
 		return true;
 	} catch {
 		// Write failed (permissions, etc.)
@@ -133,22 +161,22 @@ export async function installMcpConfigToIde(ideId: string): Promise<boolean> {
 }
 
 /**
- * Install to ALL detected/installed IDEs
- * Returns array of IDE IDs that were configured
+ * Install to ALL detected/installed apps
+ * Returns array of app IDs that were configured
  */
-export async function installMcpConfigsToAllIdes(): Promise<string[]> {
+export async function installMcpConfigsToAllApps(): Promise<string[]> {
 	const configured: string[] = [];
 
-	for (const ideId of Object.keys(IDE_MCP_CONFIGS)) {
-		// Check if IDE is installed
-		if (!isIdeInstalled(ideId)) {
+	for (const appId of Object.keys(APP_MCP_CONFIGS)) {
+		// Check if app is installed
+		if (!isAppInstalled(appId)) {
 			continue;
 		}
 
 		// Try to install config
-		const success = await installMcpConfigToIde(ideId);
+		const success = await installMcpConfigToApp(appId);
 		if (success) {
-			configured.push(ideId);
+			configured.push(appId);
 		}
 	}
 
