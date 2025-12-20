@@ -5,7 +5,10 @@ export default defineConfig({
   title: "jack",
   description:
     "Ship before you forget why you started. The vibecoder's deployment CLI.",
-  logoUrl: "/logomark.png",
+  logoUrl: {
+    light: "/logo-light.svg",
+    dark: "/logo-dark.svg",
+  },
   iconUrl: "/favicon.ico",
   // basePath: "/jack", // Not needed with custom domain
   topNav: [
