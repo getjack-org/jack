@@ -25,6 +25,14 @@ export default defineConfig({
         }),
       },
     },
+    {
+      tag: "script",
+      attrs: { type: "module" },
+      children: `
+        import { sdk } from 'https://esm.sh/@farcaster/miniapp-sdk@0.5.1';
+        sdk.actions.ready();
+      `,
+    },
   ],
   logoUrl: {
     light: "/logo-light.svg",
