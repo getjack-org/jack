@@ -1,49 +1,64 @@
-<svg width="210" height="60" viewBox="0 0 420 70" xmlns="http://www.w3.org/2000/svg">
-  <rect width="210" height="60" fill="none"/>
-  <text x="20" y="80"
-        font-family="IBM Plex Mono, JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-        font-size="72"
-        font-weight="500"
-        letter-spacing="0.06em"
-        fill="#F3F1EA">jack</text>
-</svg>
+# jack
 
 ## **Ship before you forget why you started.**
 
-jack is a CLI for vibecoders who want to deploy to the cloud without thinking about infrastructure. One command to create, one command to ship.
+You're vibecoding. Ideas are flowing. You want to ship.
+
+But first: config files, deployment setup, secret management, debugging infrastructure errors...
+
+**30 minutes later, the spark is gone.**
+
+jack removes the friction between your idea and a live URL.
 
 <img src="/jack-demo.gif" alt="jack demo" style={{ margin: '2rem 0', borderRadius: '12px', width: '100%' }} />
 
 ## Quick Start
 
 ```bash
-# Install
+# One command to create and deploy
+bunx @getjack/jack new my-app
+
+# Or install globally
 bun add -g @getjack/jack
-
-# Create a new project
 jack new my-app
-
-# Deploy it
-jack ship
 ```
+
+You'll need [Bun](https://bun.sh) and a Cloudflare account (free tier works).
 
 ## Why jack?
 
-- **Zero config** - No YAML files, no dashboards, no decisions
-- **AI-native** - Built-in MCP server for Claude Code and other agents
-- **Fast** - Deploys to edge in seconds
-- **Simple** - Three commands: `new`, `ship`, `open`
+- **Instant deployment** — `jack new` creates AND deploys. You have a live URL before your first commit.
+- **Works with your agent** — Claude Code, Cursor, Codex, whatever. Every project includes AI context files so your agent understands the stack.
+- **Roaming secrets** — Configure once, use across all projects. No more per-project secret ceremony.
+- **Project tracking** — 100 experiments scattered everywhere? `jack ls` finds them all.
+- **No lock-in** — Standard config files, standard TypeScript. Your projects work without jack installed.
 
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `jack new` | Create a new project from a template |
-| `jack ship` | Deploy your project |
-| `jack ls` | List your projects |
-| `jack open` | Open your project in the browser |
+| `jack new <name>` | Create and deploy a new project |
+| `jack ship` | Deploy current project |
+| `jack ls` | Show all your projects |
+| `jack open` | Open project in browser |
 
 Ready to start? [Get started →](/getting-started)
+
+---
+
+## Who This Is For
+
+Builders who ship constantly. You spin up new projects all the time, and suddenly you have dozens scattered across your machine—each with its own env vars, secrets, and deploy setup you've already forgotten.
+
+jack keeps you organized. One command to ship, one place to find everything, zero setup overhead. Stay creative, skip the ceremony.
+
+---
+
+## Philosophy
+
+In Gibson's *Neuromancer*, "jacking in" means plugging directly into cyberspace. The body becomes irrelevant—you're pure thought in the matrix.
+
+jack handles the infrastructure so you stay in creative flow. The boring parts disappear. You just build.
 
 ---
 
@@ -54,4 +69,4 @@ jack docs are optimized for LLMs. Use these URLs for context:
 - `llms.txt` - Summary for quick context
 - `llms-full.txt` - Full documentation
 
-These files are auto-generated at the root of the docs site (e.g., `https://hellno.github.io/jack/llms.txt`).
+These files are auto-generated at the root of the docs site.
