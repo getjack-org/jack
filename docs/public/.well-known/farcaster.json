@@ -1,0 +1,17 @@
+{
+	"accountAssociation": {
+		"header": "eyJmaWQiOjEzNTk2LCJ0eXBlIjoiY3VzdG9keSIsImtleSI6IjB4ODE3MzE4RDZmRkY2NkExOGQ4M0ExMzc2QTc2RjZlMzBCNDNjODg4OSJ9",
+		"payload": "eyJkb21haW4iOiJnZXRqYWNrLm9yZyJ9",
+		"signature": "NoHPw4/j93qUQY5IOYA2P5KhwXw2+ZYhzwTYstRekOc2OFAJ7Jk2nH7ryHJmfkfx3qW/9IYqSKbI+NMyhy1EiRw="
+	},
+	"miniapp": {
+		"version": "1",
+		"name": "jack",
+		"iconUrl": "https://getjack.org/icon.png",
+		"homeUrl": "https://getjack.org",
+		"imageUrl": "https://getjack.org/jack-demo.gif",
+		"splashImageUrl": "https://getjack.org/icon.png",
+		"splashBackgroundColor": "#0a0a0a",
+		"buttonTitle": "Open Docs"
+	}
+}
