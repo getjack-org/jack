@@ -1,0 +1,47 @@
+# jack new
+
+Create a new project from a template.
+
+## Usage
+
+```bash
+jack new [name] [options]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `name` | Project name (optional, will prompt if not provided) |
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-t, --template` | Template to use (`miniapp`, `api`) |
+
+## Examples
+
+```bash
+# Interactive mode - prompts for everything
+jack new
+
+# Create with a specific name
+jack new my-cool-app
+
+# Create with a specific template
+jack new my-api -t api
+
+# Fully specified
+jack new my-miniapp --template miniapp
+```
+
+## What Happens
+
+1. Creates a new directory with your project name
+2. Copies the template files
+3. Installs dependencies with `bun install`
+4. Deploys immediately with `jack ship`
+5. Opens your preferred AI agent (Claude Code, Cursor, etc.)
+
+After running `jack new`, your project is already live.

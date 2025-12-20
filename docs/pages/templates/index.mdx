@@ -1,0 +1,43 @@
+# Templates
+
+jack comes with starter templates to get you building fast. Each template is batteries-included and deploys in seconds.
+
+## Available Templates
+
+| Template | Description | Features |
+|----------|-------------|----------|
+| [**miniapp**](/templates/miniapp) | Farcaster Frame mini-app | React, Vite, D1 database, Neynar API |
+| [**api**](/templates/api) | Hono API endpoint | Hono router, CORS, TypeScript |
+
+## Quick Start
+
+```bash
+# Interactive - prompts for template
+jack new my-app
+
+# Direct - specify template
+jack new my-app -t miniapp
+jack new my-api -t api
+```
+
+## Template Philosophy
+
+Templates follow the **omakase** principle: batteries-included, ready to use, no configuration needed.
+
+### What's Included
+
+- All runtime dependencies pre-installed
+- `bun.lock` for fast installs (~5s vs ~12s)
+- Working example code you can modify
+- Deployment configuration ready to go
+- `AGENTS.md` for AI-assisted development
+
+### What's Not Included
+
+- Deployment tools (wrangler is installed globally by jack)
+- Unused optional features
+- Boilerplate you'll delete anyway
+
+## Creating Custom Templates
+
+Templates are just folders. Want to add one? See the [template development guide](https://github.com/hellno/jack/blob/main/templates/CLAUDE.md).

@@ -1,0 +1,53 @@
+# Using with AI Agents
+
+jack is built for AI-assisted development. Here's how to get the most out of it.
+
+## MCP Server
+
+jack includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) server that lets AI agents deploy and manage projects directly.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `create_project` | Create and deploy a new project |
+| `deploy_project` | Deploy the current project |
+| `get_project_status` | Check deployment status |
+| `list_projects` | List all projects |
+
+### Setup
+
+The MCP server is configured automatically when you run `jack new`. It adds configuration to:
+
+- Claude Code (`~/.claude/mcp.json`)
+- Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`)
+
+### Manual Setup
+
+To manually start the MCP server:
+
+```bash
+jack mcp serve
+```
+
+## AGENTS.md
+
+Every jack project includes an `AGENTS.md` file with instructions for AI agents. This helps Claude Code, Cursor, and other tools understand your project structure.
+
+## Preferred Agent
+
+jack can automatically open your preferred coding agent after creating a project:
+
+```bash
+# Set your preferred agent
+jack agents prefer claude-code  # or: cursor, windsurf
+
+# Now `jack new` will open your agent automatically
+jack new my-app
+```
+
+## Tips for AI-Assisted Development
+
+1. **Let the agent deploy** - AI agents can run `jack ship` directly
+2. **Use the MCP tools** - Agents with MCP access can create/deploy without CLI
+3. **Check AGENTS.md** - Customize it for your project's specific patterns

@@ -1,0 +1,121 @@
+# API Template
+
+A minimal Hono API ready to deploy.
+
+```bash
+jack new my-api -t api
+```
+
+## What You Get
+
+- **Hono** - Fast, lightweight web framework
+- **TypeScript** - Full type safety
+- **CORS** - Pre-configured for cross-origin requests
+- **Health endpoint** - Ready for monitoring
+
+## Project Structure
+
+```
+my-api/
+├── src/
+│   └── index.ts      # API routes
+├── package.json
+├── tsconfig.json
+├── wrangler.toml     # Deployment config
+└── AGENTS.md         # AI context
+```
+
+## Example Code
+
+The template includes working example routes:
+
+```typescript
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+
+const app = new Hono();
+
+app.use("/*", cors());
+
+// Root endpoint
+app.get("/", (c) => {
+  return c.json({ message: "Hello from my-api!" });
+});
+
+// Health check
+app.get("/health", (c) => {
+  return c.json({ status: "ok", timestamp: Date.now() });
+});
+
+// POST endpoint
+app.post("/api/echo", async (c) => {
+  const body = await c.req.json();
+  return c.json({ received: body });
+});
+
+// URL params
+app.get("/api/users/:id", (c) => {
+  const id = c.req.param("id");
+  return c.json({ userId: id });
+});
+
+export default app;
+```
+
+## Adding Routes
+
+Add new routes in `src/index.ts`:
+
+```typescript
+// GET with query params
+app.get("/api/search", (c) => {
+  const query = c.req.query("q");
+  return c.json({ results: [] });
+});
+
+// POST with body
+app.post("/api/items", async (c) => {
+  const body = await c.req.json();
+  // Save to database, etc.
+  return c.json({ created: body }, 201);
+});
+
+// Middleware
+app.use("/api/admin/*", async (c, next) => {
+  const token = c.req.header("Authorization");
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  await next();
+});
+```
+
+## Deploying
+
+```bash
+jack ship
+```
+
+Your API is live. The URL is copied to your clipboard.
+
+## Adding a Database
+
+Need persistent storage? Add a D1 database:
+
+```bash
+jack services db
+```
+
+Then access it in your routes:
+
+```typescript
+app.get("/api/users", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    "SELECT * FROM users"
+  ).all();
+  return c.json({ users: results });
+});
+```
+
+## Resources
+
+- [Hono Documentation](https://hono.dev)
+- [Cloudflare Workers Docs](https://developers.cloudflare.com/workers)
