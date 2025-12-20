@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { parseJsonc } from "../lib/jsonc.ts";
 import type { Template } from "./types";
 
 // Resolve templates directory relative to this file (src/templates -> templates)
@@ -64,7 +65,7 @@ async function loadTemplate(name: string): Promise<Template> {
 		hooks?: Template["hooks"];
 	} = { name, description: "", secrets: [] };
 	if (existsSync(metadataPath)) {
-		metadata = JSON.parse(await readFile(metadataPath, "utf-8"));
+		metadata = parseJsonc(await readFile(metadataPath, "utf-8"));
 	}
 
 	// Read all template files
