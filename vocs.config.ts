@@ -5,6 +5,27 @@ export default defineConfig({
   title: "jack",
   description:
     "Ship before you forget why you started. The vibecoder's deployment CLI.",
+  head: [
+    {
+      tag: "meta",
+      attrs: {
+        name: "fc:miniapp",
+        content: JSON.stringify({
+          version: "1",
+          imageUrl: "https://getjack.org/jack-demo.gif",
+          button: {
+            title: "Open Docs",
+            action: {
+              type: "launch_miniapp",
+              name: "jack",
+              splashImageUrl: "https://getjack.org/icon.png",
+              splashBackgroundColor: "#0a0a0a",
+            },
+          },
+        }),
+      },
+    },
+  ],
   logoUrl: {
     light: "/logo-light.svg",
     dark: "/logo-dark.svg",
