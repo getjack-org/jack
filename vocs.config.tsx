@@ -1,45 +1,29 @@
 import { defineConfig } from "vocs";
 
+const miniappMeta = JSON.stringify({
+  version: "1",
+  imageUrl: "https://docs.getjack.org/jack-demo.gif",
+  button: {
+    title: "Open Docs",
+    action: {
+      type: "launch_miniapp",
+      name: "jack",
+      splashImageUrl: "https://docs.getjack.org/icon.png",
+      splashBackgroundColor: "#0a0a0a",
+    },
+  },
+});
+
 export default defineConfig({
   rootDir: "docs",
   title: "jack",
   description:
     "Ship before you forget why you started. The vibecoder's deployment CLI.",
-  head: [
-    {
-      tag: "meta",
-      attrs: {
-        name: "fc:miniapp",
-        content: JSON.stringify({
-          version: "1",
-          imageUrl: "https://docs.getjack.org/jack-demo.gif",
-          button: {
-            title: "Open Docs",
-            action: {
-              type: "launch_miniapp",
-              name: "jack",
-              splashImageUrl: "https://docs.getjack.org/icon.png",
-              splashBackgroundColor: "#0a0a0a",
-            },
-          },
-        }),
-      },
-    },
-    {
-      tag: "script",
-      attrs: { type: "module" },
-      children: `
-        import { sdk } from 'https://esm.sh/@farcaster/miniapp-sdk@0.5.1';
-        sdk.actions.ready();
-      `,
-    },
-  ],
   logoUrl: {
     light: "/logo-light.svg",
     dark: "/logo-dark.svg",
   },
   iconUrl: "/favicon.ico",
-  // basePath: "/jack", // Not needed with custom domain
   topNav: [
     { text: "Guide", link: "/getting-started" },
     { text: "Templates", link: "/templates" },
@@ -86,4 +70,23 @@ export default defineConfig({
       link: "https://discord.gg/fb64krv48R",
     },
   ],
+  vite: {
+    plugins: [
+      {
+        name: "inject-farcaster-meta",
+        transformIndexHtml(html) {
+          return html.replace(
+            "</head>",
+            `<meta name="fc:miniapp" content='${miniappMeta}' />
+<script type="module">
+  import('https://esm.sh/@farcaster/miniapp-sdk@0.5.1').then(({ sdk }) => {
+    sdk.actions.ready();
+  }).catch(() => {});
+</script>
+</head>`
+          );
+        },
+      },
+    ],
+  },
 });
