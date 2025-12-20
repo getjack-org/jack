@@ -12,13 +12,13 @@ export default defineConfig({
         name: "fc:miniapp",
         content: JSON.stringify({
           version: "1",
-          imageUrl: "https://getjack.org/jack-demo.gif",
+          imageUrl: "https://docs.getjack.org/jack-demo.gif",
           button: {
             title: "Open Docs",
             action: {
               type: "launch_miniapp",
               name: "jack",
-              splashImageUrl: "https://getjack.org/icon.png",
+              splashImageUrl: "https://docs.getjack.org/icon.png",
               splashBackgroundColor: "#0a0a0a",
             },
           },
