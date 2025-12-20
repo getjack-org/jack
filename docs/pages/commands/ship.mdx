@@ -1,0 +1,39 @@
+# jack ship
+
+Deploy your project to the edge.
+
+## Usage
+
+```bash
+jack ship
+```
+
+Run this from your project directory. That's it.
+
+## What Happens
+
+1. Builds your project (if needed)
+2. Uploads to Cloudflare Workers
+3. Your changes are live in seconds
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--debug` | Show detailed deployment logs |
+
+## Examples
+
+```bash
+# Deploy current project
+jack ship
+
+# Deploy with debug output
+jack ship --debug
+```
+
+## Notes
+
+- Run from your project root (where `wrangler.json` lives)
+- First deploy may prompt for Cloudflare authentication
+- Subsequent deploys are instant

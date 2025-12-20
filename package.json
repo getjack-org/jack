@@ -37,7 +37,10 @@
     "dev": "bun run src/index.ts",
     "build": "bun build --compile src/index.ts --outfile dist/jack",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "docs:dev": "vocs dev",
+    "docs:build": "vocs build",
+    "docs:preview": "vocs preview"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
@@ -48,6 +51,9 @@
     "@modelcontextprotocol/sdk": "^1.25.1",
     "meow": "^14.0.0",
     "posthog-node": "^5.17.4",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "vocs": "^1.4.0",
     "yocto-spinner": "^1.0.0",
     "zod": "^4.2.1"
   }

@@ -4,7 +4,9 @@ dist/
 
 # Test projects created during development
 tmp/
-docs/
+
+# Internal docs (PRDs, architecture notes)
+docs/internal/
 
 # IDE and tool configs
 .claude/
@@ -15,3 +17,6 @@ docs/
 .secrets.json
 *.log
 .DS_Store
+
+# Vocs build output
+docs/dist/

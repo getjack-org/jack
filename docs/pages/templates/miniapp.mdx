@@ -1,0 +1,115 @@
+# Miniapp Template
+
+A Farcaster Frame mini-app with React, database, and Neynar API integration.
+
+```bash
+jack new my-miniapp -t miniapp
+```
+
+## What You Get
+
+- **React + Vite** - Fast frontend development
+- **Hono API** - Backend routes on the same deployment
+- **D1 Database** - SQLite database included
+- **Neynar API** - Farcaster data integration
+- **Tailwind CSS** - Styling ready to go
+
+## Project Structure
+
+```
+my-miniapp/
+├── src/
+│   ├── App.tsx         # React application
+│   ├── main.tsx        # Entry point
+│   ├── worker.ts       # Hono API routes
+│   ├── wagmi.ts        # Wallet configuration
+│   ├── hooks/          # React hooks
+│   ├── lib/            # Utilities
+│   └── index.css       # Styles
+├── schema.sql          # Database schema
+├── package.json
+├── vite.config.ts
+├── wrangler.jsonc      # Deployment config
+└── AGENTS.md           # AI context
+```
+
+## Requirements
+
+This template requires a **Neynar API key** for Farcaster integration.
+
+1. Get a free key at [neynar.com](https://neynar.com)
+2. jack will prompt for it on first deploy
+
+## Database Schema
+
+The template includes a guestbook example:
+
+```sql
+CREATE TABLE IF NOT EXISTS guestbook (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fid INTEGER NOT NULL,
+  username TEXT NOT NULL,
+  display_name TEXT,
+  pfp_url TEXT,
+  message TEXT NOT NULL CHECK(length(message) <= 140),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+## API Routes
+
+The backend includes working examples:
+
+```typescript
+// GET /api/notifications?fid=123
+// Proxies to Neynar API with your API key
+
+// GET /api/guestbook
+// Fetch recent guestbook entries from D1
+
+// POST /api/guestbook
+// Add a new entry { fid, username, message }
+```
+
+## Frontend
+
+The React app uses the Farcaster Miniapp SDK:
+
+```typescript
+import { useMiniAppContext } from "@farcaster/miniapp-react";
+
+function App() {
+  const { context } = useMiniAppContext();
+
+  // context.user contains the current Farcaster user
+  // context.client contains frame information
+}
+```
+
+## Deploying
+
+```bash
+jack ship
+```
+
+After deploy, jack will:
+1. Copy the URL to your clipboard
+2. Offer to generate a Farcaster manifest
+3. Link to the Farcaster preview tool
+
+## Development
+
+Run locally with hot reload:
+
+```bash
+bun run dev
+```
+
+The frontend runs on `localhost:5173`, proxying API requests to the worker.
+
+## Resources
+
+- [Farcaster Miniapp Docs](https://miniapps.farcaster.xyz)
+- [Neynar API Reference](https://docs.neynar.com)
+- [Hono Documentation](https://hono.dev)
+- [Cloudflare D1 Docs](https://developers.cloudflare.com/d1)

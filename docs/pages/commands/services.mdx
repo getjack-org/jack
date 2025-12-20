@@ -1,0 +1,66 @@
+# jack services
+
+Manage databases and storage for your project.
+
+## Usage
+
+```bash
+jack services [service]
+```
+
+## Available Services
+
+| Service | Description |
+|---------|-------------|
+| `db` | SQLite database (D1) |
+| `storage` | File storage (R2) |
+
+## Examples
+
+```bash
+# Add a database to your project
+jack services db
+
+# Add file storage
+jack services storage
+```
+
+## What Happens
+
+When you add a service:
+
+1. Creates the resource in your Cloudflare account
+2. Binds it to your project
+3. Updates your project configuration
+4. Redeploys with the new binding
+
+## Using Services in Code
+
+After adding a database:
+
+```typescript
+// Access via environment binding
+export default {
+  async fetch(request, env) {
+    const result = await env.DB.prepare(
+      "SELECT * FROM users"
+    ).all();
+    return Response.json(result);
+  }
+}
+```
+
+After adding storage:
+
+```typescript
+export default {
+  async fetch(request, env) {
+    // Upload a file
+    await env.STORAGE.put("hello.txt", "Hello, World!");
+
+    // Get a file
+    const file = await env.STORAGE.get("hello.txt");
+    return new Response(file.body);
+  }
+}
+```

@@ -1,0 +1,31 @@
+# jack ls
+
+List all your jack projects.
+
+## Usage
+
+```bash
+jack ls
+```
+
+## Output
+
+Shows a table of all projects with:
+
+| Column | Description |
+|--------|-------------|
+| Name | Project name |
+| Status | Deployed / Not deployed |
+| URL | Live URL (if deployed) |
+| Path | Local project path |
+
+## Examples
+
+```bash
+$ jack ls
+
+  Name          Status      URL                              Path
+  my-app        deployed    https://my-app.workers.dev       ~/projects/my-app
+  test-api      deployed    https://test-api.workers.dev     ~/projects/test-api
+  wip-project   local       -                                ~/projects/wip
+```
