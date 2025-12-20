@@ -7,6 +7,7 @@
   <a href="https://www.npmjs.com/package/@getjack/jack"><img src="https://img.shields.io/npm/v/@getjack/jack" alt="npm"></a>
   <a href="https://github.com/getjack-org/jack/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license"></a>
   <a href="https://docs.getjack.org"><img src="https://img.shields.io/badge/docs-getjack.org-green" alt="docs"></a>
+  <a href="https://discord.gg/fb64krv48R"><img src="https://img.shields.io/badge/discord-community-5865F2" alt="discord"></a>
 </p>
 
 ---

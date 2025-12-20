@@ -47,7 +47,11 @@ export default defineConfig({
   socials: [
     {
       icon: "github",
-      link: "https://github.com/hellno/jack",
+      link: "https://github.com/getjack-org/jack",
+    },
+    {
+      icon: "discord",
+      link: "https://discord.gg/fb64krv48R",
     },
   ],
 });
