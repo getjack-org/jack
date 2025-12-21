@@ -79,8 +79,12 @@ export default defineConfig({
             "</head>",
             `<meta name="fc:miniapp" content='${miniappMeta}' />
 <script type="module">
-  import('https://esm.sh/@farcaster/miniapp-sdk@0.5.1').then(({ sdk }) => {
-    sdk.actions.ready();
+  import('https://esm.sh/@farcaster/miniapp-sdk@0.2.1').then(({ sdk }) => {
+    if (document.readyState === 'complete') {
+      sdk.actions.ready();
+    } else {
+      window.addEventListener('load', () => sdk.actions.ready());
+    }
   }).catch(() => {});
 </script>
 </head>`
