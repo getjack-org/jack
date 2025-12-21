@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "vocs.config.ts"
+      - "vocs.config.tsx"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
