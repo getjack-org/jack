@@ -13,7 +13,14 @@
 		"noFallthroughCasesInSwitch": true,
 		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true,
-		"types": ["bun-types"]
+		"declaration": true,
+		"declarationMap": true,
+		"composite": true
 	},
-	"include": ["src/**/*"]
+	"references": [
+		{ "path": "./apps/cli" },
+		{ "path": "./apps/auth-worker" },
+		{ "path": "./apps/api-worker" },
+		{ "path": "./packages/auth" }
+	]
 }
