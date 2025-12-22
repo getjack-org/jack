@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import { debug } from "./debug.ts";
+import { parseJsonc } from "./jsonc.ts";
 import { output } from "./output.ts";
 
 /**
@@ -57,6 +58,31 @@ export async function hasD1Config(projectDir: string): Promise<boolean> {
 		return content.includes("d1_databases");
 	} catch {
 		return false;
+	}
+}
+
+export interface D1Binding {
+	binding?: string;
+	database_id?: string;
+	database_name?: string;
+}
+
+/**
+ * Read D1 bindings from wrangler.jsonc
+ */
+export async function getD1Bindings(projectDir: string): Promise<D1Binding[]> {
+	const wranglerPath = join(projectDir, "wrangler.jsonc");
+
+	if (!existsSync(wranglerPath)) {
+		return [];
+	}
+
+	try {
+		const content = await Bun.file(wranglerPath).text();
+		const config = parseJsonc(content) as { d1_databases?: D1Binding[] };
+		return Array.isArray(config.d1_databases) ? config.d1_databases : [];
+	} catch {
+		return [];
 	}
 }
 
