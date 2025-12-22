@@ -16,9 +16,7 @@ export default async function whoami(): Promise<void> {
 	item(`ID: ${creds.user.id}`);
 
 	if (creds.user.first_name) {
-		item(
-			`Name: ${creds.user.first_name}${creds.user.last_name ? ` ${creds.user.last_name}` : ""}`,
-		);
+		item(`Name: ${creds.user.first_name}${creds.user.last_name ? ` ${creds.user.last_name}` : ""}`);
 	}
 
 	const expiresIn = creds.expires_at - Math.floor(Date.now() / 1000);

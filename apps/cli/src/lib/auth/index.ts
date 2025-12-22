@@ -6,7 +6,7 @@ export {
 	refreshToken,
 	startDeviceAuth,
 } from "./client.ts";
-export { requireAuth, getCurrentUser } from "./guard.ts";
+export { requireAuth, requireAuthOrLogin, getCurrentUser } from "./guard.ts";
 export {
 	deleteCredentials,
 	getCredentials,
