@@ -1,139 +1,117 @@
-# Jack CLI - Agent Context
+# Jack Monorepo
 
-## Project Overview
-
-jack is a CLI tool for vibecoders to rapidly deploy to Cloudflare Workers. Read `docs/SPIRIT.md` for the philosophy.
-
-## Key Directories
+## Structure
 
 ```
-src/
-├── index.ts           # CLI entry point and command router
-├── commands/          # Command implementations
-└── lib/               # Shared utilities (config, telemetry, etc.)
-
-docs/
-├── SPIRIT.md          # Philosophy and design principles
-├── PRD-*.md           # Product requirement documents
-└── telemetry-events.md # Event registry (when created)
-
-templates/             # Project templates (miniapp, api, etc.)
+jack/
+├── apps/
+│   ├── cli/              # @getjack/jack CLI (npm published)
+│   ├── auth-worker/      # Authentication service (Cloudflare Worker)
+│   └── api-worker/       # API service with D1 (Cloudflare Worker)
+├── packages/
+│   └── auth/             # Shared JWT verification middleware
+├── docs/                 # Documentation site (vocs)
+├── migrations/           # D1 database migrations
+├── vocs.config.tsx       # Docs configuration
+└── package.json          # Workspace root
 ```
 
-## Project Operations Architecture (CLI + MCP)
+## Workspaces
 
-jack uses a shared core so CLI and MCP stay aligned:
+- **apps/cli**: The `jack` CLI tool (`@getjack/jack`) - see `apps/cli/CLAUDE.md` for detailed context
+- **apps/auth-worker**: WorkOS device auth proxy at `auth.getjack.org`
+- **apps/api-worker**: User API with D1 database at `api.getjack.org`
+- **packages/auth**: Shared `@getjack/auth` package for JWT middleware
 
-- `src/lib/project-operations.ts` is the single source of truth for create/deploy/status/cleanup.
-- The library is silent by default and returns data only; CLI/MCP supply a reporter or stay quiet.
-- Errors use `JackError` (code + suggestion + meta). CLI renders human output and exits; MCP maps to structured error responses.
-- Hooks run interactive in CLI, non-interactive for MCP/CI via `interactive` flags.
-- Deploy extras (secrets prompt + auto-sync) live in the library behind options; CLI enables them, MCP disables them.
-- CLI wrappers should only add UX glue (e.g., open preferred agent), not re-implement core logic.
-
-Tradeoff: the library may do more IO to prevent drift; wrappers stay thin.
-
-## Telemetry System
-
-**IMPORTANT:** jack has a telemetry system using PostHog. When adding or modifying commands:
-
-### Automatic Tracking (No Action Needed)
-Commands wrapped with `withTelemetry()` in `src/index.ts` automatically track:
-- `command_invoked` - when command starts
-- `command_completed` - when command succeeds (with duration)
-- `command_failed` - when command errors (with error type)
-
-### Custom Events (When Needed)
-For business-specific events (e.g., project created, deploy started):
-
-```typescript
-import { track, Events } from '../lib/telemetry.ts'
-
-// Only track meaningful business events
-track(Events.PROJECT_CREATED, { template: 'miniapp', cloud_mode: 'byoc' })
-```
-
-### Adding New Events
-1. Add to `Events` registry in `src/lib/telemetry.ts`
-2. Document in `docs/telemetry-events.md`
-3. Use `track(Events.NEW_EVENT, { ... })` where needed
-
-See `docs/PRD-TELEMETRY.md` for full implementation details.
-
-### Privacy Rules
-- Never track: file paths, project names, URLs, secrets, user input
-- Only track: command names, error types (not messages), durations, templates
-
-## User Properties
-
-Set via `identify()` at startup, sent with all events:
-- `jack_version`, `os`, `arch`, `node_version`, `is_ci`
-- `config_style`: 'byoc' (bring your own cloud) or 'jack-cloud'
-
-## Testing Commands
+## Commands
 
 ```bash
-# Run CLI directly
-./src/index.ts new test-app
-./src/index.ts ship
+# Development
+bun run dev:cli           # Run CLI locally
+bun run dev:auth          # Run auth worker locally
+bun run dev:api           # Run API worker locally
 
-# With debug output
-./src/index.ts --debug ship
+# Or run directly
+./apps/cli/src/index.ts --help
 
-# Disable telemetry for testing
-JACK_TELEMETRY_DISABLED=1 ./src/index.ts ship
+# Deployment
+bun run deploy:auth       # Deploy auth worker
+bun run deploy:api        # Deploy API worker
+
+# Linting
+bun run lint              # Check all packages
+bun run format            # Format all packages
 ```
+
+## Adding Dependencies
+
+```bash
+# Add to specific workspace
+bun add -d typescript --cwd apps/auth-worker
+
+# Add to root (shared dev deps)
+bun add -d @biomejs/biome -w
+```
+
+## Package Links
+
+Local packages use workspace protocol:
+```json
+"dependencies": {
+  "@getjack/auth": "workspace:*"
+}
+```
+
+## packages/auth
+
+Shared JWT verification using WorkOS JWKS:
+
+```typescript
+import { authMiddleware } from "@getjack/auth";
+
+// Use in Hono routes
+app.use("/api/*", authMiddleware());
+
+// Access user in handlers
+app.get("/api/me", (c) => {
+  const auth = c.get("auth"); // { userId, email, firstName, lastName }
+  return c.json({ user: auth });
+});
+```
+
+## API Worker D1 Setup
+
+Before deploying api-worker:
+```bash
+# Create the D1 database
+wrangler d1 create jack-api-db
+
+# Update apps/api-worker/wrangler.toml with the database_id
+
+# Apply migrations
+bun run --cwd apps/api-worker db:migrate
+```
+
+## Auth Worker Secrets
+
+Set WorkOS API key for auth-worker:
+```bash
+wrangler secret put WORKOS_API_KEY --cwd apps/auth-worker
+```
+
+## CI/CD Notes
+
+**npm Publishing (OIDC):** The publish workflow uses GitHub OIDC for npm authentication.
+- `id-token: write` permission + `--provenance` flag = no NPM_TOKEN needed
+- Do NOT add NODE_AUTH_TOKEN or NPM_TOKEN to the workflow
+- This is more secure - publishes are cryptographically linked to the GitHub Actions run
+
+**GitHub Secrets Required:**
+- `CLOUDFLARE_API_TOKEN` - For deploying workers (Edit Workers + D1 permissions)
 
 ## Code Style
 
 - TypeScript with Bun runtime
-- Use `biome` for formatting: `bun run biome check --write .`
+- Use `biome` for formatting: `bun run lint` / `bun run format`
 - Prefer explicit types over inference for public APIs
 - Follow existing patterns in the codebase
-- **User-facing output**: Use jargon-free terms (deployed/undeployed, database, cloud backup) unless user is configuring specific infra. Don't use Lambda, Workers, RDS, H100, D1, R2 etc.
-- **Prompts**: Use `select()` with "1. Yes" / "2. No" choices, show "Esc to skip" hint. Not Y/n confirms.
-
-## MCP Server
-
-jack includes a bundled MCP (Model Context Protocol) server for AI agent integration. This allows Claude Code and Claude Desktop to use jack programmatically.
-
-### Automatic Setup
-
-MCP configs are installed automatically during `jack init` to all detected IDEs (currently Claude Code and Claude Desktop).
-
-### Manual Server Start
-
-```bash
-jack mcp serve              # Uses current directory
-jack mcp serve --project /path/to/app  # Explicit project path
-```
-
-### Available MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `create_project` | Create and deploy a new project (wraps `jack new`) |
-| `deploy_project` | Deploy current project (wraps `jack ship`) |
-| `get_project_status` | Get deployment state, URL, last deploy time |
-| `list_projects` | List all projects from registry |
-
-### Available MCP Resources
-
-| Resource | Description |
-|----------|-------------|
-| `agents://context` | Returns AGENTS.md and CLAUDE.md content |
-
-### Response Format
-
-All MCP tools return structured JSON:
-```json
-{
-  "success": true,
-  "data": { ... },
-  "meta": { "duration_ms": 1234, "jack_version": "0.1.0" }
-}
-```
-
-### Telemetry
-
-MCP tool invocations are tracked with `platform: 'mcp'` to distinguish from CLI usage.
