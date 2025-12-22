@@ -2,11 +2,22 @@
 	"name": "miniapp",
 	"description": "Farcaster Miniapp (React + Vite)",
 	"secrets": ["NEYNAR_API_KEY"],
-	"capabilities": ["db"],
-	"requires": ["DB"],
+	"optionalSecrets": [
+		{
+			"name": "OPENAI_API_KEY",
+			"description": "For better AI (optional, falls back to free Workers AI)",
+			"setupUrl": "https://platform.openai.com/api-keys"
+		}
+	],
+	"capabilities": ["db", "ai"],
+	"requires": ["DB", "AI"],
+	"intent": {
+		"keywords": ["mini app", "miniapp", "frontend", "ui", "dashboard"],
+		"examples": ["simple dashboard", "farcaster miniapp"]
+	},
 	"agentContext": {
-		"summary": "A Farcaster miniapp using React + Vite frontend, Hono API on Cloudflare Workers, with D1 SQLite database.",
-		"full_text": "## Project Structure\n\n- `src/App.tsx` - React application entry point\n- `src/worker.ts` - Hono API routes for backend\n- `src/components/` - React components\n- `schema.sql` - D1 database schema\n- `wrangler.jsonc` - Cloudflare Workers configuration\n\n## Conventions\n\n- API routes are defined with Hono in `src/worker.ts`\n- Frontend uses Vite for bundling and is served as static assets\n- Database uses D1 prepared statements for queries\n- Secrets are managed via jack and pushed to Cloudflare\n- Wrangler is installed globally by jack, not in project dependencies\n\n## Resources\n\n- [Farcaster Miniapp Docs](https://miniapps.farcaster.xyz)\n- [Hono Documentation](https://hono.dev)\n- [Cloudflare D1 Docs](https://developers.cloudflare.com/d1)"
+		"summary": "A Farcaster miniapp using React + Vite frontend, Hono API on Cloudflare Workers, with D1 SQLite database and AI capabilities.",
+		"full_text": "## Project Structure\n\n- `src/App.tsx` - React application entry point\n- `src/worker.ts` - Hono API routes for backend\n- `src/hooks/useAI.ts` - AI generation hook\n- `src/components/` - React components\n- `schema.sql` - D1 database schema\n- `wrangler.jsonc` - Cloudflare Workers configuration\n\n## Conventions\n\n- API routes are defined with Hono in `src/worker.ts`\n- Frontend uses Vite for bundling and is served as static assets\n- Database uses D1 prepared statements for queries\n- Secrets are managed via jack and pushed to Cloudflare\n- Wrangler is installed globally by jack, not in project dependencies\n\n## AI Feature\n\nThe template includes a `useAI()` hook for AI text generation.\n\n### Usage\n```tsx\nconst { generate, isLoading, error } = useAI();\nconst result = await generate('Your prompt here');\n// result.result = AI response text\n// result.provider = 'openai' | 'workers-ai'\n```\n\n### Providers\n- **Workers AI** (default): Free, uses Llama 3.1 8B. No API key needed.\n- **OpenAI** (optional): Better quality with gpt-4o-mini. Requires OPENAI_API_KEY.\n\n### Costs\n- **Workers AI**: Free (included in Cloudflare Workers)\n- **OpenAI gpt-4o-mini**: ~$0.0001 per request (~$0.15/1M input + $0.60/1M output tokens)\n- Typical usage (10 requests/day): ~$0.03/month\n\n### Rate Limiting\n- 10 requests per minute per IP address\n- Returns 429 with Retry-After header when exceeded\n- Rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining\n\n## Resources\n\n- [Farcaster Miniapp Docs](https://miniapps.farcaster.xyz)\n- [Hono Documentation](https://hono.dev)\n- [Cloudflare D1 Docs](https://developers.cloudflare.com/d1)\n- [Workers AI Models](https://developers.cloudflare.com/workers-ai/models/)"
 	},
 	"hooks": {
 		"preDeploy": [
