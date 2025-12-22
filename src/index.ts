@@ -25,6 +25,9 @@ const cli = meow(
     projects            Manage project registry
     services            Manage project services
     mcp serve           Start MCP server for AI agents
+    login               Sign in to jack cloud
+    logout              Sign out
+    whoami              Show current user
     telemetry           Manage anonymous usage data
     about               The story behind jack
 
@@ -243,6 +246,21 @@ switch (command) {
 	case "info": {
 		const { default: projects } = await import("./commands/projects.ts");
 		await withTelemetry("projects", projects)("info", args);
+		break;
+	}
+	case "login": {
+		const { default: login } = await import("./commands/login.ts");
+		await withTelemetry("login", login)();
+		break;
+	}
+	case "logout": {
+		const { default: logout } = await import("./commands/logout.ts");
+		await withTelemetry("logout", logout)();
+		break;
+	}
+	case "whoami": {
+		const { default: whoami } = await import("./commands/whoami.ts");
+		await withTelemetry("whoami", whoami)();
 		break;
 	}
 	default:
