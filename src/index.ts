@@ -159,7 +159,9 @@ switch (command) {
 	}
 	case "agents": {
 		const { default: agents } = await import("./commands/agents.ts");
-		await withTelemetry("agents", agents)(args[0], args.slice(1));
+		await withTelemetry("agents", agents)(args[0], args.slice(1), {
+			project: cli.flags.project,
+		});
 		break;
 	}
 	case "sync": {
