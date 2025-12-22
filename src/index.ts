@@ -14,6 +14,7 @@ const cli = meow(
   Commands
     init                Jack in (one-time setup)
     new [name]          Create and deploy a project
+    vibe "<phrase>"     Quick project from intent (alias for new --intent)
     ship                Push to production
     logs                Stream live logs
     agents              Manage AI agent templates
@@ -34,6 +35,7 @@ const cli = meow(
 
   Options
     -t, --template  Template: miniapp (default), api, or user/repo
+    -m, --message   Intent phrase for project customization
     -d, --debug     Show timing and debug logs
     --verbose       Show detailed output
     --dry-run       Preview changes without applying
@@ -58,6 +60,10 @@ const cli = meow(
 			template: {
 				type: "string",
 				shortFlag: "t",
+			},
+			message: {
+				type: "string",
+				shortFlag: "m",
 			},
 			debug: {
 				type: "boolean",
@@ -140,7 +146,19 @@ switch (command) {
 	case "new":
 	case "in": {
 		const { default: newProject } = await import("./commands/new.ts");
-		await withTelemetry("new", newProject)(args[0], { template: cli.flags.template });
+		await withTelemetry("new", newProject)(args[0], {
+			template: cli.flags.template,
+			intent: cli.flags.message,
+		});
+		break;
+	}
+	case "vibe": {
+		const { default: newProject } = await import("./commands/new.ts");
+		// vibe always treats first arg as intent phrase
+		await withTelemetry("vibe", newProject)(undefined, {
+			template: cli.flags.template,
+			intent: args[0],
+		});
 		break;
 	}
 	case "ship":

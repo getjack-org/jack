@@ -1,32 +1,12 @@
-const adjectives = [
-	"swift",
-	"bright",
-	"calm",
-	"bold",
-	"cool",
-	"fast",
-	"keen",
-	"neat",
-	"warm",
-	"wise",
-];
+import { humanId } from "human-id";
 
-const nouns = [
-	"wave",
-	"spark",
-	"cloud",
-	"star",
-	"leaf",
-	"stone",
-	"wind",
-	"flame",
-	"brook",
-	"ridge",
-];
-
+/**
+ * Generate a Heroku-style project name
+ * Examples: "brave-moon-7xz", "calm-star-2ab"
+ */
 export function generateProjectName(): string {
-	const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-	const noun = nouns[Math.floor(Math.random() * nouns.length)];
-	const suffix = Math.random().toString(16).slice(2, 6);
-	return `${adj}-${noun}-${suffix}`;
+	return humanId({
+		separator: "-",
+		capitalize: false,
+	});
 }
