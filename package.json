@@ -1,61 +1,28 @@
 {
-  "name": "@getjack/jack",
-  "version": "0.1.2",
-  "description": "Ship before you forget why you started. The vibecoder's deployment CLI.",
-  "license": "Apache-2.0",
-  "type": "module",
-  "bin": {
-    "jack": "./src/index.ts"
-  },
-  "files": [
-    "src",
-    "templates"
-  ],
-  "engines": {
-    "bun": ">=1.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/getjack-org/jack"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "keywords": [
-    "cli",
-    "deploy",
-    "vibecoding",
-    "vibecode",
-    "shipping",
-    "edge",
-    "serverless",
-    "ai-agent",
-    "claude",
-    "cursor"
-  ],
-  "scripts": {
-    "dev": "bun run src/index.ts",
-    "build": "bun build --compile src/index.ts --outfile dist/jack",
-    "lint": "biome check .",
-    "format": "biome format --write .",
-    "docs:dev": "vocs dev",
-    "docs:build": "vocs build",
-    "docs:preview": "vocs preview"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^1.9.0",
-    "bun-types": "latest"
-  },
-  "dependencies": {
-    "@inquirer/prompts": "^7.0.0",
-    "@modelcontextprotocol/sdk": "^1.25.1",
-    "human-id": "^4.1.3",
-    "meow": "^14.0.0",
-    "posthog-node": "^5.17.4",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "vocs": "^1.4.0",
-    "yocto-spinner": "^1.0.0",
-    "zod": "^4.2.1"
-  }
+	"name": "jack-monorepo",
+	"private": true,
+	"workspaces": ["apps/*", "packages/*"],
+	"scripts": {
+		"dev:cli": "bun run --cwd apps/cli dev",
+		"dev:auth": "bun run --cwd apps/auth-worker dev",
+		"dev:api": "bun run --cwd apps/api-worker dev",
+		"build": "bun run --filter '*' build",
+		"lint": "biome check .",
+		"format": "biome format --write .",
+		"deploy:auth": "bun run --cwd apps/auth-worker deploy",
+		"deploy:api": "bun run --cwd apps/api-worker deploy",
+		"docs:dev": "vocs dev",
+		"docs:build": "vocs build",
+		"docs:preview": "vocs preview"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.0",
+		"bun-types": "latest",
+		"typescript": "^5.0.0"
+	},
+	"dependencies": {
+		"react": "^19.2.3",
+		"react-dom": "^19.2.3",
+		"vocs": "^1.4.0"
+	}
 }
