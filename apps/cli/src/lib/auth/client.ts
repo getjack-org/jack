@@ -1,10 +1,5 @@
 import { getAuthApiUrl } from "./constants.ts";
-import {
-	type AuthCredentials,
-	getCredentials,
-	isTokenExpired,
-	saveCredentials,
-} from "./store.ts";
+import { type AuthCredentials, getCredentials, isTokenExpired, saveCredentials } from "./store.ts";
 
 export interface DeviceAuthResponse {
 	device_code: string;
@@ -86,10 +81,12 @@ export async function getValidAccessToken(): Promise<string | null> {
 	if (isTokenExpired(creds)) {
 		try {
 			const newTokens = await refreshToken(creds.refresh_token);
+			// Default to 5 minutes if expires_in not provided
+			const expiresIn = newTokens.expires_in ?? 300;
 			const newCreds: AuthCredentials = {
 				access_token: newTokens.access_token,
 				refresh_token: newTokens.refresh_token,
-				expires_at: Math.floor(Date.now() / 1000) + newTokens.expires_in,
+				expires_at: Math.floor(Date.now() / 1000) + expiresIn,
 				user: newTokens.user,
 			};
 			await saveCredentials(newCreds);

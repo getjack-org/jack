@@ -1,14 +1,17 @@
-import {
-	type DeviceAuthResponse,
-	pollDeviceToken,
-	startDeviceAuth,
-} from "../lib/auth/client.ts";
+import { type DeviceAuthResponse, pollDeviceToken, startDeviceAuth } from "../lib/auth/client.ts";
 import { type AuthCredentials, saveCredentials } from "../lib/auth/store.ts";
 import { error, info, spinner, success } from "../lib/output.ts";
 
-export default async function login(): Promise<void> {
-	info("Logging in to jack cloud...");
-	console.error("");
+interface LoginOptions {
+	/** Skip the initial "Logging in..." message (used when called from auto-login) */
+	silent?: boolean;
+}
+
+export default async function login(options: LoginOptions = {}): Promise<void> {
+	if (!options.silent) {
+		info("Logging in to jack cloud...");
+		console.error("");
+	}
 
 	const spin = spinner("Starting login...");
 	let deviceAuth: DeviceAuthResponse;
@@ -54,10 +57,12 @@ export default async function login(): Promise<void> {
 			if (tokens) {
 				pollSpin.stop();
 
+				// Default to 5 minutes if expires_in not provided
+				const expiresIn = tokens.expires_in ?? 300;
 				const creds: AuthCredentials = {
 					access_token: tokens.access_token,
 					refresh_token: tokens.refresh_token,
-					expires_at: Math.floor(Date.now() / 1000) + tokens.expires_in,
+					expires_at: Math.floor(Date.now() / 1000) + expiresIn,
 					user: tokens.user,
 				};
 				await saveCredentials(creds);
