@@ -40,11 +40,7 @@ const ListProjectsSchema = z.object({
 		.describe("Filter projects by status (defaults to 'all')"),
 });
 
-export function registerTools(
-	server: McpServer,
-	_options: McpServerOptions,
-	debug: DebugLogger,
-) {
+export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
 	// Register tool list handler
 	server.setRequestHandler(ListToolsRequestSchema, async () => {
 		debug("tools/list requested");

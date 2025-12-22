@@ -65,7 +65,7 @@ async function testMcpServer(): Promise<void> {
 			};
 
 			proc.stdout.on("data", handler);
-			proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params, id }) + "\n");
+			proc.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params, id })}\n`);
 		});
 	};
 
