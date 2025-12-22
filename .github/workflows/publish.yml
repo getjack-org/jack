@@ -1,5 +1,10 @@
 name: Publish to npm
 
+# NOTE: This workflow uses OIDC (OpenID Connect) for npm authentication.
+# The `id-token: write` permission + `--provenance` flag allows npm to verify
+# the publish came from this GitHub repo - no NPM_TOKEN secret needed!
+# Do NOT add NODE_AUTH_TOKEN or NPM_TOKEN - OIDC is more secure.
+
 on:
   push:
     tags:
@@ -10,14 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
+      id-token: write  # Required for npm provenance (OIDC auth)
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate version matches tag
         run: |
           TAG=${GITHUB_REF#refs/tags/v}
-          PKG=$(node -p "require('./package.json').version")
+          PKG=$(node -p "require('./apps/cli/package.json').version")
           if [ "$TAG" != "$PKG" ]; then
             echo "Tag v$TAG doesn't match package.json version $PKG"
             exit 1
@@ -25,7 +30,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - run: bun install --frozen-lockfile
+      - run: bun install
 
       - uses: actions/setup-node@v4
         with:
@@ -34,7 +39,9 @@ jobs:
 
       - run: npm install -g npm@latest
 
-      - run: npm publish --provenance --access public
+      - name: Publish CLI to npm
+        working-directory: apps/cli
+        run: npm publish --provenance --access public
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

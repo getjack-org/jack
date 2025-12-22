@@ -48,8 +48,7 @@ const projectDir = join(workRoot, projectName);
 const jackArgsRaw = (process.env.JACK_ARGS ?? "").trim();
 const argvFlags = new Set(process.argv.slice(2));
 const cleanupEnabled = argvFlags.has("--cleanup") || process.env.JACK_IT_CLEANUP === "1";
-const keepRegistry =
-	argvFlags.has("--keep-registry") || process.env.JACK_IT_KEEP_REGISTRY === "1";
+const keepRegistry = argvFlags.has("--keep-registry") || process.env.JACK_IT_KEEP_REGISTRY === "1";
 const logDisabled = argvFlags.has("--no-log") || process.env.JACK_IT_LOG === "0";
 const logPath = logDisabled
 	? null
@@ -176,10 +175,7 @@ async function runCommand(
 	});
 }
 
-async function runJack(
-	args: string[],
-	options: { cwd?: string } = {},
-): Promise<CommandResult> {
+async function runJack(args: string[], options: { cwd?: string } = {}): Promise<CommandResult> {
 	return await runCommand(jackCommand, [...jackBaseArgs, ...args], {
 		cwd: options.cwd,
 		env: jackEnv,
@@ -353,9 +349,7 @@ async function connectMcp(expectedDeployed: boolean | null): Promise<void> {
 			throw new Error("MCP get_project_status returned unexpected project");
 		}
 		if (expectedDeployed !== null && statusData?.deployed !== expectedDeployed) {
-			throw new Error(
-				`MCP get_project_status expected deployed=${String(expectedDeployed)}`,
-			);
+			throw new Error(`MCP get_project_status expected deployed=${String(expectedDeployed)}`);
 		}
 		if (statusData?.local !== true) {
 			throw new Error("MCP get_project_status expected local=true");

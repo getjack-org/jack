@@ -557,7 +557,9 @@ export async function createProject(
 			const result = await runAgentOneShot(oneShotAgent, targetDir, intentPhrase, {
 				info: reporter.info,
 				warn: reporter.warn,
-				status: customizationSpinner ? (message) => (customizationSpinner.text = message) : undefined,
+				status: customizationSpinner
+					? (message) => (customizationSpinner.text = message)
+					: undefined,
 			});
 
 			if (customizationSpinner) {

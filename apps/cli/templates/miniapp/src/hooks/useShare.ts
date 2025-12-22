@@ -35,7 +35,7 @@ export function useShare() {
 			const text = truncateText(options.text, MAX_CAST_LENGTH);
 
 			// Build embeds - SDK expects tuple of 0-2 strings
-			const embeds = embedUrl ? [embedUrl] as [string] : undefined;
+			const embeds = embedUrl ? ([embedUrl] as [string]) : undefined;
 
 			if (isMiniApp) {
 				try {

@@ -1,0 +1,15 @@
+name = "jack-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+routes = [
+  { pattern = "api.getjack.org", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "jack-api-db"
+database_id = "2c7e43f4-615c-41f3-9625-f4e865bd4f9e"
+
+# Note: Run `wrangler d1 create jack-api-db` first
+# Then add the database_id here
