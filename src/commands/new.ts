@@ -2,22 +2,42 @@ import { getPreferredLaunchAgent, launchAgent } from "../lib/agents.ts";
 import { debug } from "../lib/debug.ts";
 import { getErrorDetails } from "../lib/errors.ts";
 import { promptSelect } from "../lib/hooks.ts";
+import { isIntentPhrase } from "../lib/intent.ts";
 import { output, spinner } from "../lib/output.ts";
 import { createProject } from "../lib/project-operations.ts";
 
 export default async function newProject(
-	name?: string,
-	options: { template?: string } = {},
+	nameOrPhrase?: string,
+	options: { template?: string; intent?: string } = {},
 ): Promise<void> {
 	// Immediate feedback
 	output.start("Starting...");
-	debug("newProject called", { name, options });
+	debug("newProject called", { nameOrPhrase, options });
 	const isCi = process.env.CI === "true" || process.env.CI === "1";
+
+	// Determine if first arg is intent phrase or project name
+	let projectName: string | undefined;
+	let intentPhrase: string | undefined = options.intent;
+
+	if (nameOrPhrase) {
+		if (options.intent) {
+			// Explicit -m flag means first arg is definitely a name
+			projectName = nameOrPhrase;
+		} else if (isIntentPhrase(nameOrPhrase)) {
+			// Detected as intent phrase - name will be auto-generated
+			intentPhrase = nameOrPhrase;
+			projectName = undefined;
+		} else {
+			// Treat as project name
+			projectName = nameOrPhrase;
+		}
+	}
 
 	let result: Awaited<ReturnType<typeof createProject>>;
 	try {
-		result = await createProject(name, {
+		result = await createProject(projectName, {
 			template: options.template,
+			intent: intentPhrase,
 			reporter: {
 				start: output.start,
 				stop: output.stop,
@@ -73,11 +93,6 @@ export default async function newProject(
 			const choice = await promptSelect(["Yes", "No"]);
 
 			if (choice === 0) {
-				// Ensure terminal is in normal state before handoff
-				if (process.stdin.isTTY) {
-					process.stdin.setRawMode(false);
-				}
-
 				const launchResult = await launchAgent(preferred.launch, result.targetDir);
 				if (!launchResult.success) {
 					output.warn(`Failed to launch ${preferred.definition.name}`);

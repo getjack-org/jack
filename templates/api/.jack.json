@@ -2,6 +2,10 @@
 	"name": "api",
 	"description": "Hono API with routing",
 	"secrets": [],
+	"intent": {
+		"keywords": ["api", "endpoint", "webhook", "worker"],
+		"examples": ["stripe webhook API", "REST API endpoint"]
+	},
 	"hooks": {
 		"postDeploy": [
 			{
