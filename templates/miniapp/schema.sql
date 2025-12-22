@@ -12,3 +12,11 @@ CREATE TABLE IF NOT EXISTS guestbook (
 );
 
 CREATE INDEX IF NOT EXISTS idx_guestbook_created_at ON guestbook(created_at DESC);
+
+-- AI rate limiting (10 requests per minute per IP)
+-- Uses fixed-window rate limiting for simplicity
+CREATE TABLE IF NOT EXISTS ai_rate_limits (
+  identifier TEXT PRIMARY KEY,
+  request_count INTEGER DEFAULT 1,
+  window_start INTEGER NOT NULL
+);

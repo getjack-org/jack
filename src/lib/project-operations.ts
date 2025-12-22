@@ -8,18 +8,31 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { $ } from "bun";
-import { renderTemplate, resolveTemplate } from "../templates/index.ts";
+import {
+	BUILTIN_TEMPLATES,
+	type ResolvedTemplate,
+	renderTemplate,
+	resolveTemplateWithOrigin,
+} from "../templates/index.ts";
 import type { Template } from "../templates/types.ts";
 import { generateAgentFiles } from "./agent-files.ts";
-import { getActiveAgents, validateAgentPaths } from "./agents.ts";
-import { getAccountId } from "./cloudflare-api.ts";
-import { checkWorkerExists } from "./cloudflare-api.ts";
+import {
+	getActiveAgents,
+	getAgentDefinition,
+	getOneShotAgent,
+	runAgentOneShot,
+	validateAgentPaths,
+} from "./agents.ts";
+import { checkWorkerExists, getAccountId, listD1Databases } from "./cloudflare-api.ts";
 import { getSyncConfig } from "./config.ts";
+import { isDebug } from "./debug.ts";
 import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parser.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { type HookOutput, runHook } from "./hooks.ts";
+import { loadTemplateKeywords, matchTemplateByIntent } from "./intent.ts";
 import { generateProjectName } from "./names.ts";
 import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
+import type { TemplateOrigin } from "./registry.ts";
 import {
 	getAllProjects,
 	getProject,
@@ -27,9 +40,10 @@ import {
 	registerProject,
 	removeProject,
 } from "./registry.ts";
-import { applySchema, getD1DatabaseName, hasD1Config } from "./schema.ts";
-import { getSavedSecrets } from "./secrets.ts";
+import { applySchema, getD1Bindings, getD1DatabaseName, hasD1Config } from "./schema.ts";
+import { getSavedSecrets, saveSecrets } from "./secrets.ts";
 import { getProjectNameFromDir, getRemoteManifest, syncToCloud } from "./storage/index.ts";
+import { Events, track } from "./telemetry.ts";
 
 // ============================================================================
 // Type Definitions
@@ -37,6 +51,7 @@ import { getProjectNameFromDir, getRemoteManifest, syncToCloud } from "./storage
 
 export interface CreateProjectOptions {
 	template?: string;
+	intent?: string;
 	reporter?: OperationReporter;
 	interactive?: boolean;
 }
@@ -80,7 +95,7 @@ export interface ProjectStatus {
 
 export interface StaleProject {
 	name: string;
-	reason: "local folder deleted" | "undeployed from cloud";
+	reason: "workspace path not set" | "workspace folder missing" | "worker not deployed";
 	workerUrl: string | null;
 }
 
@@ -120,6 +135,69 @@ const noopReporter: OperationReporter = {
 	box() {},
 };
 
+const DEFAULT_D1_LIMIT = 10;
+
+async function preflightD1Capacity(
+	projectDir: string,
+	reporter: OperationReporter,
+	interactive: boolean,
+): Promise<void> {
+	const bindings = await getD1Bindings(projectDir);
+	const needsCreate = bindings.some((binding) => !binding.database_id && binding.database_name);
+	if (!needsCreate) {
+		return;
+	}
+
+	let databases: Array<{ name?: string; uuid?: string }>;
+	try {
+		databases = await listD1Databases();
+	} catch (err) {
+		reporter.warn("Could not check D1 limits before deploy");
+		if (err instanceof Error) {
+			reporter.info(err.message);
+		}
+		return;
+	}
+
+	const count = databases.length;
+	if (count < DEFAULT_D1_LIMIT) {
+		return;
+	}
+
+	reporter.warn(`D1 limit likely reached: ${count} databases`);
+	reporter.info("Delete old D1 databases with: wrangler d1 list / wrangler d1 delete <name>");
+	reporter.info("Or reuse an existing database by setting database_id in wrangler.jsonc");
+
+	if (!interactive) {
+		return;
+	}
+
+	const { select } = await import("@inquirer/prompts");
+	console.error("");
+	console.error(
+		`  You have ${count} D1 databases. If your limit is ${DEFAULT_D1_LIMIT}, deploy may fail.`,
+	);
+	console.error("");
+	console.error("  Esc to cancel\n");
+
+	const choice = await select({
+		message: "Continue anyway?",
+		choices: [
+			{ name: "1. Yes", value: "yes" },
+			{ name: "2. No", value: "no" },
+		],
+	});
+
+	if (choice === "no") {
+		throw new JackError(
+			JackErrorCode.VALIDATION_ERROR,
+			"D1 limit likely reached",
+			"Delete old D1 databases or reuse an existing database_id",
+			{ exitCode: 0, reported: true },
+		);
+	}
+}
+
 // ============================================================================
 // Create Project Operation
 // ============================================================================
@@ -138,8 +216,12 @@ export async function createProject(
 	name?: string,
 	options: CreateProjectOptions = {},
 ): Promise<CreateProjectResult> {
-	const { template: templateOption, reporter: providedReporter, interactive: interactiveOption } =
-		options;
+	const {
+		template: templateOption,
+		intent: intentPhrase,
+		reporter: providedReporter,
+		interactive: interactiveOption,
+	} = options;
 	const reporter = providedReporter ?? noopReporter;
 	const hasReporter = Boolean(providedReporter);
 	const isCi = process.env.CI === "true" || process.env.CI === "1";
@@ -158,18 +240,104 @@ export async function createProject(
 
 	// Check directory doesn't exist
 	if (existsSync(targetDir)) {
-		throw new JackError(
-			JackErrorCode.VALIDATION_ERROR,
-			`Directory ${projectName} already exists`,
-		);
+		throw new JackError(JackErrorCode.VALIDATION_ERROR, `Directory ${projectName} already exists`);
 	}
 
 	reporter.start("Creating project...");
 
-	// Load template
+	// Intent-based template matching
+	let resolvedTemplate = templateOption;
+
+	if (intentPhrase && !templateOption) {
+		reporter.start("Matching intent to template...");
+
+		const templates = await loadTemplateKeywords();
+		const matches = matchTemplateByIntent(intentPhrase, templates);
+
+		reporter.stop();
+
+		if (matches.length === 0) {
+			// Track no match
+			track(Events.INTENT_NO_MATCH, {});
+
+			// No match - prompt user to choose
+			if (interactive) {
+				const { select } = await import("@clack/prompts");
+				console.error("");
+				console.error(`  No template matched for: "${intentPhrase}"`);
+				console.error("");
+
+				const choice = await select({
+					message: "Select a template:",
+					options: BUILTIN_TEMPLATES.map((t, i) => ({ value: t, label: `${i + 1}. ${t}` })),
+				});
+
+				if (typeof choice !== "string") {
+					throw new JackError(JackErrorCode.VALIDATION_ERROR, "No template selected", undefined, {
+						exitCode: 0,
+						reported: true,
+					});
+				}
+				resolvedTemplate = choice;
+			} else {
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					`No template matched intent: "${intentPhrase}"`,
+					`Available templates: ${BUILTIN_TEMPLATES.join(", ")}`,
+				);
+			}
+		} else if (matches.length === 1) {
+			resolvedTemplate = matches[0]?.template;
+			reporter.success(`Matched template: ${resolvedTemplate}`);
+
+			// Track single match
+			track(Events.INTENT_MATCHED, {
+				template: resolvedTemplate,
+				match_count: 1,
+			});
+		} else {
+			// Track multiple matches
+			track(Events.INTENT_MATCHED, {
+				template: matches[0]?.template,
+				match_count: matches.length,
+			});
+
+			// Multiple matches
+			if (interactive) {
+				const { select } = await import("@clack/prompts");
+				console.error("");
+				console.error(`  Multiple templates matched: "${intentPhrase}"`);
+				console.error("");
+
+				const matchedNames = matches.map((m) => m.template);
+				const choice = await select({
+					message: "Select a template:",
+					options: matchedNames.map((t, i) => ({ value: t, label: `${i + 1}. ${t}` })),
+				});
+
+				if (typeof choice !== "string") {
+					throw new JackError(JackErrorCode.VALIDATION_ERROR, "No template selected", undefined, {
+						exitCode: 0,
+						reported: true,
+					});
+				}
+				resolvedTemplate = choice;
+			} else {
+				resolvedTemplate = matches[0]?.template;
+				reporter.info(`Multiple matches, using: ${resolvedTemplate}`);
+			}
+		}
+
+		reporter.start("Creating project...");
+	}
+
+	// Load template with origin tracking for lineage
 	let template: Template;
+	let templateOrigin: TemplateOrigin;
 	try {
-		template = await resolveTemplate(templateOption);
+		const resolved = await resolveTemplateWithOrigin(resolvedTemplate);
+		template = resolved.template;
+		templateOrigin = resolved.origin;
 	} catch (err) {
 		reporter.stop();
 		const message = err instanceof Error ? err.message : String(err);
@@ -208,10 +376,72 @@ export async function createProject(
 		reporter.start("Creating project...");
 	}
 
+	// Handle optional secrets (only in interactive mode)
+	if (template.optionalSecrets?.length && interactive) {
+		const saved = await getSavedSecrets();
+
+		for (const optionalSecret of template.optionalSecrets) {
+			// Skip if already saved
+			const savedValue = saved[optionalSecret.name];
+			if (savedValue) {
+				secretsToUse[optionalSecret.name] = savedValue;
+				reporter.stop();
+				reporter.success(`Using saved secret: ${optionalSecret.name}`);
+				reporter.start("Creating project...");
+				continue;
+			}
+
+			// Prompt user
+			reporter.stop();
+			const { input, select } = await import("@inquirer/prompts");
+			console.error("");
+			console.error(`  ${optionalSecret.description}`);
+			if (optionalSecret.setupUrl) {
+				console.error(`  Setup: ${optionalSecret.setupUrl}`);
+			}
+			console.error("");
+			console.error("  Esc to skip\n");
+
+			const choice = await select({
+				message: `Add ${optionalSecret.name}?`,
+				choices: [
+					{ name: "1. Yes", value: "yes" },
+					{ name: "2. Skip", value: "skip" },
+				],
+			});
+
+			if (choice === "yes") {
+				const value = await input({
+					message: `Enter ${optionalSecret.name}:`,
+				});
+
+				if (value.trim()) {
+					secretsToUse[optionalSecret.name] = value.trim();
+					// Save to global secrets for reuse
+					await saveSecrets([
+						{
+							key: optionalSecret.name,
+							value: value.trim(),
+							source: "optional-template",
+						},
+					]);
+					reporter.success(`Saved ${optionalSecret.name}`);
+				}
+			}
+
+			reporter.start("Creating project...");
+		}
+	}
+
 	// Write all template files
 	for (const [filePath, content] of Object.entries(rendered.files)) {
 		await Bun.write(join(targetDir, filePath), content);
 	}
+
+	// Preflight: check D1 capacity before spending time on installs
+	reporter.stop();
+	await preflightD1Capacity(targetDir, reporter, interactive);
+	reporter.start("Creating project...");
 
 	// Write secrets files (.env for Vite, .dev.vars for wrangler local, .secrets.json for wrangler bulk)
 	if (Object.keys(secretsToUse).length > 0) {
@@ -309,6 +539,47 @@ export async function createProject(
 		}
 	}
 
+	// One-shot agent customization if intent was provided
+	if (intentPhrase) {
+		const oneShotAgent = await getOneShotAgent();
+
+		if (oneShotAgent) {
+			const agentDefinition = getAgentDefinition(oneShotAgent);
+			const agentLabel = agentDefinition?.name ?? oneShotAgent;
+			reporter.info(`Customizing with ${agentLabel}`);
+			reporter.info(`Intent: ${intentPhrase}`);
+			const debugEnabled = isDebug();
+			const customizationSpinner = debugEnabled ? null : reporter.spinner("Customizing...");
+
+			// Track customization start
+			track(Events.INTENT_CUSTOMIZATION_STARTED, { agent: oneShotAgent });
+
+			const result = await runAgentOneShot(oneShotAgent, targetDir, intentPhrase, {
+				info: reporter.info,
+				warn: reporter.warn,
+				status: customizationSpinner ? (message) => (customizationSpinner.text = message) : undefined,
+			});
+
+			if (customizationSpinner) {
+				customizationSpinner.stop();
+			}
+			if (result.success) {
+				reporter.success("Project customized");
+				// Track successful customization
+				track(Events.INTENT_CUSTOMIZATION_COMPLETED, { agent: oneShotAgent });
+			} else {
+				reporter.warn(`Customization skipped: ${result.error ?? "unknown error"}`);
+				// Track failed customization
+				track(Events.INTENT_CUSTOMIZATION_FAILED, {
+					agent: oneShotAgent,
+					error_type: "agent_error",
+				});
+			}
+		} else {
+			reporter.info?.("No compatible agent for customization (Claude Code or Codex required)");
+		}
+	}
+
 	// For Vite projects, build first
 	const hasVite = existsSync(join(targetDir, "vite.config.ts"));
 	if (hasVite) {
@@ -318,12 +589,11 @@ export async function createProject(
 		if (buildResult.exitCode !== 0) {
 			reporter.stop();
 			reporter.error("Build failed");
-			throw new JackError(
-				JackErrorCode.BUILD_FAILED,
-				"Build failed",
-				undefined,
-				{ exitCode: 0, stderr: buildResult.stderr.toString(), reported: hasReporter },
-			);
+			throw new JackError(JackErrorCode.BUILD_FAILED, "Build failed", undefined, {
+				exitCode: 0,
+				stderr: buildResult.stderr.toString(),
+				reported: hasReporter,
+			});
 		}
 
 		reporter.stop();
@@ -338,12 +608,11 @@ export async function createProject(
 	if (deployResult.exitCode !== 0) {
 		reporter.stop();
 		reporter.error("Deploy failed");
-		throw new JackError(
-			JackErrorCode.DEPLOY_FAILED,
-			"Deploy failed",
-			undefined,
-			{ exitCode: 0, stderr: deployResult.stderr.toString(), reported: hasReporter },
-		);
+		throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
+			exitCode: 0,
+			stderr: deployResult.stderr.toString(),
+			reported: hasReporter,
+		});
 	}
 
 	// Apply schema.sql after deploy
@@ -410,6 +679,7 @@ export async function createProject(
 					db: dbName,
 				},
 			},
+			template: templateOrigin,
 		});
 	} catch {
 		// Don't fail the creation if registry update fails
@@ -755,10 +1025,19 @@ export async function scanStaleProjects(): Promise<StaleProjectScan> {
 		const project = projects[name];
 		if (!project) continue;
 
+		if (!project.localPath) {
+			stale.push({
+				name,
+				reason: "workspace path not set",
+				workerUrl: project.workerUrl,
+			});
+			continue;
+		}
+
 		if (project.localPath && !existsSync(project.localPath)) {
 			stale.push({
 				name,
-				reason: "local folder deleted",
+				reason: "workspace folder missing",
 				workerUrl: project.workerUrl,
 			});
 			continue;
@@ -769,7 +1048,7 @@ export async function scanStaleProjects(): Promise<StaleProjectScan> {
 			if (!workerExists) {
 				stale.push({
 					name,
-					reason: "undeployed from cloud",
+					reason: "worker not deployed",
 					workerUrl: project.workerUrl,
 				});
 			}
