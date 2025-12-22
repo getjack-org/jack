@@ -5,12 +5,24 @@
 	"assets": {
 		"directory": "./dist",
 		"binding": "ASSETS",
-		"not_found_handling": "single-page-application"
+		"not_found_handling": "single-page-application",
+		// Required for dynamic routes (/share, /api/og) to work alongside static assets
+		// Without this, Cloudflare serves static files directly, bypassing the worker
+		"run_worker_first": true
 	},
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "jack-template-db"
 		}
-	]
+	],
+	"ai": {
+		"binding": "AI"
+	},
+	"vars": {
+		// Set this after first deploy - required for share embeds
+		// Get your URL from: jack projects or wrangler deployments list
+		// Example: "APP_URL": "https://my-app.username.workers.dev"
+		"APP_URL": ""
+	}
 }

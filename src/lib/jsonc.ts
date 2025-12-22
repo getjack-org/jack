@@ -43,7 +43,7 @@ function stripJsonc(input: string): string {
 			continue;
 		}
 
-		if (char === "\"" || char === "'") {
+		if (char === '"' || char === "'") {
 			inString = true;
 			stringChar = char;
 			output += char;
@@ -94,7 +94,7 @@ function removeTrailingCommas(input: string): string {
 			continue;
 		}
 
-		if (char === "\"" || char === "'") {
+		if (char === '"' || char === "'") {
 			inString = true;
 			stringChar = char;
 			output += char;

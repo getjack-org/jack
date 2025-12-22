@@ -2,8 +2,8 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { parseJsonc } from "./jsonc.ts";
 import type { Template } from "../templates/types";
+import { parseJsonc } from "./jsonc.ts";
 
 /**
  * Parse GitHub input: "user/repo" or "https://github.com/user/repo"

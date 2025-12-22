@@ -56,14 +56,7 @@ export function getJackMcpConfig(): McpServerConfig {
 	// ~/.bun/bin is where `bun link` installs global commands
 	const bunBin = join(homedir(), ".bun", "bin");
 	const npmBin = join(homedir(), ".npm-global", "bin");
-	const defaultPaths = [
-		bunBin,
-		npmBin,
-		"/opt/homebrew/bin",
-		"/usr/local/bin",
-		"/usr/bin",
-		"/bin",
-	];
+	const defaultPaths = [bunBin, npmBin, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
 
 	return {
 		command: "jack",

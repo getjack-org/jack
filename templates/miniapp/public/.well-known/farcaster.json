@@ -4,12 +4,14 @@
 		"payload": "",
 		"signature": ""
 	},
-	"frame": {
-		"version": "next",
+	"miniapp": {
+		"version": "1",
 		"name": "jack-template",
-		"iconUrl": "https://placehold.co/200x200/7c3aed/white?text=jack-template",
-		"splashImageUrl": "https://placehold.co/200x200/7c3aed/white?text=jack-template",
+		"iconUrl": "/icon.png",
+		"homeUrl": "/",
+		"imageUrl": "/og.png",
+		"splashImageUrl": "/icon.png",
 		"splashBackgroundColor": "#0a0a0a",
-		"homeUrl": "https://jack-template.workers.dev"
+		"buttonTitle": "Open App"
 	}
 }

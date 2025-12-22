@@ -16,6 +16,13 @@ export const Events = {
 	PROJECT_CREATED: "project_created",
 	DEPLOY_STARTED: "deploy_started",
 	CONFIG_CHANGED: "config_changed",
+
+	// Intent-driven creation events
+	INTENT_MATCHED: "intent_matched",
+	INTENT_NO_MATCH: "intent_no_match",
+	INTENT_CUSTOMIZATION_STARTED: "intent_customization_started",
+	INTENT_CUSTOMIZATION_COMPLETED: "intent_customization_completed",
+	INTENT_CUSTOMIZATION_FAILED: "intent_customization_failed",
 } as const;
 
 type EventName = (typeof Events)[keyof typeof Events];

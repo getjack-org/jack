@@ -1,8 +1,12 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { regenerateAgentFiles } from "../lib/agent-files.ts";
 import {
 	AGENT_REGISTRY,
 	addAgent,
 	disableAgent,
 	enableAgent,
+	getActiveAgents,
 	getAgentDefinition,
 	getPreferredAgent,
 	pathExists,
@@ -12,12 +16,24 @@ import {
 	updateAgent,
 } from "../lib/agents.ts";
 import { readConfig } from "../lib/config.ts";
-import { error, info, item, output as outputSpinner, success } from "../lib/output.ts";
+import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
+import { getProject } from "../lib/registry.ts";
+import { getProjectNameFromDir } from "../lib/storage/index.ts";
+import { resolveTemplate } from "../templates/index.ts";
+import type { Template } from "../templates/types.ts";
 
 /**
  * Main agents command - handles all agent management
  */
-export default async function agents(subcommand?: string, args: string[] = []): Promise<void> {
+interface AgentsOptions {
+	project?: string;
+}
+
+export default async function agents(
+	subcommand?: string,
+	args: string[] = [],
+	options: AgentsOptions = {},
+): Promise<void> {
 	if (!subcommand) {
 		return await listAgents();
 	}
@@ -35,9 +51,11 @@ export default async function agents(subcommand?: string, args: string[] = []): 
 			return await disableAgentCommand(args);
 		case "prefer":
 			return await preferAgentCommand(args);
+		case "refresh":
+			return await refreshAgentFilesCommand(options);
 		default:
 			error(`Unknown subcommand: ${subcommand}`);
-			info("Available: scan, add, remove, enable, disable, prefer");
+			info("Available: scan, add, remove, enable, disable, prefer, refresh");
 			process.exit(1);
 	}
 }
@@ -76,7 +94,7 @@ async function listAgents(): Promise<void> {
 		console.error("");
 	}
 
-	info("Commands: jack agents scan | add | remove | enable | disable | prefer");
+	info("Commands: jack agents scan | add | remove | enable | disable | prefer | refresh");
 }
 
 /**
@@ -89,6 +107,7 @@ async function scanAndPrompt(): Promise<void> {
 
 	if (detectionResult.detected.length === 0) {
 		info("No agents detected");
+		await listAgents();
 		return;
 	}
 
@@ -98,6 +117,7 @@ async function scanAndPrompt(): Promise<void> {
 
 	if (newAgents.length === 0) {
 		success("No new agents found");
+		await listAgents();
 		return;
 	}
 
@@ -119,6 +139,7 @@ async function scanAndPrompt(): Promise<void> {
 	console.error("");
 	success("New agents enabled");
 	info("Future projects will include context files for these agents");
+	await listAgents();
 }
 
 function getFlagValues(args: string[], flag: string): string[] {
@@ -174,7 +195,7 @@ async function addAgentCommand(args: string[]): Promise<void> {
 					type: "cli" as const,
 					command: customCommand,
 					args: customArgs.length ? customArgs : undefined,
-			  }
+				}
 			: undefined;
 
 		await addAgent(agentId, { launch: launchOverride });
@@ -190,9 +211,7 @@ async function addAgentCommand(args: string[]): Promise<void> {
 		if (err instanceof Error) {
 			error(err.message);
 			if (err.message.includes("Could not detect")) {
-				info(
-					`Specify launch manually: jack agents add ${agentId} --command /path/to/command`,
-				);
+				info(`Specify launch manually: jack agents add ${agentId} --command /path/to/command`);
 			}
 		}
 		process.exit(1);
@@ -302,4 +321,115 @@ async function preferAgentCommand(args: string[]): Promise<void> {
 		}
 		process.exit(1);
 	}
+}
+
+/**
+ * Refresh agent context files from template
+ */
+async function refreshAgentFilesCommand(options: AgentsOptions = {}): Promise<void> {
+	let projectDir = process.cwd();
+	let projectName: string;
+	let project = null;
+
+	if (options.project) {
+		projectName = options.project;
+		project = await getProject(projectName);
+
+		if (!project) {
+			error(`Project "${projectName}" not found in registry`);
+			info("List projects with: jack projects list");
+			process.exit(1);
+		}
+
+		if (!project.localPath) {
+			error(`Project "${projectName}" has no workspace path`);
+			info("Run this command from a project directory instead");
+			process.exit(1);
+		}
+
+		projectDir = project.localPath;
+		if (!existsSync(projectDir)) {
+			error(`Workspace not found at ${projectDir}`);
+			info("Run this command from a project directory instead");
+			process.exit(1);
+		}
+	} else {
+		// 1. Detect project name from wrangler config
+		outputSpinner.start("Detecting project...");
+		try {
+			projectName = await getProjectNameFromDir(projectDir);
+		} catch {
+			outputSpinner.stop();
+			error("Could not determine project");
+			info("Run this command from a project directory, or use --project <name>");
+			process.exit(1);
+		}
+		outputSpinner.stop();
+
+		// 2. Get project from registry to find template origin
+		project = await getProject(projectName);
+		if (!project) {
+			error(`Project "${projectName}" not found in registry`);
+			info("List projects with: jack projects list");
+			process.exit(1);
+		}
+	}
+
+	if (!project?.template) {
+		error("No template lineage found for this project");
+		info("This project was created before lineage tracking was added.");
+		info("Re-create the project with `jack new` to enable refresh.");
+		process.exit(1);
+	}
+
+	// 3. Resolve template (fetch if GitHub, load if builtin)
+	outputSpinner.start("Loading template...");
+	let template: Template;
+	try {
+		template = await resolveTemplate(project.template.name);
+	} catch (err) {
+		outputSpinner.stop();
+		error(`Failed to load template: ${project.template.name}`);
+		if (err instanceof Error) {
+			info(err.message);
+		}
+		process.exit(1);
+	}
+	outputSpinner.stop();
+
+	// 4. Backup existing files
+	const agentsMdPath = join(projectDir, "AGENTS.md");
+	if (existsSync(agentsMdPath)) {
+		const backupPath = `${agentsMdPath}.backup`;
+		const content = await Bun.file(agentsMdPath).text();
+		await Bun.write(backupPath, content);
+		success("Backed up AGENTS.md → AGENTS.md.backup");
+	}
+
+	const claudeMdPath = join(projectDir, "CLAUDE.md");
+	if (existsSync(claudeMdPath)) {
+		const backupPath = `${claudeMdPath}.backup`;
+		const content = await Bun.file(claudeMdPath).text();
+		await Bun.write(backupPath, content);
+		success("Backed up CLAUDE.md → CLAUDE.md.backup");
+	}
+
+	// 5. Get active agents
+	const activeAgents = await getActiveAgents();
+	if (activeAgents.length === 0) {
+		warn("No active agents configured");
+		info("Run: jack agents scan");
+		process.exit(1);
+	}
+
+	// 6. Regenerate agent files
+	const updatedFiles = await regenerateAgentFiles(projectDir, projectName, template, activeAgents);
+
+	console.error("");
+	success("Refreshed agent context files:");
+	for (const file of updatedFiles) {
+		item(file);
+	}
+	console.error("");
+	info("Review changes: git diff AGENTS.md");
 }
