@@ -1,13 +1,15 @@
 import { dirname } from "node:path";
 import { select } from "@inquirer/prompts";
+import { formatRelativeTime } from "../lib/format.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import {
+	type ProjectStatus,
 	cleanupStaleProjects,
 	getProjectStatus,
 	listAllProjects,
 	scanStaleProjects,
-	type ProjectStatus,
 } from "../lib/project-operations.ts";
+import { removeProject } from "../lib/registry.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 
 /**
@@ -21,11 +23,13 @@ export default async function projects(subcommand?: string, args: string[] = [])
 	switch (subcommand) {
 		case "info":
 			return await infoProject(args);
+		case "remove":
+			return await removeProjectEntry(args);
 		case "cleanup":
 			return await cleanupProjects();
 		default:
 			error(`Unknown subcommand: ${subcommand}`);
-			info("Available: list, info, cleanup");
+			info("Available: list, info, remove, cleanup");
 			process.exit(1);
 	}
 }
@@ -76,27 +80,28 @@ async function listProjects(args: string[]): Promise<void> {
 	}
 
 	const groups = new Map<string, DirectoryGroup>();
-	const ungrouped: ProjectStatus[] = [];
-	const stale: ProjectStatus[] = [];
+	const workspaceMissing: ProjectStatus[] = [];
 
 	for (const status of filteredStatuses) {
-		// Stale projects go to their own section
-		if (status.missing) {
-			stale.push(status);
+		// Workspace-missing projects go to their own section
+		if (status.missing || !status.localPath) {
+			workspaceMissing.push(status);
 		} else if (status.localPath && status.local) {
 			const parent = dirname(status.localPath);
 			if (!groups.has(parent)) {
 				groups.set(parent, { path: parent, projects: [] });
 			}
 			groups.get(parent)?.projects.push(status);
-		} else {
-			ungrouped.push(status);
 		}
 	}
 
 	// Display grouped projects
 	console.error("");
-	info("Projects");
+	info("Tracked projects");
+	item(`${colors.dim}Badges: [workspace]=local folder, [deployed]=worker live${colors.reset}`);
+	item(
+		`${colors.dim}        [backup]=backup stored, [workspace missing]=no local folder${colors.reset}`,
+	);
 	console.error("");
 
 	// Display directory groups (active local projects)
@@ -111,28 +116,23 @@ async function listProjects(args: string[]): Promise<void> {
 			const prefix = isLast ? "└──" : "├──";
 
 			const badges = buildStatusBadges(proj);
-			console.error(`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${badges}`);
+			const createdLabel = formatCreatedAt(proj.createdAt);
+			const createdPart = createdLabel ? `  ${createdLabel}` : "";
+			console.error(
+				`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${badges}${createdPart}`,
+			);
 		}
 		console.error("");
 	}
 
-	// Display ungrouped projects (cloud-only, no local path)
-	if (ungrouped.length > 0) {
-		console.error(`${colors.dim}Cloud only:${colors.reset}`);
-		for (const proj of ungrouped) {
+	// Display workspace-missing projects
+	if (workspaceMissing.length > 0) {
+		console.error(`${colors.dim}Tracked (workspace missing):${colors.reset}`);
+		for (const proj of workspaceMissing) {
 			const badges = buildStatusBadges(proj);
-			console.error(`  ${proj.name}  ${badges}`);
-		}
-		console.error("");
-	}
-
-	// Display stale projects (local folder deleted)
-	if (stale.length > 0) {
-		console.error(`${colors.yellow}Stale (local folder deleted):${colors.reset}`);
-		for (const proj of stale) {
-			// Only show non-missing badges since the section header explains the issue
-			const badges = buildStatusBadges({ ...proj, missing: false });
-			console.error(`  ${colors.dim}${proj.name}${colors.reset}  ${badges}`);
+			const createdLabel = formatCreatedAt(proj.createdAt);
+			const createdPart = createdLabel ? `  ${createdLabel}` : "";
+			console.error(`  ${colors.dim}${proj.name}${colors.reset}  ${badges}${createdPart}`);
 		}
 		console.error("");
 	}
@@ -140,20 +140,19 @@ async function listProjects(args: string[]): Promise<void> {
 	// Summary
 	const deployedCount = statuses.filter((s) => s.deployed).length;
 	const notDeployedCount = statuses.filter((s) => s.local && !s.deployed).length;
-	const staleCount = statuses.filter((s) => s.missing).length;
+	const workspaceMissingCount = statuses.filter((s) => s.missing || !s.localPath).length;
 
 	const parts = [`${deployedCount} deployed`];
 	if (notDeployedCount > 0) {
 		parts.push(`${notDeployedCount} not deployed`);
 	}
-	if (staleCount > 0) {
-		parts.push(`${staleCount} stale`);
+	if (workspaceMissingCount > 0) {
+		parts.push(`${workspaceMissingCount} workspace missing`);
 	}
-	info(`${statuses.length} projects (${parts.join(", ")})`);
-	if (staleCount > 0) {
-		console.error(
-			`  ${colors.dim}Run 'jack projects cleanup' to remove stale entries${colors.reset}`,
-		);
+	info(`${statuses.length} tracked projects (${parts.join(", ")})`);
+	if (workspaceMissingCount > 0) {
+		console.error(`  ${colors.dim}Forget one: 'jack projects remove <name>'${colors.reset}`);
+		console.error(`  ${colors.dim}Forget all: 'jack projects cleanup'${colors.reset}`);
 	}
 	console.error("");
 }
@@ -174,20 +173,27 @@ const colors = {
 function buildStatusBadges(status: ProjectStatus): string {
 	const badges: string[] = [];
 
+	const workspaceMissing = status.missing || !status.localPath;
+
 	if (status.local) {
-		badges.push(`${colors.green}[local]${colors.reset}`);
+		badges.push(`${colors.green}[workspace]${colors.reset}`);
 	}
 	if (status.deployed) {
 		badges.push(`${colors.green}[deployed]${colors.reset}`);
 	}
 	if (status.backedUp) {
-		badges.push(`${colors.dim}[cloud]${colors.reset}`);
+		badges.push(`${colors.dim}[backup]${colors.reset}`);
 	}
-	if (status.missing) {
-		badges.push(`${colors.yellow}[local deleted]${colors.reset}`);
+	if (workspaceMissing) {
+		badges.push(`${colors.dim}[workspace missing]${colors.reset}`);
 	}
 
 	return badges.join(" ");
+}
+
+function formatCreatedAt(createdAt: string | null): string {
+	if (!createdAt) return "";
+	return `${colors.dim}${formatRelativeTime(createdAt)}${colors.reset}`;
 }
 
 /**
@@ -226,27 +232,31 @@ async function infoProject(args: string[]): Promise<void> {
 	// Status section
 	const statuses: string[] = [];
 	if (status.local) {
-		statuses.push("local");
+		statuses.push("workspace");
 	}
 	if (status.deployed) {
 		statuses.push("deployed");
 	}
 	if (status.backedUp) {
-		statuses.push("backed-up");
+		statuses.push("backup");
 	}
-	if (status.missing) {
-		statuses.push("missing");
+	if (status.missing || !status.localPath) {
+		statuses.push("workspace missing");
 	}
 
 	item(`Status: ${statuses.join(", ") || "none"}`);
 	console.error("");
 
-	// Local info
+	// Workspace info
 	if (status.localPath) {
-		item(`Local path: ${status.localPath}`);
+		item(`Workspace path: ${status.localPath}`);
 		if (status.missing) {
-			warn("  Path no longer exists");
+			warn("  Workspace path no longer exists");
 		}
+		console.error("");
+	} else {
+		item("Workspace path: none");
+		warn("  Workspace path not set");
 		console.error("");
 	}
 
@@ -261,9 +271,9 @@ async function infoProject(args: string[]): Promise<void> {
 		console.error("");
 	}
 
-	// Cloud info
+	// Backup info
 	if (status.backedUp && status.backupFiles !== null) {
-		item(`Cloud backup: ${status.backupFiles} files`);
+		item(`Backup: ${status.backupFiles} files`);
 		if (status.backupLastSync) {
 			item(`Last synced: ${new Date(status.backupLastSync).toLocaleString()}`);
 		}
@@ -293,10 +303,10 @@ async function infoProject(args: string[]): Promise<void> {
 }
 
 /**
- * Remove stale registry entries
+ * Remove workspace-missing entries
  */
 async function cleanupProjects(): Promise<void> {
-	outputSpinner.start("Scanning for stale projects...");
+	outputSpinner.start("Scanning for workspace-missing projects...");
 
 	const scan = await scanStaleProjects();
 	if (scan.total === 0) {
@@ -308,7 +318,7 @@ async function cleanupProjects(): Promise<void> {
 	outputSpinner.stop();
 
 	if (scan.stale.length === 0) {
-		success("No stale projects found");
+		success("No workspace-missing projects found");
 		return;
 	}
 
@@ -317,20 +327,19 @@ async function cleanupProjects(): Promise<void> {
 	info("What cleanup does:");
 	item("Removes entries from jack's local tracking registry");
 	item("Does NOT undeploy live services");
-	item("Does NOT delete cloud backups or databases");
+	item("Does NOT delete backups or databases");
+	info("Remove a single entry with: jack projects remove <name>");
 	console.error("");
 
 	// Show found issues
-	warn(`Found ${scan.stale.length} stale project(s):`);
+	warn(`Found ${scan.stale.length} workspace-missing project(s):`);
 	console.error("");
 
 	// Check which have deployed workers
 	const deployedStale = scan.stale.filter((stale) => stale.workerUrl);
 
 	for (const stale of scan.stale) {
-		const hasWorker = stale.workerUrl
-			? ` ${colors.yellow}(still deployed)${colors.reset}`
-			: "";
+		const hasWorker = stale.workerUrl ? ` ${colors.yellow}(still deployed)${colors.reset}` : "";
 		item(`${stale.name}: ${stale.reason}${hasWorker}`);
 	}
 	console.error("");
@@ -356,12 +365,80 @@ async function cleanupProjects(): Promise<void> {
 		return;
 	}
 
-	// Remove stale entries
+	// Remove workspace-missing entries
 	await cleanupStaleProjects(scan.stale.map((stale) => stale.name));
 
 	console.error("");
 	success(`Removed ${scan.stale.length} entry/entries from jack's registry`);
 	if (deployedStale.length > 0) {
 		info("Note: Deployed services are still live");
+	}
+}
+
+/**
+ * Remove a project entry from the registry
+ */
+async function removeProjectEntry(args: string[]): Promise<void> {
+	const name = args.find((arg) => !arg.startsWith("--"));
+	const yes = args.includes("--yes");
+
+	if (!name) {
+		error("Project name required");
+		info("Usage: jack projects remove <name>");
+		process.exit(1);
+	}
+
+	// Check status (includes deployed + local info)
+	outputSpinner.start("Checking project status...");
+	const status = await getProjectStatus(name);
+	outputSpinner.stop();
+
+	if (!status) {
+		error(`Project "${name}" not found in registry`);
+		info("List projects with: jack projects list");
+		process.exit(1);
+	}
+
+	console.error("");
+	info(`Remove registry entry for: ${name}`);
+	if (status.localPath) {
+		item(`Workspace path: ${status.localPath}`);
+	} else {
+		item("Workspace path: none");
+		warn("Workspace path not set");
+	}
+	if (status.workerUrl) {
+		item(`Worker URL: ${status.workerUrl}`);
+	}
+	if (status.deployed) {
+		warn("Project is still deployed; removal does not undeploy");
+	}
+	if (status.missing || !status.localPath) {
+		warn("Workspace folder is missing");
+	}
+	console.error("");
+
+	if (!yes) {
+		console.error("  Esc to skip\n");
+		const action = await select({
+			message: "Remove this entry from jack's registry?",
+			choices: [
+				{ name: "1. Yes", value: "yes" },
+				{ name: "2. No", value: "no" },
+			],
+		});
+
+		if (action === "no") {
+			info("Removal cancelled");
+			return;
+		}
+	}
+
+	await removeProject(name);
+
+	console.error("");
+	success(`Removed '${name}' from registry`);
+	if (status.deployed) {
+		info(`To undeploy, run: jack down ${name}`);
 	}
 }

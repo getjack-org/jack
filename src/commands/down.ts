@@ -117,7 +117,7 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 
 			console.error("");
 			success(`'${name}' undeployed`);
-			info("Databases and cloud storage were not affected");
+			info("Databases and backups were not affected");
 			console.error("");
 			return;
 		}
@@ -204,13 +204,13 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			shouldDeleteDb = deleteAction === "yes";
 		}
 
-		// Handle R2 backup deletion
+		// Handle backup deletion
 		let shouldDeleteR2 = false;
 		if (project) {
 			console.error("");
 			console.error("  Esc to skip\n");
 			const deleteR2Action = await select({
-				message: "Delete cloud backup for this project?",
+				message: "Delete backup for this project?",
 				choices: [
 					{ name: "1. Yes", value: "yes" },
 					{ name: "2. No", value: "no" },
@@ -254,20 +254,20 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			}
 		}
 
-		// Delete cloud backup if requested
+		// Delete backup if requested
 		if (shouldDeleteR2) {
-			output.start("Deleting cloud backup...");
+			output.start("Deleting backup...");
 			try {
 				const deleted = await deleteCloudProject(name);
 				output.stop();
 				if (deleted) {
-					success("Cloud backup deleted");
+					success("Backup deleted");
 				} else {
-					warn("No cloud backup found or already deleted");
+					warn("No backup found or already deleted");
 				}
 			} catch (err) {
 				output.stop();
-				warn(`Failed to delete cloud backup: ${err instanceof Error ? err.message : String(err)}`);
+				warn(`Failed to delete backup: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}
 

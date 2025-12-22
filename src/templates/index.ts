@@ -2,12 +2,21 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parseJsonc } from "../lib/jsonc.ts";
+import type { TemplateOrigin } from "../lib/registry.ts";
 import type { Template } from "./types";
 
 // Resolve templates directory relative to this file (src/templates -> templates)
 const TEMPLATES_DIR = join(dirname(dirname(import.meta.dir)), "templates");
 
-const BUILTIN_TEMPLATES = ["miniapp", "api"];
+export const BUILTIN_TEMPLATES = ["miniapp", "api"];
+
+/**
+ * Resolved template with origin tracking for lineage
+ */
+export interface ResolvedTemplate {
+	template: Template;
+	origin: TemplateOrigin;
+}
 
 /**
  * Read all files in a directory recursively
@@ -60,9 +69,12 @@ async function loadTemplate(name: string): Promise<Template> {
 		name: string;
 		description: string;
 		secrets: string[];
+		optionalSecrets?: Template["optionalSecrets"];
 		capabilities?: Template["capabilities"];
 		requires?: Template["requires"];
 		hooks?: Template["hooks"];
+		agentContext?: Template["agentContext"];
+		intent?: Template["intent"];
 	} = { name, description: "", secrets: [] };
 	if (existsSync(metadataPath)) {
 		metadata = parseJsonc(await readFile(metadataPath, "utf-8"));
@@ -74,9 +86,12 @@ async function loadTemplate(name: string): Promise<Template> {
 	return {
 		description: metadata.description,
 		secrets: metadata.secrets,
+		optionalSecrets: metadata.optionalSecrets,
 		capabilities: metadata.capabilities,
 		requires: metadata.requires,
 		hooks: metadata.hooks,
+		agentContext: metadata.agentContext,
+		intent: metadata.intent,
 		files,
 	};
 }
@@ -103,6 +118,28 @@ export async function resolveTemplate(template?: string): Promise<Template> {
 
 	// Unknown template
 	throw new Error(`Unknown template: ${template}\n\nAvailable: ${BUILTIN_TEMPLATES.join(", ")}`);
+}
+
+/**
+ * Resolve template with origin tracking for lineage
+ * Used during project creation to record which template was used
+ */
+export async function resolveTemplateWithOrigin(
+	templateOption?: string,
+): Promise<ResolvedTemplate> {
+	const templateName = templateOption || "miniapp";
+
+	// Determine origin type
+	const isGitHub = templateName.includes("/");
+	const origin: TemplateOrigin = {
+		type: isGitHub ? "github" : "builtin",
+		name: templateName,
+	};
+
+	// Resolve the template
+	const template = await resolveTemplate(templateOption);
+
+	return { template, origin };
 }
 
 /**

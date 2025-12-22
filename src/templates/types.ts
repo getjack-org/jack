@@ -30,12 +30,25 @@ export interface AgentContext {
 	full_text: string;
 }
 
+export interface OptionalSecret {
+	name: string;
+	description: string;
+	setupUrl?: string;
+}
+
+export interface IntentMetadata {
+	keywords: string[];
+	examples?: string[]; // For future telemetry/docs
+}
+
 export interface Template {
 	files: Record<string, string>; // path -> content
 	secrets?: string[]; // required secret keys (e.g., ["NEYNAR_API_KEY"])
+	optionalSecrets?: OptionalSecret[]; // optional secret configurations
 	capabilities?: Capability[]; // infrastructure requirements (deprecated, use requires)
 	requires?: ServiceTypeKey[]; // service requirements (DB, KV, CRON, QUEUE, STORAGE)
 	description?: string; // for help text
 	hooks?: TemplateHooks;
 	agentContext?: AgentContext;
+	intent?: IntentMetadata;
 }

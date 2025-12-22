@@ -102,3 +102,37 @@ export async function generateAgentFiles(
 		}
 	}
 }
+
+/**
+ * Regenerate agent context files, overwriting existing files
+ * Used by `jack agents refresh` to update files from template
+ */
+export async function regenerateAgentFiles(
+	projectDir: string,
+	projectName: string,
+	template: Template,
+	agents: Array<{ id: string; config: AgentConfig; definition: AgentDefinition }>,
+): Promise<string[]> {
+	const writtenSharedFiles = new Set<string>();
+	const updatedFiles: string[] = [];
+
+	for (const { definition } of agents) {
+		for (const file of definition.projectFiles) {
+			// Skip shared files if already written
+			if (file.shared && writtenSharedFiles.has(file.path)) {
+				continue;
+			}
+
+			const filePath = join(projectDir, file.path);
+			const content = generateFileContent(file.template, projectName, template);
+			await Bun.write(filePath, content);
+			updatedFiles.push(file.path);
+
+			if (file.shared) {
+				writtenSharedFiles.add(file.path);
+			}
+		}
+	}
+
+	return updatedFiles;
+}

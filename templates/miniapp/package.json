@@ -14,10 +14,12 @@
 		"@farcaster/miniapp-wagmi-connector": "^1.1.0",
 		"@tanstack/react-query": "^5.45.1",
 		"hono": "^4.6.0",
+		"openai": "^4.73.0",
 		"react": "^18.3.1",
 		"react-dom": "^18.3.1",
 		"viem": "^2.21.0",
-		"wagmi": "^2.12.0"
+		"wagmi": "^2.12.0",
+		"workers-og": "^0.0.27"
 	},
 	"devDependencies": {
 		"@cloudflare/vite-plugin": "^1.0.0",

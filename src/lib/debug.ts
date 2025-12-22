@@ -63,8 +63,10 @@ export async function time(label: string, fn: () => Promise<void>): Promise<numb
 	timerStart(label);
 	try {
 		await fn();
-	} finally {
 		return timerEnd(label);
+	} catch (error) {
+		timerEnd(label); // Clean up timer even on failure
+		throw error;
 	}
 }
 

@@ -1,8 +1,10 @@
-import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, extname, join } from "node:path";
 import { type AgentConfig, type AgentLaunchConfig, readConfig, writeConfig } from "./config.ts";
+import { debug, isDebug } from "./debug.ts";
+import { restoreTty } from "./tty";
 
 // Re-export AgentConfig for consumers
 export type { AgentConfig } from "./config.ts";
@@ -37,6 +39,12 @@ export interface AgentLaunchDefinition {
 export interface DetectionResult {
 	detected: Array<{ id: string; path: string; launch?: AgentLaunchConfig }>;
 	total: number;
+}
+
+export interface OneShotReporter {
+	info(message: string): void;
+	warn(message: string): void;
+	status?(message: string): void;
 }
 
 /**
@@ -113,9 +121,7 @@ function findExecutable(command: string): string | null {
 	if (process.platform === "win32") {
 		const extension = extname(command);
 		const extensions =
-			extension.length > 0
-				? [""]
-				: (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
+			extension.length > 0 ? [""] : (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
 
 		for (const basePath of paths) {
 			for (const ext of extensions) {
@@ -374,14 +380,11 @@ export async function getAgentLaunch(id: string): Promise<AgentLaunchConfig | nu
 	return resolved ?? null;
 }
 
-export async function getPreferredLaunchAgent(): Promise<
-	| {
-			id: string;
-			definition: AgentDefinition;
-			launch: AgentLaunchConfig;
-	  }
-	| null
-> {
+export async function getPreferredLaunchAgent(): Promise<{
+	id: string;
+	definition: AgentDefinition;
+	launch: AgentLaunchConfig;
+} | null> {
 	const config = await readConfig();
 	if (!config?.agents) return null;
 
@@ -420,14 +423,12 @@ export async function getPreferredLaunchAgent(): Promise<
 function buildLaunchCommand(
 	launch: AgentLaunchConfig,
 	projectDir: string,
-):
-	| {
-			command: string;
-			args: string[];
-			options: { cwd?: string; stdio: "inherit" | "ignore"; detached?: boolean };
-			waitForExit: boolean;
-	  }
-	| null {
+): {
+	command: string;
+	args: string[];
+	options: { cwd?: string; stdio: "inherit" | "ignore"; detached?: boolean };
+	waitForExit: boolean;
+} | null {
 	if (launch.type !== "cli") return null;
 
 	return {
@@ -449,6 +450,7 @@ export async function launchAgent(
 
 	const { command, args, options, waitForExit } = launchCommand;
 	const displayCommand = [command, ...args];
+	restoreTty();
 
 	return await new Promise((resolve) => {
 		const child = spawn(command, args, options);
@@ -542,4 +544,341 @@ export function getDefaultPreferredAgent(
 		.sort((a, b) => a.priority - b.priority);
 
 	return withPriority[0]?.id ?? null;
+}
+
+/**
+ * Agents that support one-shot mode (non-interactive execution)
+ */
+export const ONE_SHOT_CAPABLE_AGENTS = ["claude-code", "codex"] as const;
+type OneShotAgent = (typeof ONE_SHOT_CAPABLE_AGENTS)[number];
+
+/**
+ * Check if an agent supports one-shot mode
+ */
+export function isOneShotCapable(agentId: string): agentId is OneShotAgent {
+	return ONE_SHOT_CAPABLE_AGENTS.includes(agentId as OneShotAgent);
+}
+
+/**
+ * Get preferred agent for one-shot execution
+ * Returns null if no capable agent is available
+ */
+export async function getOneShotAgent(): Promise<OneShotAgent | null> {
+	const preferred = await getPreferredAgent();
+
+	if (preferred && isOneShotCapable(preferred)) {
+		return preferred;
+	}
+
+	// Try to find any capable agent that's installed
+	for (const agentId of ONE_SHOT_CAPABLE_AGENTS) {
+		const launch = await getAgentLaunch(agentId);
+		if (launch) {
+			return agentId;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Build customization prompt for project personalization
+ */
+function buildCustomizationPrompt(projectDir: string, intent: string): string {
+	return `You are customizing a new project based on this intent: "${intent}"
+
+This is the first customization from a template. The project has been scaffolded but not yet personalized.
+
+Instructions:
+1. Read AGENTS.md and CLAUDE.md for project context
+2. Modify code and configuration to match the intent
+3. Focus on code/config changes, not documentation
+4. Keep changes minimal and focused
+5. End with a short report:
+   - SUMMARY: 2-4 bullet points
+   - BLOCKER: none | <short reason>
+
+Project directory: ${projectDir}
+
+Please customize the project to match the intent.`;
+}
+
+/**
+ * Run agent in one-shot mode for project customization
+ */
+export async function runAgentOneShot(
+	agentId: OneShotAgent,
+	projectDir: string,
+	intent: string,
+	reporter?: OneShotReporter,
+): Promise<{ success: boolean; error?: string }> {
+	const launch = await getAgentLaunch(agentId);
+	if (!launch || launch.type !== "cli") {
+		return { success: false, error: `Agent ${agentId} not available` };
+	}
+
+	const prompt = buildCustomizationPrompt(projectDir, intent);
+	const debugEnabled = isDebug();
+	const agentLabel = getAgentDefinition(agentId)?.name ?? agentId;
+
+	// Build command based on agent type
+	let args: string[];
+	let streamJson = false;
+	let jsonMode: "claude" | "codex" | null = null;
+	if (agentId === "claude-code") {
+		streamJson = true;
+		jsonMode = "claude";
+		args = [
+			"-p",
+			prompt,
+			"--permission-mode",
+			"acceptEdits",
+			"--output-format",
+			"stream-json",
+			"--include-partial-messages",
+			"--verbose",
+		];
+		if (debugEnabled) {
+			args.push("--debug");
+		}
+	} else if (agentId === "codex") {
+		streamJson = true;
+		jsonMode = "codex";
+		args = ["exec", prompt, "--json", "--skip-git-repo-check"];
+	} else {
+		return { success: false, error: `Unsupported agent: ${agentId}` };
+	}
+
+	if (debugEnabled) {
+		debug("One-shot agent command", { command: launch.command, args, cwd: projectDir });
+		debug("One-shot prompt", prompt);
+	}
+
+	restoreTty();
+
+	return new Promise((resolve) => {
+		const child = spawn(launch.command, args, {
+			cwd: projectDir,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		let stdoutBuffer = "";
+		let stderrBuffer = "";
+		let fullOutput = "";
+		let summaryLines: string[] = [];
+		let blockerMessage: string | null = null;
+		let statusMessage: string | null = null;
+
+		const reportSummary = () => {
+			if (!reporter) return;
+			if (summaryLines.length > 0) {
+				reporter.info(`Summary: ${summaryLines.join(" | ")}`);
+			}
+			if (blockerMessage && blockerMessage.toLowerCase() !== "none") {
+				reporter.warn(`Blocker: ${blockerMessage}`);
+			}
+		};
+
+		const updateStatus = (message: string) => {
+			if (!reporter?.status) return;
+			const next = `${agentLabel}: ${message}`;
+			if (next === statusMessage) return;
+			statusMessage = next;
+			reporter.status(next);
+		};
+
+		const extractSummary = (text: string) => {
+			const lines = text.split(/\r?\n/).map((line) => line.trim());
+			let inSummary = false;
+
+			for (const line of lines) {
+				if (!line) {
+					if (inSummary) {
+						inSummary = false;
+					}
+					continue;
+				}
+
+				if (line.toUpperCase().startsWith("SUMMARY:")) {
+					inSummary = true;
+					const after = line.slice("SUMMARY:".length).trim();
+					if (after) {
+						summaryLines.push(after.replace(/^[-•]\s*/, ""));
+					}
+					continue;
+				}
+
+				if (line.toUpperCase().startsWith("BLOCKER:")) {
+					blockerMessage = line.slice("BLOCKER:".length).trim();
+					inSummary = false;
+					continue;
+				}
+
+				if (inSummary) {
+					summaryLines.push(line.replace(/^[-•]\s*/, ""));
+				}
+			}
+		};
+
+		const handleClaudeLine = (line: string) => {
+			if (!line.trim()) return;
+			if (debugEnabled) {
+				process.stderr.write(`${line}\n`);
+			}
+			try {
+				const parsed = JSON.parse(line) as {
+					type?: string;
+					event?: {
+						type?: string;
+						content_block?: { type?: string; name?: string };
+						delta?: { type?: string; text_delta?: string };
+					};
+					result?: string;
+					is_error?: boolean;
+					permission_denials?: Array<{ reason?: string }>;
+				};
+
+				if (parsed.type === "result") {
+					if (typeof parsed.result === "string" && parsed.result.trim().length > 0) {
+						fullOutput = parsed.result;
+					}
+					if (parsed.permission_denials?.length && reporter) {
+						const details = parsed.permission_denials
+							.map((denial) => denial.reason)
+							.filter(Boolean)
+							.join(" | ");
+						reporter.warn(details ? `Permission denied: ${details}` : "Permission denied");
+						updateStatus("permission denied");
+					}
+					if (parsed.is_error) {
+						stderrBuffer = stderrBuffer || "Claude returned an error";
+					}
+					return;
+				}
+
+				if (parsed.type === "stream_event") {
+					const eventType = parsed.event?.type;
+					const blockType = parsed.event?.content_block?.type;
+					if (eventType === "message_start") {
+						updateStatus("thinking");
+					} else if (eventType === "content_block_start") {
+						if (blockType === "tool_use") {
+							const toolName = parsed.event?.content_block?.name;
+							updateStatus(toolName ? `running ${toolName}` : "running tool");
+						} else if (blockType === "text") {
+							updateStatus("responding");
+						}
+					} else if (eventType === "message_stop") {
+						updateStatus("finalizing");
+					}
+					const delta = parsed.event?.delta;
+					if (delta?.type === "text_delta" && delta.text_delta) {
+						fullOutput += delta.text_delta;
+					}
+				}
+			} catch {
+				// Ignore malformed lines in non-debug mode
+			}
+		};
+
+		const handleCodexLine = (line: string) => {
+			if (!line.trim()) return;
+			if (debugEnabled) {
+				process.stderr.write(`${line}\n`);
+			}
+			try {
+				const parsed = JSON.parse(line) as {
+					type?: string;
+					item?: { type?: string; text?: string };
+					error?: { message?: string };
+				};
+
+				if (parsed.type === "thread.started") {
+					updateStatus("starting");
+				}
+				if (parsed.type === "turn.started") {
+					updateStatus("thinking");
+				}
+
+				if (parsed.type === "item.completed" && parsed.item?.type === "agent_message") {
+					if (parsed.item.text) {
+						fullOutput += parsed.item.text;
+					}
+					updateStatus("responding");
+				}
+				if (parsed.type === "item.completed" && parsed.item?.type === "reasoning") {
+					updateStatus("reasoning");
+				}
+
+				if (parsed.type === "error") {
+					if (parsed.error?.message) {
+						stderrBuffer = parsed.error.message;
+					} else {
+						stderrBuffer = stderrBuffer || "Codex returned an error";
+					}
+					updateStatus("error");
+				}
+				if (parsed.type === "turn.completed") {
+					updateStatus("finalizing");
+				}
+			} catch {
+				// Ignore malformed lines in non-debug mode
+			}
+		};
+
+		const handleJsonLine =
+			jsonMode === "claude" ? handleClaudeLine : jsonMode === "codex" ? handleCodexLine : null;
+
+		child.stdout.on("data", (chunk) => {
+			const text = chunk.toString();
+			if (!streamJson) {
+				fullOutput += text;
+				if (debugEnabled) {
+					process.stderr.write(text);
+				}
+				return;
+			}
+
+			stdoutBuffer += text;
+			let newlineIndex = stdoutBuffer.indexOf("\n");
+			while (newlineIndex !== -1) {
+				const line = stdoutBuffer.slice(0, newlineIndex);
+				stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+				handleJsonLine?.(line);
+				newlineIndex = stdoutBuffer.indexOf("\n");
+			}
+		});
+
+		child.stderr.on("data", (chunk) => {
+			const text = chunk.toString();
+			stderrBuffer += text;
+			if (debugEnabled) {
+				process.stderr.write(text);
+			}
+		});
+
+		child.once("error", (err) => {
+			resolve({ success: false, error: err.message });
+		});
+
+		child.once("exit", (code) => {
+			if (streamJson && stdoutBuffer.trim().length > 0) {
+				handleJsonLine?.(stdoutBuffer);
+				stdoutBuffer = "";
+			}
+
+			const exitOk = code === 0;
+			if (!debugEnabled && fullOutput.trim().length > 0) {
+				extractSummary(fullOutput);
+				reportSummary();
+			}
+
+			if (!exitOk && stderrBuffer.trim().length > 0) {
+				resolve({ success: false, error: stderrBuffer.trim() });
+				return;
+			}
+
+			resolve(exitOk ? { success: true } : { success: false, error: `Exit code ${code}` });
+		});
+	});
 }

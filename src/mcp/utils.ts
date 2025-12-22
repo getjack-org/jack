@@ -23,7 +23,7 @@ export function formatErrorResponse(error: unknown, startTime: number): McpToolR
 	const message = error instanceof Error ? error.message : String(error);
 	const code = classifyMcpError(error);
 	const suggestion = isJackError(error)
-		? error.suggestion ?? getSuggestionForError(code)
+		? (error.suggestion ?? getSuggestionForError(code))
 		: getSuggestionForError(code);
 
 	return {

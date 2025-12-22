@@ -65,6 +65,30 @@ export async function deleteDatabase(dbName: string): Promise<void> {
 }
 
 /**
+ * List D1 databases for the current account
+ */
+export async function listD1Databases(): Promise<Array<{ name?: string; uuid?: string }>> {
+	const result = await $`wrangler d1 list --json`.nothrow().quiet();
+
+	if (result.exitCode !== 0) {
+		const stderr = result.stderr.toString().trim();
+		throw new Error(stderr || "Failed to list D1 databases");
+	}
+
+	try {
+		const output = result.stdout.toString().trim();
+		const parsed = JSON.parse(output);
+		if (Array.isArray(parsed)) return parsed;
+		if (Array.isArray(parsed?.result)) return parsed.result;
+		if (Array.isArray(parsed?.databases)) return parsed.databases;
+	} catch {
+		// Fall through to empty list
+	}
+
+	return [];
+}
+
+/**
  * List all workers for the current account
  * Parses the output of `wrangler deployments list` to extract worker names
  */

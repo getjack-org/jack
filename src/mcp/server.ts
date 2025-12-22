@@ -50,7 +50,9 @@ export async function startMcpServer(options: McpServerOptions = {}) {
 	debug("Starting MCP server on stdio transport");
 
 	// Always log startup to stderr so user knows it's running
-	console.error(`[jack-mcp] Server started (v${pkg.version})${options.debug ? " [debug mode]" : ""}`);
+	console.error(
+		`[jack-mcp] Server started (v${pkg.version})${options.debug ? " [debug mode]" : ""}`,
+	);
 
 	await server.connect(transport);
 
