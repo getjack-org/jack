@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { HookAction } from "../templates/types";
 import { getSavedSecrets } from "./secrets";
+import { restoreTty } from "./tty";
 
 export interface HookContext {
 	domain?: string; // deployed domain (e.g., "my-app.username.workers.dev")
@@ -71,10 +72,7 @@ export async function promptSelect(options: string[]): Promise<number> {
 
 		const cleanup = () => {
 			process.stdin.removeListener("data", onData);
-			if (process.stdin.isTTY) {
-				process.stdin.setRawMode(false);
-			}
-			process.stdin.pause();
+			restoreTty();
 		};
 
 		process.stdin.on("data", onData);
@@ -98,19 +96,13 @@ async function waitForEnter(message?: string): Promise<void> {
 			// Enter, Space, or any key to continue
 			if (char === "\r" || char === "\n" || char === " ") {
 				process.stdin.removeListener("data", onData);
-				if (process.stdin.isTTY) {
-					process.stdin.setRawMode(false);
-				}
-				process.stdin.pause();
+				restoreTty();
 				resolve();
 			}
 			// Esc to skip
 			if (char === "\x1b") {
 				process.stdin.removeListener("data", onData);
-				if (process.stdin.isTTY) {
-					process.stdin.setRawMode(false);
-				}
-				process.stdin.pause();
+				restoreTty();
 				resolve();
 			}
 		};
