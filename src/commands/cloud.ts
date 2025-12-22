@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { select } from "@inquirer/prompts";
+import { requireAuth } from "../lib/auth/guard.ts";
 import { formatRelativeTime, formatSize } from "../lib/format.ts";
 import { error, info, item, output as outputSpinner, success } from "../lib/output.ts";
 import { scanProjectFiles } from "../lib/storage/file-filter.ts";
@@ -20,6 +21,8 @@ import { getBucketName } from "../lib/storage/r2-client.ts";
  * Main cloud command - handles all cloud storage operations
  */
 export default async function cloud(subcommand?: string, args: string[] = []): Promise<void> {
+	await requireAuth();
+
 	if (!subcommand) {
 		return await listCommand();
 	}
