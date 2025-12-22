@@ -6,12 +6,11 @@ import { join } from "node:path";
 /**
  * Agent configuration stored in jack config
  */
-export type AgentLaunchConfig =
-	| {
-			type: "cli";
-			command: string;
-			args?: string[];
-	  };
+export type AgentLaunchConfig = {
+	type: "cli";
+	command: string;
+	args?: string[];
+};
 
 export interface AgentConfig {
 	active: boolean;

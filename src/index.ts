@@ -26,6 +26,7 @@ const cli = meow(
     projects            Manage project registry
     services            Manage project services
     mcp serve           Start MCP server for AI agents
+    mcp test            Test MCP server connectivity
     telemetry           Manage anonymous usage data
     about               The story behind jack
 
@@ -249,7 +250,7 @@ switch (command) {
 	case "mcp": {
 		const { default: mcp } = await import("./commands/mcp.ts");
 		// Note: Don't use withTelemetry wrapper for MCP serve - it runs indefinitely
-		await mcp(args[0], { project: cli.flags.project });
+		await mcp(args[0], { project: cli.flags.project, debug: cli.flags.debug });
 		break;
 	}
 	case "ls": {
