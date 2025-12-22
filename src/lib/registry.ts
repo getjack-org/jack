@@ -3,6 +3,14 @@ import { join } from "node:path";
 import { CONFIG_DIR } from "./config.ts";
 
 /**
+ * Template origin tracking for agent file regeneration
+ */
+export interface TemplateOrigin {
+	type: "builtin" | "github";
+	name: string; // "miniapp", "api", or "user/repo"
+}
+
+/**
  * Project data stored in registry
  */
 export interface Project {
@@ -19,6 +27,7 @@ export interface Project {
 			db: string | null;
 		};
 	};
+	template?: TemplateOrigin;
 }
 
 /**
