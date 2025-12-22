@@ -185,6 +185,172 @@ These variables are substituted at runtime (different from template placeholders
 }
 ```
 
+## Farcaster Miniapp Embeds
+
+When a cast includes a URL, Farcaster scrapes it for `fc:miniapp` meta tags to render a rich embed.
+
+### fc:miniapp Meta Format
+
+```html
+<meta name="fc:miniapp" content='{"version":"1","imageUrl":"...","button":{...}}' />
+```
+
+```typescript
+{
+  version: "1",
+  imageUrl: "https://absolute-url/image.png",  // MUST be absolute https
+  button: {
+    title: "Open App",  // Max 32 chars
+    action: {
+      type: "launch_miniapp",
+      name: "app-name",           // REQUIRED - app name shown in UI
+      url: "https://absolute-url" // MUST be absolute https
+    }
+  }
+}
+```
+
+**Critical requirements:**
+- All URLs must be absolute `https://` - no relative paths, no localhost
+- `button.action.name` is **required** - omitting it breaks the embed
+- Image must be 600×400 to 3000×2000 (3:2 ratio), <10MB, PNG/JPG/GIF/WebP
+
+### Wrangler Assets + Dynamic Routes
+
+To serve both static assets AND dynamic routes (like `/share` with meta tags):
+
+```jsonc
+// wrangler.jsonc
+"assets": {
+  "directory": "./dist",
+  "binding": "ASSETS",
+  "not_found_handling": "single-page-application",
+  "run_worker_first": true  // CRITICAL - without this, assets bypass the worker!
+}
+```
+
+**Why `run_worker_first: true`?**
+Without it, Cloudflare serves static files directly from the assets directory, completely bypassing your worker. This means:
+- `/api/*` routes won't work if there's a matching file
+- Dynamic routes like `/share` that need to inject meta tags won't work
+- The worker only runs for truly non-existent paths
+
+### External Fetch Timeout Pattern
+
+When fetching external resources (like profile pictures for OG images), always use a timeout:
+
+```typescript
+const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+try {
+  const response = await fetch(url, { signal: controller.signal });
+  clearTimeout(timeoutId);
+
+  if (response.ok) {
+    const buffer = await response.arrayBuffer();
+    // Also limit size to prevent memory issues
+    if (buffer.byteLength < 500_000) {
+      // process...
+    }
+  }
+} catch {
+  // Handle timeout/network errors gracefully
+}
+```
+
+Without timeout, a slow or hanging external URL can cause your OG image generation to fail silently.
+
+## URL Detection in Cloudflare Workers
+
+When generating URLs for external services (like Farcaster embed URLs), you need reliable production URL detection. This is non-trivial because:
+
+1. `new URL(request.url).origin` may not work correctly in all cases
+2. Local development returns `localhost` which is invalid for embeds
+3. Custom domains require explicit configuration
+
+### The Pattern
+
+```typescript
+function getBaseUrl(
+  env: Env,
+  c: { req: { header: (name: string) => string | undefined; url: string } },
+): string | null {
+  // 1. Prefer explicit APP_URL (most reliable for custom domains)
+  if (env.APP_URL?.trim()) {
+    const url = env.APP_URL.replace(/\/$/, "");
+    if (url.startsWith("https://")) return url;
+  }
+
+  // 2. Use Host header (always set by Cloudflare in production)
+  const host = c.req.header("host");
+  if (host) {
+    // Reject localhost - return null to signal "can't generate valid URLs"
+    if (host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
+      return null;
+    }
+
+    // Get protocol from cf-visitor (Cloudflare-specific) or x-forwarded-proto
+    let proto = "https";
+    const cfVisitor = c.req.header("cf-visitor");
+    if (cfVisitor) {
+      try {
+        const parsed = JSON.parse(cfVisitor);
+        if (parsed.scheme) proto = parsed.scheme;
+      } catch {}
+    } else {
+      proto = c.req.header("x-forwarded-proto") || "https";
+    }
+
+    // Workers.dev is always https
+    if (host.endsWith(".workers.dev")) proto = "https";
+
+    return `${proto}://${host}`;
+  }
+
+  // 3. Fallback to URL origin (rarely needed)
+  try {
+    const url = new URL(c.req.url);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+```
+
+### Key Headers in Cloudflare Workers
+
+| Header | Value | Notes |
+|--------|-------|-------|
+| `host` | `my-app.workers.dev` | Always set in production |
+| `cf-visitor` | `{"scheme":"https"}` | Cloudflare-specific, most reliable for protocol |
+| `x-forwarded-proto` | `https` | Standard header, less reliable |
+
+### Handling Local Development
+
+When `getBaseUrl()` returns `null`, show a helpful error instead of generating broken URLs:
+
+```typescript
+const baseUrl = getBaseUrl(env, c);
+if (!baseUrl) {
+  return c.html(`
+    <h2>Share embeds require production deployment</h2>
+    <p>Deploy with <code>jack ship</code> to enable sharing.</p>
+  `);
+}
+```
+
+### Why Not Just Use `new URL(request.url)`?
+
+- In some edge cases, `request.url` may not have the expected origin
+- Local development always returns localhost
+- Doesn't help distinguish production from development
+
+The Host header approach is reliable because Cloudflare always sets it to the actual domain being accessed.
+
 ## Adding New Templates
 
 1. Create directory: `templates/my-template/`
