@@ -1,0 +1,6 @@
+[install]
+# Use workspace protocol for local packages
+auto-install-peers = true
+
+[workspace]
+packages = ["apps/*", "packages/*"]
