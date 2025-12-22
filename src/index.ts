@@ -46,7 +46,7 @@ const cli = meow(
     --yes           Skip confirmation prompts
     --local         Filter by local projects
     --deployed      Filter by deployed projects
-    --cloud         Filter by cloud-backed projects
+    --cloud         Filter by backup projects
     --skip-mcp      Skip MCP config installation during init
 
   Examples
@@ -235,6 +235,7 @@ switch (command) {
 		if (cli.flags.local) projectArgs.push("--local");
 		if (cli.flags.deployed) projectArgs.push("--deployed");
 		if (cli.flags.cloud) projectArgs.push("--cloud");
+		if (cli.flags.yes) projectArgs.push("--yes");
 		await withTelemetry("projects", projects)(args[0], projectArgs);
 		break;
 	}
