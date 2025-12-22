@@ -5,11 +5,7 @@ import {
 	updateAgent,
 } from "../lib/agents.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
-import {
-	getAppDisplayName,
-	installMcpConfigsToAllApps,
-	saveMcpConfig,
-} from "../lib/mcp-config.ts";
+import { getAppDisplayName, installMcpConfigsToAllApps, saveMcpConfig } from "../lib/mcp-config.ts";
 import { info, item, spinner, success } from "../lib/output.ts";
 import { ensureAuth, ensureWrangler, isAuthenticated } from "../lib/wrangler.ts";
 
