@@ -665,7 +665,7 @@ export async function runAgentOneShot(
 		let stdoutBuffer = "";
 		let stderrBuffer = "";
 		let fullOutput = "";
-		let summaryLines: string[] = [];
+		const summaryLines: string[] = [];
 		let blockerMessage: string | null = null;
 		let statusMessage: string | null = null;
 
