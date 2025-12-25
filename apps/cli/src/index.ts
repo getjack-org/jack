@@ -13,49 +13,36 @@ const cli = meow(
   Usage
     $ jack <command> [options]
 
-  Commands
-    init                Jack in (one-time setup)
+  Getting Started
+    init                Set up jack (run once)
     new [name]          Create and deploy a project
-    vibe "<phrase>"     Quick project from intent (alias for new --intent)
-    ship                Push to production
+    vibe "<phrase>"     Create from an idea
+    ship                Push changes to production
+
+  Projects
+    open [name]         Open in browser
     logs                Stream live logs
-    agents              Manage AI agent templates
-    sync                Sync to cloud storage
-    clone <project>     Pull project from cloud
-    cloud               Manage cloud storage
     down [name]         Undeploy from cloud
-    open [name]         Open project in browser
-    projects            Manage project registry
-    services            Manage project services
-    mcp serve           Start MCP server for AI agents
-    mcp test            Test MCP server connectivity
-    login               Sign in to jack cloud
+    ls                  List all projects
+    info [name]         Show project details
+
+  Cloud & Sync
+    clone <project>     Pull from cloud backup
+    sync                Sync to cloud storage
+    cloud               Manage cloud storage
+
+  Account
+    login               Sign in
     logout              Sign out
     whoami              Show current user
-    telemetry           Manage anonymous usage data
-    about               The story behind jack
 
-  Aliases
-    ls                  List all projects (jack projects list)
-    info [name]         Show project details (jack projects info)
+  Advanced
+    agents              Manage AI agent configs
+    services            Manage databases
+    mcp                 MCP server for AI agents
+    telemetry           Usage data settings
 
-  Options
-    -t, --template  Template: miniapp (default), api, or user/repo
-    -m, --message   Intent phrase for project customization
-    -d, --debug     Show timing and debug logs
-    --verbose       Show detailed output
-    --dry-run       Preview changes without applying
-    --force         Force operation
-    --as <name>     Clone to different directory name
-    --dash          Open cloud dashboard
-    --logs          Open logs page
-    --yes           Skip confirmation prompts
-    --local         Filter by local projects
-    --deployed      Filter by deployed projects
-    --cloud         Filter by backup projects
-    --skip-mcp      Skip MCP config installation during init
-    --managed       Force deploy via jack cloud
-    --byo           Force deploy via wrangler (BYO)
+  Run 'jack <command> --help' for command-specific options.
 
   Examples
     $ jack init           Set up once
