@@ -261,6 +261,23 @@ export async function createProject(
 		throw new JackError(JackErrorCode.VALIDATION_ERROR, `Directory ${projectName} already exists`);
 	}
 
+	// Early slug availability check for managed mode
+	if (deployMode === "managed") {
+		const { checkSlugAvailability } = await import("./control-plane.ts");
+		const availability = await checkSlugAvailability(projectName);
+
+		if (!availability.available) {
+			const suggestion = availability.error
+				? "Fix the name format and try again"
+				: `Try a different name: jack new ${projectName}-2`;
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				availability.error || `Project "${projectName}" already exists on jack cloud`,
+				suggestion,
+			);
+		}
+	}
+
 	reporter.start("Creating project...");
 
 	// Intent-based template matching
