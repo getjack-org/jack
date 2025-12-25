@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { verifyJwt } from "./verify.ts";
 import type { AuthContext, JwtPayload } from "./types.ts";
+import { verifyJwt } from "./verify.ts";
 
 // Extend Hono context with auth
 declare module "hono" {

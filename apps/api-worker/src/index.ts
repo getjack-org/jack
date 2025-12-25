@@ -1,6 +1,6 @@
+import { authMiddleware } from "@getjack/auth";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { authMiddleware } from "@getjack/auth";
 
 type Bindings = {
 	DB: D1Database;
