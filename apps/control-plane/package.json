@@ -1,0 +1,19 @@
+{
+	"name": "@getjack/control-plane",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"typecheck": "tsc --noEmit",
+		"db:migrate": "wrangler d1 execute jack-control-db --file ../../migrations/0002_create_control_plane.sql --remote && wrangler d1 execute jack-control-db --file ../../migrations/0003_create_projects.sql --remote && wrangler d1 execute jack-control-db --file ../../migrations/0004_unique_project_slug.sql --remote && wrangler d1 execute jack-control-db --file ../../migrations/0005_create_deployments.sql --remote"
+	},
+	"dependencies": {
+		"@getjack/auth": "workspace:*",
+		"hono": "^4.6.0"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20241205.0",
+		"typescript": "^5.0.0"
+	}
+}

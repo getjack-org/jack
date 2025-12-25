@@ -6,11 +6,15 @@
 		"dev:cli": "bun run --cwd apps/cli dev",
 		"dev:auth": "bun run --cwd apps/auth-worker dev",
 		"dev:api": "bun run --cwd apps/api-worker dev",
+		"dev:control": "bun run --cwd apps/control-plane dev",
+		"dev:dispatch": "bun run --cwd apps/dispatch-worker dev",
 		"build": "bun run --filter '*' build",
 		"lint": "biome check .",
 		"format": "biome format --write .",
 		"deploy:auth": "bun run --cwd apps/auth-worker deploy",
 		"deploy:api": "bun run --cwd apps/api-worker deploy",
+		"deploy:control": "bun run --cwd apps/control-plane deploy",
+		"deploy:dispatch": "bun run --cwd apps/dispatch-worker deploy",
 		"docs:dev": "vocs dev",
 		"docs:build": "vocs build",
 		"docs:preview": "vocs preview"
@@ -18,8 +22,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.0",
 		"bun-types": "latest",
-		"typescript": "^5.0.0",
-		"wrangler": "^3.99.0"
+		"typescript": "^5.0.0"
 	},
 	"dependencies": {
 		"react": "^19.2.3",

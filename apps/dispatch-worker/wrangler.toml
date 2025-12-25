@@ -1,0 +1,18 @@
+name = "jack-dispatch"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Wildcard route for tenant routing
+# Tenant apps live at {slug}.runjack.xyz
+# DNS: Add A record * -> 192.0.2.1 (proxied) in runjack.xyz zone
+routes = [
+  { pattern = "*.runjack.xyz/*", zone_name = "runjack.xyz" }
+]
+
+[[kv_namespaces]]
+binding = "PROJECTS_CACHE"
+id = "1745e7c2b059484c81d39c694201d061"
+
+[[dispatch_namespaces]]
+binding = "TENANT_DISPATCH"
+namespace = "jack-tenants"
