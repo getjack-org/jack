@@ -166,6 +166,30 @@ api.get("/orgs/:orgId", async (c) => {
 	return c.json({ org });
 });
 
+// Slug availability check
+api.get("/slugs/:slug/available", async (c) => {
+	const auth = c.get("auth");
+	const slug = c.req.param("slug");
+
+	// Validate slug format first
+	const slugError = validateSlug(slug);
+	if (slugError) {
+		return c.json({ available: false, error: slugError }, 200);
+	}
+
+	// Check if slug exists globally
+	const existing = await c.env.DB.prepare(
+		"SELECT id FROM projects WHERE slug = ? AND status != 'deleted'",
+	)
+		.bind(slug)
+		.first<{ id: string }>();
+
+	return c.json({
+		available: !existing,
+		slug,
+	});
+});
+
 // Project endpoints
 api.post("/projects", async (c) => {
 	const auth = c.get("auth");

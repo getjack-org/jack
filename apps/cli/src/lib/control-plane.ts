@@ -31,6 +31,12 @@ export interface CreateProjectResponse {
 	}>;
 }
 
+export interface SlugAvailabilityResponse {
+	available: boolean;
+	slug: string;
+	error?: string;
+}
+
 export interface CreateDeploymentRequest {
 	source: string;
 }
@@ -91,4 +97,21 @@ export async function deployManagedProject(
 	}
 
 	return response.json() as Promise<CreateDeploymentResponse>;
+}
+
+/**
+ * Check if a project slug is available on jack cloud.
+ */
+export async function checkSlugAvailability(slug: string): Promise<SlugAvailabilityResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/slugs/${encodeURIComponent(slug)}/available`,
+	);
+
+	if (!response.ok) {
+		throw new Error(`Failed to check slug availability: ${response.status}`);
+	}
+
+	return response.json() as Promise<SlugAvailabilityResponse>;
 }
