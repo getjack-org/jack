@@ -25,16 +25,28 @@ export default async function open(projectName?: string, flags: OpenFlags = {}):
 	// Get project from registry
 	const project = await getProject(name);
 
-	// Determine URL based on flags
+	// Determine URL based on flags and deploy mode
 	let url: string;
 
 	if (flags.dash) {
-		url = `https://dash.cloudflare.com/workers/services/view/${name}`;
+		// Dashboard URLs
+		if (project?.deploy_mode === "managed" && project.remote) {
+			// For managed projects, still use Cloudflare dash until jack dashboard exists
+			url = `https://dash.cloudflare.com/workers/services/view/${name}`;
+		} else {
+			url = `https://dash.cloudflare.com/workers/services/view/${name}`;
+		}
 	} else if (flags.logs) {
 		url = `https://dash.cloudflare.com/workers/services/view/${name}/logs`;
 	} else {
-		// Default: use worker URL from registry or construct it
-		url = project?.workerUrl || `https://${name}.workers.dev`;
+		// Default: use mode-appropriate URL
+		if (project?.deploy_mode === "managed" && project.remote?.runjack_url) {
+			// Managed project: use runjack.xyz URL
+			url = project.remote.runjack_url;
+		} else {
+			// BYO project: use workers.dev URL
+			url = project?.workerUrl || `https://${name}.workers.dev`;
+		}
 	}
 
 	// Open browser using platform-specific command

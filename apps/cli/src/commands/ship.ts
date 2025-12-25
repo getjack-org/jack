@@ -2,7 +2,9 @@ import { getErrorDetails } from "../lib/errors.ts";
 import { output, spinner } from "../lib/output.ts";
 import { deployProject } from "../lib/project-operations.ts";
 
-export default async function ship(): Promise<void> {
+export default async function ship(
+	options: { managed?: boolean; byo?: boolean } = {},
+): Promise<void> {
 	const isCi = process.env.CI === "true" || process.env.CI === "1";
 	try {
 		const result = await deployProject({
@@ -20,6 +22,8 @@ export default async function ship(): Promise<void> {
 			interactive: !isCi,
 			includeSecrets: true,
 			includeSync: true,
+			managed: options.managed,
+			byo: options.byo,
 		});
 
 		if (!result.workerUrl && result.deployOutput) {

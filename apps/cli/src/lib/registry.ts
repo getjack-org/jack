@@ -3,11 +3,26 @@ import { join } from "node:path";
 import { CONFIG_DIR } from "./config.ts";
 
 /**
+ * Deploy mode for a project
+ */
+export type DeployMode = "managed" | "byo";
+
+/**
  * Template origin tracking for agent file regeneration
  */
 export interface TemplateOrigin {
 	type: "builtin" | "github";
 	name: string; // "miniapp", "api", or "user/repo"
+}
+
+/**
+ * Remote metadata for managed projects
+ */
+export interface ManagedRemote {
+	project_id: string;
+	project_slug: string;
+	org_id: string;
+	runjack_url: string;
 }
 
 /**
@@ -18,7 +33,7 @@ export interface Project {
 	workerUrl: string | null;
 	createdAt: string;
 	lastDeployed: string | null;
-	cloudflare: {
+	cloudflare?: {
 		accountId: string;
 		workerId: string;
 	};
@@ -28,6 +43,8 @@ export interface Project {
 		};
 	};
 	template?: TemplateOrigin;
+	deploy_mode?: DeployMode;
+	remote?: ManagedRemote;
 }
 
 /**

@@ -54,6 +54,8 @@ const cli = meow(
     --deployed      Filter by deployed projects
     --cloud         Filter by backup projects
     --skip-mcp      Skip MCP config installation during init
+    --managed       Force deploy via jack cloud
+    --byo           Force deploy via wrangler (BYO)
 
   Examples
     $ jack init           Set up once
@@ -123,6 +125,14 @@ const cli = meow(
 				type: "boolean",
 				default: false,
 			},
+			managed: {
+				type: "boolean",
+				default: false,
+			},
+			byo: {
+				type: "boolean",
+				default: false,
+			},
 		},
 	},
 );
@@ -156,6 +166,8 @@ try {
 			await withTelemetry("new", newProject)(args[0], {
 				template: cli.flags.template,
 				intent: cli.flags.message,
+				managed: cli.flags.managed,
+				byo: cli.flags.byo,
 			});
 			break;
 		}
@@ -173,7 +185,13 @@ try {
 		case "up":
 		case "deploy": {
 			const { default: ship } = await import("./commands/ship.ts");
-			await withTelemetry("ship", ship)();
+			await withTelemetry(
+				"ship",
+				ship,
+			)({
+				managed: cli.flags.managed,
+				byo: cli.flags.byo,
+			});
 			break;
 		}
 		case "logs":

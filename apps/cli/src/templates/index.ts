@@ -8,7 +8,7 @@ import type { Template } from "./types";
 // Resolve templates directory relative to this file (src/templates -> templates)
 const TEMPLATES_DIR = join(dirname(dirname(import.meta.dir)), "templates");
 
-export const BUILTIN_TEMPLATES = ["miniapp", "api"];
+export const BUILTIN_TEMPLATES = ["hello", "miniapp", "api"];
 
 /**
  * Resolved template with origin tracking for lineage
@@ -100,9 +100,9 @@ async function loadTemplate(name: string): Promise<Template> {
  * Resolve template by name or GitHub URL
  */
 export async function resolveTemplate(template?: string): Promise<Template> {
-	// No template → miniapp (omakase default)
+	// No template → hello (omakase default)
 	if (!template) {
-		return loadTemplate("miniapp");
+		return loadTemplate("hello");
 	}
 
 	// Built-in template
@@ -127,7 +127,7 @@ export async function resolveTemplate(template?: string): Promise<Template> {
 export async function resolveTemplateWithOrigin(
 	templateOption?: string,
 ): Promise<ResolvedTemplate> {
-	const templateName = templateOption || "miniapp";
+	const templateName = templateOption || "hello";
 
 	// Determine origin type
 	const isGitHub = templateName.includes("/");

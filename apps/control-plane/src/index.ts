@@ -407,6 +407,86 @@ api.post("/projects/:projectId/deployments", async (c) => {
 	}
 });
 
+api.post("/projects/:projectId/deployments/upload", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	// Get project and verify it exists
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Parse multipart form data
+	const formData = await c.req.formData();
+
+	// Extract required parts
+	const manifestFile = formData.get("manifest") as File | null;
+	const bundleFile = formData.get("bundle") as File | null;
+	const sourceFile = formData.get("source") as File | null;
+	const schemaFile = formData.get("schema") as File | null;
+	const secretsFile = formData.get("secrets") as File | null;
+	const assetsFile = formData.get("assets") as File | null;
+
+	// Validate required parts
+	if (!manifestFile || !bundleFile) {
+		return c.json({ error: "invalid_request", message: "manifest and bundle are required" }, 400);
+	}
+
+	try {
+		// Parse manifest JSON
+		const manifestText = await manifestFile.text();
+		const manifest = JSON.parse(manifestText);
+
+		// Read file contents as ArrayBuffer
+		const bundleData = await bundleFile.arrayBuffer();
+		const sourceData = sourceFile ? await sourceFile.arrayBuffer() : null;
+		const schemaText = schemaFile ? await schemaFile.text() : null;
+		const secretsText = secretsFile ? await secretsFile.text() : null;
+		const secretsJson = secretsText ? JSON.parse(secretsText) : null;
+		const assetsData = assetsFile ? await assetsFile.arrayBuffer() : null;
+
+		if (manifest.assets_dir || assetsData) {
+			return c.json(
+				{
+					error: "unsupported",
+					message: "Assets are not supported in managed deploys yet",
+				},
+				400,
+			);
+		}
+
+		// Call DeploymentService.createCodeDeployment()
+		const deploymentService = new DeploymentService(c.env);
+		const deployment = await deploymentService.createCodeDeployment({
+			projectId,
+			manifest,
+			bundleZip: bundleData,
+			sourceZip: sourceData,
+			schemaSql: schemaText,
+			secretsJson,
+			assetsZip: assetsData,
+		});
+
+		return c.json(deployment, 201);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Deployment creation failed";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
 api.get("/projects/:projectId/deployments", async (c) => {
 	const auth = c.get("auth");
 	const projectId = c.req.param("projectId");

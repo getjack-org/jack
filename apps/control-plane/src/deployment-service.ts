@@ -1,7 +1,28 @@
+import { unzipSync } from "fflate";
 import { CloudflareClient, type DispatchScriptBinding } from "./cloudflare-api";
 import type { Bindings, Deployment, Project, Resource } from "./types";
 
 const DISPATCH_NAMESPACE = "jack-tenants";
+
+interface ManifestData {
+	version: 1;
+	entrypoint: string;
+	compatibility_date: string;
+	compatibility_flags?: string[];
+	module_format: "esm";
+	assets_dir?: string;
+	built_at: string;
+}
+
+interface CodeDeploymentInput {
+	projectId: string;
+	manifest: ManifestData;
+	bundleZip: ArrayBuffer;
+	sourceZip: ArrayBuffer | null;
+	schemaSql: string | null;
+	secretsJson: Record<string, string> | null;
+	assetsZip: ArrayBuffer | null;
+}
 
 // Template definitions
 const TEMPLATES: Record<string, (projectId: string) => string> = {
@@ -222,5 +243,207 @@ export class DeploymentService {
 		});
 
 		return bindings;
+	}
+
+	/**
+	 * Create a code deployment from uploaded artifacts
+	 */
+	async createCodeDeployment(input: CodeDeploymentInput): Promise<Deployment> {
+		const deploymentId = `dep_${crypto.randomUUID()}`;
+
+		// Insert deployment record with status 'queued'
+		await this.db
+			.prepare(
+				`INSERT INTO deployments (id, project_id, status, source)
+         VALUES (?, ?, 'queued', 'code:v1')`,
+			)
+			.bind(deploymentId, input.projectId)
+			.run();
+
+		try {
+			// Store artifacts in CODE_BUCKET
+			const artifactPrefix = `projects/${input.projectId}/deployments/${deploymentId}`;
+			await this.codeBucket.put(`${artifactPrefix}/bundle.zip`, input.bundleZip);
+			if (input.sourceZip) {
+				await this.codeBucket.put(`${artifactPrefix}/source.zip`, input.sourceZip);
+			}
+			await this.codeBucket.put(`${artifactPrefix}/manifest.json`, JSON.stringify(input.manifest));
+
+			// Upload assets to content bucket (if assets are provided)
+			if (input.assetsZip) {
+				await this.uploadAssetsToContentBucket(input.projectId, input.assetsZip);
+			}
+
+			// Execute schema.sql if provided
+			if (input.schemaSql) {
+				await this.executeSchema(input.projectId, input.schemaSql);
+			}
+
+			// Deploy worker code - extract main module and upload
+			await this.deployCodeToWorker(input.projectId, input.bundleZip, input.manifest, deploymentId);
+
+			// Set secrets (must be after worker upload)
+			if (input.secretsJson) {
+				await this.setSecrets(input.projectId, input.secretsJson);
+			}
+
+			// Update deployment status to 'live'
+			await this.db
+				.prepare(
+					`UPDATE deployments SET status = 'live', artifact_bucket_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				)
+				.bind(artifactPrefix, deploymentId)
+				.run();
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
+			await this.db
+				.prepare(
+					`UPDATE deployments SET status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				)
+				.bind(errorMessage, deploymentId)
+				.run();
+			throw error;
+		}
+
+		// Fetch and return final deployment
+		const deployment = await this.db
+			.prepare("SELECT * FROM deployments WHERE id = ?")
+			.bind(deploymentId)
+			.first<Deployment>();
+		if (!deployment) throw new Error("Failed to retrieve created deployment");
+		return deployment;
+	}
+
+	/**
+	 * Deploy worker code to Cloudflare
+	 */
+	private async deployCodeToWorker(
+		projectId: string,
+		bundleZip: ArrayBuffer,
+		manifest: ManifestData,
+		deploymentId: string,
+	): Promise<void> {
+		// Get worker name from resources
+		const workerResource = await this.db
+			.prepare(
+				"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker'",
+			)
+			.bind(projectId)
+			.first<{ resource_name: string }>();
+
+		if (!workerResource) throw new Error("Worker resource not found");
+
+		// Get bindings for this project (reuse existing method)
+		const bindings = await this.getBindingsForProject(projectId);
+
+		// Extract the main module from the ZIP
+		const workerCode = await this.extractMainModule(bundleZip, manifest.entrypoint);
+
+		// Upload to dispatch namespace
+		await this.cfClient.uploadDispatchScript(
+			DISPATCH_NAMESPACE,
+			workerResource.resource_name,
+			workerCode,
+			bindings,
+			{
+				compatibilityDate: manifest.compatibility_date,
+				compatibilityFlags: manifest.compatibility_flags,
+			},
+		);
+	}
+
+	/**
+	 * Extract main module from bundle ZIP
+	 */
+	private async extractMainModule(bundleZip: ArrayBuffer, entrypoint: string): Promise<string> {
+		const files = unzipSync(new Uint8Array(bundleZip));
+
+		// Find the entrypoint file
+		const entrypointData = files[entrypoint];
+		if (!entrypointData) {
+			// Try common variations
+			const variations = [entrypoint, `${entrypoint}.js`, "worker.js", "index.js"];
+			for (const name of variations) {
+				if (files[name]) {
+					return new TextDecoder().decode(files[name]);
+				}
+			}
+			throw new Error(`Entrypoint ${entrypoint} not found in bundle`);
+		}
+
+		return new TextDecoder().decode(entrypointData);
+	}
+
+	/**
+	 * Upload assets from assets ZIP to project's content bucket
+	 */
+	private async uploadAssetsToContentBucket(
+		projectId: string,
+		assetsZip: ArrayBuffer,
+	): Promise<void> {
+		// Get project's content bucket from resources
+		const r2Resource = await this.db
+			.prepare(
+				"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'r2_content'",
+			)
+			.bind(projectId)
+			.first<{ resource_name: string }>();
+
+		if (!r2Resource) {
+			// Content bucket not enabled for this project - skip
+			return;
+		}
+
+		// Unzip assets
+		const files = unzipSync(new Uint8Array(assetsZip));
+
+		// Upload each file to R2
+		for (const [path, content] of Object.entries(files)) {
+			if (content.length > 0) {
+				await this.cfClient.uploadToR2Bucket(r2Resource.resource_name, path, content);
+			}
+		}
+	}
+
+	/**
+	 * Execute schema.sql against project's D1 database
+	 */
+	private async executeSchema(projectId: string, schemaSql: string): Promise<void> {
+		// Get project's D1 database from resources
+		const d1Resource = await this.db
+			.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1'")
+			.bind(projectId)
+			.first<{ provider_id: string }>();
+
+		if (!d1Resource) {
+			throw new Error("D1 database not found for project");
+		}
+
+		await this.cfClient.executeD1Query(d1Resource.provider_id, schemaSql);
+	}
+
+	/**
+	 * Set secrets on the project's worker
+	 */
+	private async setSecrets(projectId: string, secrets: Record<string, string>): Promise<void> {
+		if (!secrets || Object.keys(secrets).length === 0) return;
+
+		// Get worker name from resources
+		const workerResource = await this.db
+			.prepare(
+				"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker'",
+			)
+			.bind(projectId)
+			.first<{ resource_name: string }>();
+
+		if (!workerResource) {
+			throw new Error("Worker resource not found");
+		}
+
+		await this.cfClient.setDispatchScriptSecrets(
+			DISPATCH_NAMESPACE,
+			workerResource.resource_name,
+			secrets,
+		);
 	}
 }
