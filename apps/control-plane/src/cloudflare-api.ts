@@ -175,7 +175,7 @@ export class CloudflareClient {
 		const scriptBlob = new Blob([scriptContent], { type: "application/javascript+module" });
 		formData.append("worker.js", scriptBlob, "worker.js");
 
-		const options: RequestInit = {
+		const fetchOptions: RequestInit = {
 			method: "PUT",
 			headers: {
 				Authorization: `Bearer ${this.apiToken}`,
@@ -183,7 +183,7 @@ export class CloudflareClient {
 			body: formData,
 		};
 
-		const response = await fetch(url, options);
+		const response = await fetch(url, fetchOptions);
 		const data = (await response.json()) as CloudflareResponse<unknown>;
 
 		if (!data.success) {
