@@ -1,0 +1,28 @@
+{
+	"name": "hello",
+	"description": "Minimal Worker (fetch)",
+	"secrets": [],
+	"intent": {
+		"keywords": ["hello", "starter", "worker"],
+		"examples": ["hello world worker"]
+	},
+	"hooks": {
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "shell",
+				"command": "curl -s {{url}} | head -c 200",
+				"message": "Testing worker..."
+			},
+			{
+				"action": "box",
+				"title": "Deployed: {{name}}",
+				"lines": ["URL: {{url}}", "", "Worker is live!"]
+			}
+		]
+	}
+}

@@ -10,6 +10,7 @@
 	},
 	"dependencies": {
 		"@getjack/auth": "workspace:*",
+		"fflate": "^0.8.2",
 		"hono": "^4.6.0"
 	},
 	"devDependencies": {

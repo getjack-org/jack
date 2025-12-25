@@ -8,7 +8,7 @@ import { createProject } from "../lib/project-operations.ts";
 
 export default async function newProject(
 	nameOrPhrase?: string,
-	options: { template?: string; intent?: string } = {},
+	options: { template?: string; intent?: string; managed?: boolean; byo?: boolean } = {},
 ): Promise<void> {
 	// Immediate feedback
 	output.start("Starting...");
@@ -49,6 +49,8 @@ export default async function newProject(
 				box: output.box,
 			},
 			interactive: !isCi,
+			managed: options.managed,
+			byo: options.byo,
 		});
 	} catch (error) {
 		const details = getErrorDetails(error);

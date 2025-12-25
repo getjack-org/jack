@@ -23,6 +23,13 @@ export const Events = {
 	INTENT_CUSTOMIZATION_STARTED: "intent_customization_started",
 	INTENT_CUSTOMIZATION_COMPLETED: "intent_customization_completed",
 	INTENT_CUSTOMIZATION_FAILED: "intent_customization_failed",
+
+	// Deploy mode events
+	DEPLOY_MODE_SELECTED: "deploy_mode_selected",
+	MANAGED_PROJECT_CREATED: "managed_project_created",
+	MANAGED_DEPLOY_STARTED: "managed_deploy_started",
+	MANAGED_DEPLOY_COMPLETED: "managed_deploy_completed",
+	MANAGED_DEPLOY_FAILED: "managed_deploy_failed",
 } as const;
 
 type EventName = (typeof Events)[keyof typeof Events];

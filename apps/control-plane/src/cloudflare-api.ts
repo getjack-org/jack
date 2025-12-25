@@ -147,6 +147,11 @@ export class CloudflareClient {
 		scriptName: string,
 		scriptContent: string,
 		bindings: DispatchScriptBinding[],
+		options?: {
+			compatibilityDate?: string;
+			compatibilityFlags?: string[];
+			mainModule?: string;
+		},
 	): Promise<void> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}`;
 
@@ -154,10 +159,16 @@ export class CloudflareClient {
 		const formData = new FormData();
 
 		// Add metadata with bindings
-		const metadata = {
-			main_module: "worker.js",
+		const metadata: Record<string, unknown> = {
+			main_module: options?.mainModule ?? "worker.js",
 			bindings,
 		};
+		if (options?.compatibilityDate) {
+			metadata.compatibility_date = options.compatibilityDate;
+		}
+		if (options?.compatibilityFlags?.length) {
+			metadata.compatibility_flags = options.compatibilityFlags;
+		}
 		formData.append("metadata", JSON.stringify(metadata));
 
 		// Add worker script as a file part
@@ -277,5 +288,87 @@ export class CloudflareClient {
 				? data.errors.map((e) => e.message).join(", ")
 				: "Unknown Cloudflare API error";
 		throw new Error(`Cloudflare API error: ${errorMsg}`);
+	}
+
+	/**
+	 * Execute SQL statements against a D1 database
+	 */
+	async executeD1Query(databaseId: string, sql: string): Promise<void> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/d1/database/${databaseId}/query`;
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ sql }),
+		});
+
+		const data = (await response.json()) as CloudflareResponse<unknown>;
+
+		if (!data.success) {
+			// Handle common errors gracefully
+			const errorMsg = data.errors?.[0]?.message || "D1 query failed";
+
+			// Ignore "table already exists" errors (idempotent schema)
+			if (errorMsg.includes("already exists")) {
+				return;
+			}
+
+			throw new Error(`D1 error: ${errorMsg}`);
+		}
+	}
+
+	/**
+	 * Set secrets on a dispatch namespace script
+	 */
+	async setDispatchScriptSecrets(
+		namespace: string,
+		scriptName: string,
+		secrets: Record<string, string>,
+	): Promise<void> {
+		for (const [name, value] of Object.entries(secrets)) {
+			const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/secrets`;
+
+			const response = await fetch(url, {
+				method: "PUT",
+				headers: {
+					Authorization: `Bearer ${this.apiToken}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					name,
+					text: value,
+					type: "secret_text",
+				}),
+			});
+
+			const data = (await response.json()) as CloudflareResponse<unknown>;
+
+			if (!data.success) {
+				const errorMsg = data.errors?.map((e) => e.message).join(", ") || "Secret upload failed";
+				throw new Error(`Failed to set secret ${name}: ${errorMsg}`);
+			}
+		}
+	}
+
+	/**
+	 * Upload a file to an R2 bucket
+	 */
+	async uploadToR2Bucket(bucketName: string, key: string, content: Uint8Array): Promise<void> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/r2/buckets/${bucketName}/objects/${key}`;
+
+		const response = await fetch(url, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+			},
+			body: content,
+		});
+
+		if (!response.ok) {
+			throw new Error(`Failed to upload to R2: ${response.statusText}`);
+		}
 	}
 }

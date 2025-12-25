@@ -25,14 +25,16 @@ import {
 } from "./agents.ts";
 import { checkWorkerExists, getAccountId, listD1Databases } from "./cloudflare-api.ts";
 import { getSyncConfig } from "./config.ts";
-import { isDebug } from "./debug.ts";
+import { debug, isDebug } from "./debug.ts";
+import { resolveDeployMode, validateModeAvailability } from "./deploy-mode.ts";
 import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parser.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { type HookOutput, runHook } from "./hooks.ts";
 import { loadTemplateKeywords, matchTemplateByIntent } from "./intent.ts";
+import { createManagedProjectRemote, deployToManagedProject } from "./managed-deploy.ts";
 import { generateProjectName } from "./names.ts";
 import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
-import type { TemplateOrigin } from "./registry.ts";
+import type { DeployMode, TemplateOrigin } from "./registry.ts";
 import {
 	getAllProjects,
 	getProject,
@@ -54,12 +56,15 @@ export interface CreateProjectOptions {
 	intent?: string;
 	reporter?: OperationReporter;
 	interactive?: boolean;
+	managed?: boolean; // Force managed deploy mode
+	byo?: boolean; // Force BYO deploy mode
 }
 
 export interface CreateProjectResult {
 	projectName: string;
 	targetDir: string;
 	workerUrl: string | null;
+	deployMode: DeployMode; // The deploy mode used
 }
 
 export interface DeployOptions {
@@ -68,12 +73,15 @@ export interface DeployOptions {
 	interactive?: boolean;
 	includeSecrets?: boolean;
 	includeSync?: boolean;
+	managed?: boolean; // Force managed deploy mode
+	byo?: boolean; // Force BYO deploy mode
 }
 
 export interface DeployResult {
 	workerUrl: string | null;
 	projectName: string;
 	deployOutput?: string;
+	deployMode: DeployMode; // The deploy mode used
 }
 
 export interface ProjectStatus {
@@ -232,6 +240,16 @@ export async function createProject(
 	const initialized = await isInitialized();
 	if (!initialized) {
 		throw new JackError(JackErrorCode.VALIDATION_ERROR, "jack is not set up yet", "Run: jack init");
+	}
+
+	// Resolve deploy mode (omakase: logged in => managed, logged out => BYO)
+	const deployMode = await resolveDeployMode({
+		managed: options.managed,
+		byo: options.byo,
+	});
+	const modeError = await validateModeAvailability(deployMode);
+	if (modeError) {
+		throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
 	}
 
 	// Generate or use provided name
@@ -558,7 +576,9 @@ export async function createProject(
 				info: reporter.info,
 				warn: reporter.warn,
 				status: customizationSpinner
-					? (message) => (customizationSpinner.text = message)
+					? (message) => {
+							customizationSpinner.text = message;
+						}
 					: undefined,
 			});
 
@@ -582,7 +602,7 @@ export async function createProject(
 		}
 	}
 
-	// For Vite projects, build first
+	// For Vite projects, build first (needed for both modes)
 	const hasVite = existsSync(join(targetDir, "vite.config.ts"));
 	if (hasVite) {
 		reporter.start("Building...");
@@ -602,92 +622,131 @@ export async function createProject(
 		reporter.success("Built");
 	}
 
-	// Deploy
-	reporter.start("Deploying...");
+	let workerUrl: string | null = null;
 
-	const deployResult = await $`wrangler deploy`.cwd(targetDir).nothrow().quiet();
+	// Deploy based on mode
+	if (deployMode === "managed") {
+		// Managed mode: create project and deploy via jack cloud
+		const remoteResult = await createManagedProjectRemote(projectName, reporter);
+		await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
+		workerUrl = remoteResult.runjackUrl;
 
-	if (deployResult.exitCode !== 0) {
-		reporter.stop();
-		reporter.error("Deploy failed");
-		throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
-			exitCode: 0,
-			stderr: deployResult.stderr.toString(),
-			reported: hasReporter,
-		});
-	}
+		// Register project with managed mode metadata
+		try {
+			const dbName = await getD1DatabaseName(targetDir);
 
-	// Apply schema.sql after deploy
-	if (await hasD1Config(targetDir)) {
-		const dbName = await getD1DatabaseName(targetDir);
-		if (dbName) {
-			try {
-				await applySchema(dbName, targetDir);
-			} catch (err) {
-				reporter.warn(`Schema application failed: ${err}`);
-				reporter.info("Run manually: bun run db:migrate");
+			await registerProject(projectName, {
+				localPath: targetDir,
+				workerUrl,
+				createdAt: new Date().toISOString(),
+				lastDeployed: new Date().toISOString(),
+				resources: {
+					services: {
+						db: dbName,
+					},
+				},
+				template: templateOrigin,
+				deploy_mode: "managed",
+				remote: {
+					project_id: remoteResult.projectId,
+					project_slug: remoteResult.projectSlug,
+					org_id: remoteResult.orgId,
+					runjack_url: remoteResult.runjackUrl,
+				},
+			});
+		} catch (err) {
+			// Log but don't fail - registry is convenience, not critical path
+			debug("Failed to register managed project:", err);
+		}
+	} else {
+		// BYO mode: deploy via wrangler
+		reporter.start("Deploying...");
+
+		const deployResult = await $`wrangler deploy`.cwd(targetDir).nothrow().quiet();
+
+		if (deployResult.exitCode !== 0) {
+			reporter.stop();
+			reporter.error("Deploy failed");
+			throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
+				exitCode: 0,
+				stderr: deployResult.stderr.toString(),
+				reported: hasReporter,
+			});
+		}
+
+		// Apply schema.sql after deploy
+		if (await hasD1Config(targetDir)) {
+			const dbName = await getD1DatabaseName(targetDir);
+			if (dbName) {
+				try {
+					await applySchema(dbName, targetDir);
+				} catch (err) {
+					reporter.warn(`Schema application failed: ${err}`);
+					reporter.info("Run manually: bun run db:migrate");
+				}
 			}
 		}
-	}
 
-	// Push secrets to Cloudflare
-	const secretsJsonPath = join(targetDir, ".secrets.json");
-	if (existsSync(secretsJsonPath)) {
-		reporter.start("Configuring secrets...");
+		// Push secrets to Cloudflare
+		const secretsJsonPath = join(targetDir, ".secrets.json");
+		if (existsSync(secretsJsonPath)) {
+			reporter.start("Configuring secrets...");
 
-		const secretsResult = await $`wrangler secret bulk .secrets.json`
-			.cwd(targetDir)
-			.nothrow()
-			.quiet();
+			const secretsResult = await $`wrangler secret bulk .secrets.json`
+				.cwd(targetDir)
+				.nothrow()
+				.quiet();
 
-		if (secretsResult.exitCode !== 0) {
-			reporter.stop();
-			reporter.warn("Failed to push secrets to Cloudflare");
-			reporter.info("Run manually: wrangler secret bulk .secrets.json");
+			if (secretsResult.exitCode !== 0) {
+				reporter.stop();
+				reporter.warn("Failed to push secrets to Cloudflare");
+				reporter.info("Run manually: wrangler secret bulk .secrets.json");
+			} else {
+				reporter.stop();
+				reporter.success("Secrets configured");
+			}
+		}
+
+		// Parse URL from output
+		const deployOutput = deployResult.stdout.toString();
+		const urlMatch = deployOutput.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
+		workerUrl = urlMatch ? urlMatch[0] : null;
+
+		reporter.stop();
+		if (workerUrl) {
+			reporter.success(`Live: ${workerUrl}`);
 		} else {
-			reporter.stop();
-			reporter.success("Secrets configured");
+			reporter.success("Deployed");
+		}
+
+		// Register project with BYO mode
+		try {
+			const accountId = await getAccountId();
+			const dbName = await getD1DatabaseName(targetDir);
+
+			await registerProject(projectName, {
+				localPath: targetDir,
+				workerUrl,
+				createdAt: new Date().toISOString(),
+				lastDeployed: workerUrl ? new Date().toISOString() : null,
+				cloudflare: {
+					accountId,
+					workerId: projectName,
+				},
+				resources: {
+					services: {
+						db: dbName,
+					},
+				},
+				template: templateOrigin,
+				deploy_mode: "byo",
+			});
+		} catch {
+			// Don't fail the creation if registry update fails
 		}
 	}
 
-	// Parse URL from output
-	const deployOutput = deployResult.stdout.toString();
-	const urlMatch = deployOutput.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
-	const workerUrl = urlMatch ? urlMatch[0] : null;
-
-	reporter.stop();
-	if (workerUrl) {
-		reporter.success(`Live: ${workerUrl}`);
-	} else {
-		reporter.success("Deployed");
-	}
-
-	// Register project in registry
-	try {
-		const accountId = await getAccountId();
-		const dbName = await getD1DatabaseName(targetDir);
-
-		await registerProject(projectName, {
-			localPath: targetDir,
-			workerUrl,
-			createdAt: new Date().toISOString(),
-			lastDeployed: workerUrl ? new Date().toISOString() : null,
-			cloudflare: {
-				accountId,
-				workerId: projectName,
-			},
-			resources: {
-				services: {
-					db: dbName,
-				},
-			},
-			template: templateOrigin,
-		});
-	} catch {
-		// Don't fail the creation if registry update fails
-	}
-
-	// Run post-deploy hooks
+	// Run post-deploy hooks (for both modes)
 	if (template.hooks?.postDeploy?.length && workerUrl) {
 		const domain = workerUrl.replace(/^https?:\/\//, "");
 		await runHook(
@@ -706,6 +765,7 @@ export async function createProject(
 		projectName,
 		targetDir,
 		workerUrl,
+		deployMode,
 	};
 }
 
@@ -749,6 +809,28 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		);
 	}
 
+	// Get project name from directory
+	const projectName = await getProjectNameFromDir(projectPath);
+
+	// Get project from registry to check stored mode
+	const project = await getProject(projectName);
+
+	// Determine effective mode: explicit flag > stored mode > default BYO
+	let deployMode: DeployMode;
+	if (options.managed) {
+		deployMode = "managed";
+	} else if (options.byo) {
+		deployMode = "byo";
+	} else {
+		deployMode = project?.deploy_mode ?? "byo";
+	}
+
+	// Validate mode availability
+	const modeError = await validateModeAvailability(deployMode);
+	if (modeError) {
+		throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
+	}
+
 	// For Vite projects, build first
 	const isViteProject =
 		existsSync(join(projectPath, "vite.config.ts")) ||
@@ -770,34 +852,58 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		buildSpin.success("Built");
 	}
 
-	// Deploy
-	const spin = reporter.spinner("Deploying...");
-	const result = await $`wrangler deploy`.cwd(projectPath).nothrow().quiet();
+	let workerUrl: string | null = null;
+	let deployOutput: string | undefined;
 
-	if (result.exitCode !== 0) {
-		spin.error("Deploy failed");
-		throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
-			exitCode: result.exitCode ?? 1,
-			stderr: result.stderr.toString(),
-			reported: hasReporter,
-		});
-	}
+	// Deploy based on mode
+	if (deployMode === "managed") {
+		// Managed mode: deploy via jack cloud
+		if (!project?.remote?.project_id) {
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				"Project not linked to jack cloud",
+				"Create a new managed project or use --byo",
+			);
+		}
 
-	// Parse URL from output
-	const deployOutput = result.stdout.toString();
-	const urlMatch = deployOutput.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
-	const workerUrl = urlMatch ? urlMatch[0] : null;
-	const projectName = await getProjectNameFromDir(projectPath);
+		// deployToManagedProject now handles both template and code deploy
+		const result = await deployToManagedProject(project.remote.project_id, projectPath, reporter);
 
-	if (workerUrl) {
-		spin.success(`Live: ${workerUrl}`);
+		workerUrl = project.remote.runjack_url;
+
+		// Update lastDeployed in registry (will be persisted below)
+		if (project) {
+			project.lastDeployed = new Date().toISOString();
+		}
 	} else {
-		spin.success("Deployed");
+		// BYO mode: deploy via wrangler
+		const spin = reporter.spinner("Deploying...");
+		const result = await $`wrangler deploy`.cwd(projectPath).nothrow().quiet();
+
+		if (result.exitCode !== 0) {
+			spin.error("Deploy failed");
+			throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
+				exitCode: result.exitCode ?? 1,
+				stderr: result.stderr.toString(),
+				reported: hasReporter,
+			});
+		}
+
+		// Parse URL from output
+		deployOutput = result.stdout.toString();
+		const urlMatch = deployOutput.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
+		workerUrl = urlMatch ? urlMatch[0] : null;
+
+		if (workerUrl) {
+			spin.success(`Live: ${workerUrl}`);
+		} else {
+			spin.success("Deployed");
+		}
 	}
 
-	// Apply schema if needed
+	// Apply schema if needed (BYO only - managed projects have their own DB)
 	let dbName: string | null = null;
-	if (await hasD1Config(projectPath)) {
+	if (deployMode === "byo" && (await hasD1Config(projectPath))) {
 		dbName = await getD1DatabaseName(projectPath);
 		if (dbName) {
 			try {
@@ -861,6 +967,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		workerUrl,
 		projectName,
 		deployOutput: workerUrl ? undefined : deployOutput,
+		deployMode,
 	};
 }
 
@@ -915,8 +1022,8 @@ export async function getProjectStatus(
 		workerUrl: project.workerUrl,
 		lastDeployed: project.lastDeployed,
 		createdAt: project.createdAt,
-		accountId: project.cloudflare.accountId,
-		workerId: project.cloudflare.workerId,
+		accountId: project.cloudflare?.accountId ?? null,
+		workerId: project.cloudflare?.workerId ?? null,
 		dbName: getProjectDatabaseName(project),
 		deployed: workerExists || !!project.workerUrl,
 		local: localExists,
@@ -980,8 +1087,8 @@ export async function listAllProjects(
 				workerUrl: project.workerUrl,
 				lastDeployed: project.lastDeployed,
 				createdAt: project.createdAt,
-				accountId: project.cloudflare.accountId,
-				workerId: project.cloudflare.workerId,
+				accountId: project.cloudflare?.accountId ?? null,
+				workerId: project.cloudflare?.workerId ?? null,
 				dbName: getProjectDatabaseName(project),
 				local,
 				deployed,
