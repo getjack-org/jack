@@ -3,7 +3,7 @@ import type { JwtPayload } from "@getjack/auth";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { CloudflareClient } from "./cloudflare-api";
-import { DeploymentService } from "./deployment-service";
+import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import type { Bindings } from "./types";
 
@@ -654,6 +654,47 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 		// Parse manifest JSON
 		const manifestText = await manifestFile.text();
 		const manifest = JSON.parse(manifestText);
+
+		// Validate manifest at API boundary (defense-in-depth)
+		const manifestValidation = validateManifest(manifest);
+		if (!manifestValidation.valid) {
+			return c.json(
+				{
+					error: "invalid_manifest",
+					message: "Manifest validation failed",
+					details: manifestValidation.errors,
+				},
+				400,
+			);
+		}
+
+		// Validate assets consistency at API boundary
+		const hasAssetsFile = !!assetsFile;
+		const hasAssetsBinding = !!manifest.bindings?.assets;
+
+		if (hasAssetsBinding && !hasAssetsFile) {
+			return c.json(
+				{
+					error: "missing_assets",
+					message:
+						"Assets binding declared in manifest but assets.zip is missing. " +
+						"The deployment would fail at runtime when accessing env.ASSETS.",
+				},
+				400,
+			);
+		}
+
+		if (hasAssetsFile && !hasAssetsBinding) {
+			return c.json(
+				{
+					error: "orphan_assets",
+					message:
+						"assets.zip provided but no assets binding in manifest. " +
+						"Add an assets section to wrangler.jsonc to enable static file serving.",
+				},
+				400,
+			);
+		}
 
 		// Read file contents as ArrayBuffer
 		const bundleData = await bundleFile.arrayBuffer();

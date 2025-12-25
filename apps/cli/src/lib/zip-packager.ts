@@ -4,7 +4,7 @@ import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import archiver from "archiver";
-import type { BuildOutput } from "./build-helper.ts";
+import type { BuildOutput, WranglerConfig } from "./build-helper.ts";
 import { scanProjectFiles } from "./storage/file-filter.ts";
 
 export interface ZipPackageResult {
@@ -25,6 +25,12 @@ export interface ManifestData {
 	module_format: "esm";
 	assets_dir?: string;
 	built_at: string;
+	bindings?: {
+		d1?: { binding: string };
+		ai?: { binding: string };
+		assets?: { binding: string; directory: string };
+		vars?: Record<string, string>;
+	};
 }
 
 /**
@@ -64,14 +70,55 @@ async function createZipArchive(
 }
 
 /**
+ * Extracts binding intent from wrangler config for the manifest.
+ * Returns undefined if no bindings are configured.
+ */
+function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindings"] | undefined {
+	if (!config) return undefined;
+
+	const bindings: NonNullable<ManifestData["bindings"]> = {};
+
+	// Extract D1 database binding (use first one if multiple)
+	if (config.d1_databases && config.d1_databases.length > 0) {
+		const firstDb = config.d1_databases[0];
+		if (firstDb) {
+			bindings.d1 = { binding: firstDb.binding };
+		}
+	}
+
+	// Extract AI binding (default binding name: "AI")
+	if (config.ai) {
+		bindings.ai = { binding: config.ai.binding || "AI" };
+	}
+
+	// Extract assets binding (defaults: binding="ASSETS", directory="./dist")
+	if (config.assets) {
+		bindings.assets = {
+			binding: config.assets.binding || "ASSETS",
+			directory: config.assets.directory || "./dist",
+		};
+	}
+
+	// Extract vars
+	if (config.vars && Object.keys(config.vars).length > 0) {
+		bindings.vars = config.vars;
+	}
+
+	// Return undefined if no bindings were extracted
+	return Object.keys(bindings).length > 0 ? bindings : undefined;
+}
+
+/**
  * Packages a built project for deployment to jack cloud
  * @param projectPath - Absolute path to project directory
  * @param buildOutput - Build output from buildProject()
+ * @param config - Optional wrangler config to extract binding intent
  * @returns Package result with ZIP paths and cleanup function
  */
 export async function packageForDeploy(
 	projectPath: string,
 	buildOutput: BuildOutput,
+	config?: WranglerConfig,
 ): Promise<ZipPackageResult> {
 	// Create temp directory for package artifacts
 	const packageId = `jack-package-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -101,6 +148,7 @@ export async function packageForDeploy(
 		module_format: "esm",
 		assets_dir: buildOutput.assetsDir ? "assets" : undefined,
 		built_at: new Date().toISOString(),
+		bindings: extractBindingsFromConfig(config),
 	};
 
 	await Bun.write(manifestPath, JSON.stringify(manifest, null, 2));

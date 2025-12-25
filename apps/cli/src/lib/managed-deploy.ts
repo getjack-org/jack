@@ -4,6 +4,7 @@
  * Isolates managed deployment logic from BYO (wrangler) path.
  */
 
+import { validateBindings } from "./binding-validator.ts";
 import { buildProject, parseWranglerConfig } from "./build-helper.ts";
 import { createManagedProject } from "./control-plane.ts";
 import { uploadDeployment } from "./deploy-upload.ts";
@@ -54,20 +55,6 @@ export async function createManagedProjectRemote(
 	}
 }
 
-function assertManagedBindingsSupported(config: Awaited<ReturnType<typeof parseWranglerConfig>>): void {
-	const unsupported: string[] = [];
-	if (config.assets) unsupported.push("assets");
-	if (config.ai) unsupported.push("ai");
-
-	if (unsupported.length > 0) {
-		throw new JackError(
-			JackErrorCode.VALIDATION_ERROR,
-			`Managed deploy does not support ${unsupported.join(" or ")} bindings yet`,
-			"Use --byo for now (bindings support is coming soon)",
-		);
-	}
-}
-
 export interface ManagedCodeDeployOptions {
 	projectId: string;
 	projectPath: string;
@@ -81,26 +68,37 @@ export interface ManagedCodeDeployOptions {
  */
 export async function deployCodeToManagedProject(
 	options: ManagedCodeDeployOptions,
-	): Promise<{ deploymentId: string; status: string }> {
-		const { projectId, projectPath, reporter } = options;
+): Promise<{ deploymentId: string; status: string }> {
+	const { projectId, projectPath, reporter } = options;
 
-		// Track deploy start
-		track(Events.MANAGED_DEPLOY_STARTED, {});
-		const startTime = Date.now();
+	// Track deploy start
+	track(Events.MANAGED_DEPLOY_STARTED, {});
+	const startTime = Date.now();
 
-		let pkg: Awaited<ReturnType<typeof packageForDeploy>> | null = null;
+	let pkg: Awaited<ReturnType<typeof packageForDeploy>> | null = null;
 
-		try {
-			const config = await parseWranglerConfig(projectPath);
-			assertManagedBindingsSupported(config);
+	try {
+		const config = await parseWranglerConfig(projectPath);
 
-			// Step 1: Build the project
-			reporter?.start("Building project...");
-			const buildOutput = await buildProject({ projectPath, reporter });
+		// Validate bindings are supported
+		const validation = validateBindings(config, projectPath);
+		if (!validation.valid) {
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				validation.errors[0] || "Invalid bindings configuration",
+				validation.errors.length > 1
+					? `Additional errors:\n${validation.errors.slice(1).join("\n")}`
+					: undefined,
+			);
+		}
+
+		// Step 1: Build the project
+		reporter?.start("Building project...");
+		const buildOutput = await buildProject({ projectPath, reporter });
 
 		// Step 2: Package artifacts
 		reporter?.start("Packaging artifacts...");
-		pkg = await packageForDeploy(projectPath, buildOutput);
+		pkg = await packageForDeploy(projectPath, buildOutput, config);
 
 		// Step 3: Upload to control plane
 		reporter?.start("Uploading to jack cloud...");
