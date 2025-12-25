@@ -7,6 +7,7 @@ import {
 	deleteWorker,
 	exportDatabase,
 } from "../lib/cloudflare-api.ts";
+import { managedDown } from "../lib/managed-down.ts";
 import { error, info, item, output, success, warn } from "../lib/output.ts";
 import {
 	type Project,
@@ -84,6 +85,18 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			warn(`Project '${name}' not found in registry`);
 			info("Will attempt to undeploy if deployed");
 		}
+
+		// Check if this is a managed project
+		if (project?.deploy_mode === "managed" && project.remote?.project_id) {
+			// Route to managed deletion flow
+			const success = await managedDown(project, name, flags);
+			if (!success) {
+				process.exit(0); // User cancelled
+			}
+			return;
+		}
+
+		// Continue with existing BYO flow...
 
 		// Check if worker exists
 		output.start("Checking deployment...");
