@@ -1,9 +1,4 @@
 #!/usr/bin/env bun
-// Usage: bun run scripts/integration.ts
-// Optional env: JACK_BIN, JACK_ARGS, JACK_IT_TEMPLATE, JACK_IT_PROJECT, JACK_IT_ROOT, JACK_IT_RUN_ID, JACK_IT_LOG, JACK_IT_CLEANUP, JACK_IT_KEEP_REGISTRY
-// Flags: --cleanup, --no-log, --keep-registry
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
@@ -11,6 +6,11 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+// Usage: bun run scripts/integration.ts
+// Optional env: JACK_BIN, JACK_ARGS, JACK_IT_TEMPLATE, JACK_IT_PROJECT, JACK_IT_ROOT, JACK_IT_RUN_ID, JACK_IT_LOG, JACK_IT_CLEANUP, JACK_IT_KEEP_REGISTRY
+// Flags: --cleanup, --no-log, --keep-registry
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 type Step = {
 	name: string;

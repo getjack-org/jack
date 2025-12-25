@@ -1,6 +1,6 @@
 import * as jose from "jose";
-import { WORKOS_JWKS_URL, WORKOS_ISSUER, DEFAULT_CACHE_TTL_MS } from "./constants.ts";
-import type { JwtPayload, JwksVerifierOptions, CachedJwks } from "./types.ts";
+import { DEFAULT_CACHE_TTL_MS, WORKOS_ISSUER, WORKOS_JWKS_URL } from "./constants.ts";
+import type { CachedJwks, JwksVerifierOptions, JwtPayload } from "./types.ts";
 
 // In-memory JWKS cache
 let jwksCache: CachedJwks | null = null;
