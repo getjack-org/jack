@@ -25,14 +25,21 @@ export interface WranglerConfig {
 	main?: string;
 	compatibility_date?: string;
 	compatibility_flags?: string[];
-	assets?: {
-		directory?: string;
-		binding?: string;
-	};
-	ai?: {
-		binding?: string;
-	};
+	// Supported bindings
+	d1_databases?: Array<{ binding: string; database_name?: string; database_id?: string }>;
+	ai?: { binding?: string };
+	assets?: { directory?: string; binding?: string };
 	vars?: Record<string, string>;
+	// Unsupported bindings (for validation)
+	kv_namespaces?: unknown;
+	durable_objects?: unknown;
+	queues?: unknown;
+	services?: unknown;
+	r2_buckets?: unknown;
+	hyperdrive?: unknown;
+	vectorize?: unknown;
+	browser?: unknown;
+	mtls_certificates?: unknown;
 }
 
 /**
