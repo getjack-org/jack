@@ -115,3 +115,61 @@ export async function checkSlugAvailability(slug: string): Promise<SlugAvailabil
 
 	return response.json() as Promise<SlugAvailabilityResponse>;
 }
+
+export interface DatabaseExportResponse {
+	success: boolean;
+	download_url: string;
+	expires_in: number;
+}
+
+export interface DeleteProjectResponse {
+	success: boolean;
+	project_id: string;
+	deleted_at: string;
+	resources: Array<{ resource: string; success: boolean; error?: string }>;
+	warnings?: string;
+}
+
+/**
+ * Export a managed project's D1 database.
+ */
+export async function exportManagedDatabase(projectId: string): Promise<DatabaseExportResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${projectId}/database/export`,
+	);
+
+	if (response.status === 504) {
+		throw new Error("Database export timed out. The database may be too large.");
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to export database: ${response.status}`);
+	}
+
+	return response.json() as Promise<DatabaseExportResponse>;
+}
+
+/**
+ * Delete a managed project and all its resources.
+ */
+export async function deleteManagedProject(projectId: string): Promise<DeleteProjectResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}`, {
+		method: "DELETE",
+	});
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to delete project: ${response.status}`);
+	}
+
+	return response.json() as Promise<DeleteProjectResponse>;
+}

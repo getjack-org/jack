@@ -2,6 +2,7 @@ import { verifyJwt } from "@getjack/auth";
 import type { JwtPayload } from "@getjack/auth";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { CloudflareClient } from "./cloudflare-api";
 import { DeploymentService } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import type { Bindings } from "./types";
@@ -384,6 +385,186 @@ api.patch("/projects/:projectId", async (c) => {
 	}
 });
 
+// Database export endpoint
+api.get("/projects/:projectId/database/export", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; slug: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get D1 resource
+	const d1Resource = await c.env.DB.prepare(
+		"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ provider_id: string }>();
+
+	if (!d1Resource) {
+		return c.json({ error: "not_found", message: "No database found for project" }, 404);
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const signedUrl = await cfClient.exportD1Database(d1Resource.provider_id, 60000);
+
+		return c.json({
+			success: true,
+			download_url: signedUrl,
+			expires_in: 3600,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Export failed";
+
+		if (message.includes("timed out")) {
+			return c.json(
+				{
+					error: "timeout",
+					message: "Database export timed out. The database may be too large.",
+				},
+				504,
+			);
+		}
+
+		return c.json({ error: "export_failed", message }, 500);
+	}
+});
+
+// Project deletion endpoint
+api.delete("/projects/:projectId", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; slug: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get all resources
+	const resources = await c.env.DB.prepare(
+		"SELECT * FROM resources WHERE project_id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.all<{ resource_type: string; resource_name: string; provider_id: string }>();
+
+	const cfClient = new CloudflareClient(c.env);
+	const deletionResults: Array<{ resource: string; success: boolean; error?: string }> = [];
+
+	// Delete dispatch worker
+	const workerResource = resources.results?.find((r) => r.resource_type === "worker");
+	if (workerResource) {
+		try {
+			await cfClient.deleteDispatchScript("jack-tenants", workerResource.resource_name);
+			deletionResults.push({ resource: "worker", success: true });
+		} catch (error) {
+			deletionResults.push({ resource: "worker", success: false, error: String(error) });
+		}
+	}
+
+	// Delete D1 database
+	const d1Resource = resources.results?.find((r) => r.resource_type === "d1");
+	if (d1Resource) {
+		try {
+			await cfClient.deleteD1Database(d1Resource.provider_id);
+			deletionResults.push({ resource: "d1", success: true });
+		} catch (error) {
+			deletionResults.push({ resource: "d1", success: false, error: String(error) });
+		}
+	}
+
+	// Delete R2 content bucket
+	const r2Resource = resources.results?.find((r) => r.resource_type === "r2_content");
+	if (r2Resource) {
+		try {
+			await cfClient.deleteR2Bucket(r2Resource.resource_name);
+			deletionResults.push({ resource: "r2_content", success: true });
+		} catch (error) {
+			deletionResults.push({ resource: "r2_content", success: false, error: String(error) });
+		}
+	}
+
+	// Delete code bucket objects
+	try {
+		const prefix = `projects/${projectId}/`;
+		const objects = await c.env.CODE_BUCKET.list({ prefix });
+		for (const obj of objects.objects) {
+			await c.env.CODE_BUCKET.delete(obj.key);
+		}
+		deletionResults.push({ resource: "code_bucket", success: true });
+	} catch (error) {
+		deletionResults.push({ resource: "code_bucket", success: false, error: String(error) });
+	}
+
+	// Delete KV cache entries
+	try {
+		await c.env.PROJECTS_CACHE.delete(`project:${projectId}`);
+		await c.env.PROJECTS_CACHE.delete(`config:${project.slug}`);
+		await c.env.PROJECTS_CACHE.delete(`slug:${project.org_id}:${project.slug}`);
+		deletionResults.push({ resource: "kv_cache", success: true });
+	} catch (error) {
+		deletionResults.push({ resource: "kv_cache", success: false, error: String(error) });
+	}
+
+	// Soft-delete in DB
+	const now = new Date().toISOString();
+	await c.env.DB.prepare(
+		"UPDATE projects SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?",
+	)
+		.bind(now, now, projectId)
+		.run();
+
+	await c.env.DB.prepare("UPDATE resources SET status = 'deleted' WHERE project_id = ?")
+		.bind(projectId)
+		.run();
+
+	const failures = deletionResults.filter((r) => !r.success);
+
+	return c.json({
+		success: true,
+		project_id: projectId,
+		deleted_at: now,
+		resources: deletionResults,
+		warnings:
+			failures.length > 0
+				? `Some resources could not be deleted: ${failures.map((f) => f.resource).join(", ")}`
+				: undefined,
+	});
+});
+
 // Deployment endpoints
 api.post("/projects/:projectId/deployments", async (c) => {
 	const auth = c.get("auth");
@@ -481,16 +662,6 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 		const secretsText = secretsFile ? await secretsFile.text() : null;
 		const secretsJson = secretsText ? JSON.parse(secretsText) : null;
 		const assetsData = assetsFile ? await assetsFile.arrayBuffer() : null;
-
-		if (manifest.assets_dir || assetsData) {
-			return c.json(
-				{
-					error: "unsupported",
-					message: "Assets are not supported in managed deploys yet",
-				},
-				400,
-			);
-		}
 
 		// Call DeploymentService.createCodeDeployment()
 		const deploymentService = new DeploymentService(c.env);
