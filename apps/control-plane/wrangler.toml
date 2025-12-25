@@ -1,0 +1,31 @@
+name = "jack-control"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+routes = [
+  { pattern = "control.getjack.org", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "jack-control-db"
+database_id = "06431345-a970-42e2-86ab-fea5bce98dc0"
+
+[[kv_namespaces]]
+binding = "PROJECTS_CACHE"
+id = "1745e7c2b059484c81d39c694201d061"
+
+[[r2_buckets]]
+binding = "CODE_BUCKET"
+bucket_name = "jack-code-internal"
+
+[[dispatch_namespaces]]
+binding = "TENANT_DISPATCH"
+namespace = "jack-tenants"
+
+# Note: Run `wrangler d1 create jack-control-db` first
+# Then add the database_id here
+# Secrets:
+# - WORKOS_API_KEY
+# - CLOUDFLARE_API_TOKEN
+# - CLOUDFLARE_ACCOUNT_ID

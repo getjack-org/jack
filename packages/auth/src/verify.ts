@@ -1,10 +1,5 @@
 import * as jose from "jose";
-import {
-	WORKOS_JWKS_URL,
-	WORKOS_ISSUER,
-	WORKOS_CLIENT_ID,
-	DEFAULT_CACHE_TTL_MS,
-} from "./constants.ts";
+import { WORKOS_JWKS_URL, WORKOS_ISSUER, DEFAULT_CACHE_TTL_MS } from "./constants.ts";
 import type { JwtPayload, JwksVerifierOptions, CachedJwks } from "./types.ts";
 
 // In-memory JWKS cache
@@ -17,7 +12,7 @@ export function createJwksVerifier(options: JwksVerifierOptions = {}) {
 	const {
 		jwksUrl = WORKOS_JWKS_URL,
 		issuer = WORKOS_ISSUER,
-		audience = WORKOS_CLIENT_ID,
+		audience, // WorkOS User Management tokens don't include aud claim
 		cacheTtlMs = DEFAULT_CACHE_TTL_MS,
 	} = options;
 
@@ -40,10 +35,10 @@ export function createJwksVerifier(options: JwksVerifierOptions = {}) {
 			// Create JWKS from cached keys
 			const JWKS = jose.createLocalJWKSet({ keys: jwksCache.keys });
 
-			// Verify the token
+			// Verify the token (audience is optional for WorkOS User Management)
 			const { payload } = await jose.jwtVerify(token, JWKS, {
 				issuer,
-				audience,
+				...(audience && { audience }),
 			});
 
 			return payload as unknown as JwtPayload;
