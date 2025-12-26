@@ -7,7 +7,7 @@ interface GenerateResult {
 }
 
 export function useAI() {
-	const mutation = useMutation({
+	const mutation = useMutation<GenerateResult, Error, { prompt: string }>({
 		mutationFn: async ({ prompt }: { prompt: string }): Promise<GenerateResult> => {
 			const res = await api.api.ai.generate.$post({
 				json: { prompt },

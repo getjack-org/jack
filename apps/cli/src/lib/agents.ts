@@ -434,10 +434,7 @@ export interface AgentLaunchContext {
 function buildInitialPrompt(context: AgentLaunchContext): string | null {
 	if (!context.url) return null;
 
-	return `[From jack CLI]
-Project "${context.projectName}" is now live at ${context.url}
-
-Please welcome the user and help them build something awesome.`;
+	return `[jack] Project "${context.projectName}" is live at ${context.url} - say hi and let's build!`;
 }
 
 function buildLaunchCommand(

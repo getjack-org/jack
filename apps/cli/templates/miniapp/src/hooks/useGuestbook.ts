@@ -28,7 +28,17 @@ export function useGuestbook() {
 export function useAddGuestbookEntry() {
 	const qc = useQueryClient();
 
-	return useMutation({
+	return useMutation<
+		{ entry: GuestbookEntry },
+		Error,
+		{
+			fid: number;
+			username: string;
+			displayName?: string;
+			pfpUrl?: string;
+			message: string;
+		}
+	>({
 		mutationFn: async (entry: {
 			fid: number;
 			username: string;

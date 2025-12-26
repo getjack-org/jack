@@ -120,6 +120,7 @@ async function checkAIRateLimit(
 }
 
 const app = new Hono<{ Bindings: Env }>();
+const AI_MODEL = "@cf/meta/llama-3.1-8b-instruct" as keyof AiModels;
 
 // CORS for local dev
 app.use("/api/*", cors());
@@ -146,7 +147,7 @@ app.get("/api/notifications", async (c) => {
 
 		if (!response.ok) {
 			const error = await response.text();
-			return c.json({ error: "Neynar API error", details: error }, response.status);
+			return c.json({ error: "Neynar API error", details: error }, 502);
 		}
 
 		return c.json(await response.json());
@@ -290,7 +291,7 @@ Return: {"category": "one_of_above", "reason": "2-3 sentence explanation based o
 		}
 
 		if (!result) {
-			const response = (await c.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+			const response = (await c.env.AI.run(AI_MODEL, {
 				prompt,
 			})) as { response: string };
 			result = response.response || "";
@@ -371,14 +372,14 @@ app.post("/api/ai/generate", async (c) => {
 							type: "json_schema" as const,
 							json_schema: {
 								name: "response",
-								schema: body.schema,
+								schema: body.schema as Record<string, unknown>,
 								strict: true,
 							},
 						},
 					}),
-				};
+				} as const;
 
-				const completion = await openai.chat.completions.create(params);
+				const completion = await openai.chat.completions.create(params as any);
 				const result = completion.choices[0]?.message?.content || "";
 
 				return c.json(
@@ -401,7 +402,7 @@ app.post("/api/ai/generate", async (c) => {
 
 		// Fallback to Workers AI (free, always available)
 		try {
-			const response = (await c.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+			const response = (await c.env.AI.run(AI_MODEL, {
 				prompt,
 			})) as { response: string };
 

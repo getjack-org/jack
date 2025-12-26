@@ -2,8 +2,9 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import type { Template } from "../templates/types";
+import type { AgentContext, Capability, Template, TemplateHooks } from "../templates/types";
 import { parseJsonc } from "./jsonc.ts";
+import type { ServiceTypeKey } from "./services/index.ts";
 
 /**
  * Parse GitHub input: "user/repo" or "https://github.com/user/repo"
@@ -115,7 +116,14 @@ export async function fetchFromGitHub(input: string): Promise<Template> {
 		const jackJsonContent = files[".jack.json"];
 		if (jackJsonContent) {
 			try {
-				const metadata = parseJsonc(jackJsonContent);
+				const metadata = parseJsonc(jackJsonContent) as {
+					description?: string;
+					secrets?: string[];
+					capabilities?: Capability[];
+					requires?: ServiceTypeKey[];
+					hooks?: TemplateHooks;
+					agentContext?: AgentContext;
+				};
 				// Remove .jack.json from files (not needed in project)
 				const { ".jack.json": _, ...filesWithoutJackJson } = files;
 				return {

@@ -91,7 +91,7 @@ JACK_TELEMETRY_DISABLED=1 ./src/index.ts ship
 - Prefer explicit types over inference for public APIs
 - Follow existing patterns in the codebase
 - **User-facing output**: Use jargon-free terms (deployed/undeployed, database, cloud backup) unless user is configuring specific infra. Don't use Lambda, Workers, RDS, H100, D1, R2 etc.
-- **Prompts**: Use `select()` with "1. Yes" / "2. No" choices, show "Esc to skip" hint. Not Y/n confirms.
+- **Prompts**: Use `promptSelect()` from `src/lib/hooks.ts` for Yes/No choices. It uses single keypress (press 1 or 2 immediately), not arrow-key navigation. Do NOT use `@inquirer/prompts` select.
 
 ## MCP Server
 

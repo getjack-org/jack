@@ -5,8 +5,8 @@
 
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { select } from "@inquirer/prompts";
 import { deleteManagedProject, exportManagedDatabase } from "./control-plane.ts";
+import { promptSelect } from "./hooks.ts";
 import { error, info, item, output, success, warn } from "./output.ts";
 import type { Project } from "./registry.ts";
 import { updateProject } from "./registry.ts";
@@ -66,16 +66,11 @@ export async function managedDown(
 	console.error("");
 
 	// Confirm undeploy
-	console.error("  Esc to skip\n");
-	const action = await select({
-		message: "Undeploy this project?",
-		choices: [
-			{ name: "1. Yes", value: "yes" },
-			{ name: "2. No", value: "no" },
-		],
-	});
+	console.error("");
+	info("Undeploy this project?");
+	const action = await promptSelect(["Yes", "No"]);
 
-	if (action === "no") {
+	if (action !== 0) {
 		info("Cancelled");
 		return false;
 	}
@@ -84,16 +79,11 @@ export async function managedDown(
 	console.error("");
 	info("Database will be deleted with the project");
 
-	console.error("  Esc to skip\n");
-	const exportAction = await select({
-		message: "Export database before deleting?",
-		choices: [
-			{ name: "1. Yes", value: "yes" },
-			{ name: "2. No", value: "no" },
-		],
-	});
+	console.error("");
+	info("Export database before deleting?");
+	const exportAction = await promptSelect(["Yes", "No"]);
 
-	if (exportAction === "yes") {
+	if (exportAction === 0) {
 		const exportPath = join(process.cwd(), `${projectName}-backup.sql`);
 		output.start(`Exporting database to ${exportPath}...`);
 
@@ -121,16 +111,11 @@ export async function managedDown(
 				return false;
 			}
 
-			console.error("  Esc to skip\n");
-			const continueAction = await select({
-				message: "Continue without exporting?",
-				choices: [
-					{ name: "1. Yes", value: "yes" },
-					{ name: "2. No", value: "no" },
-				],
-			});
+			console.error("");
+			info("Continue without exporting?");
+			const continueAction = await promptSelect(["Yes", "No"]);
 
-			if (continueAction === "no") {
+			if (continueAction !== 0) {
 				info("Cancelled");
 				return false;
 			}

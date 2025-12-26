@@ -59,9 +59,9 @@ export default async function newProject(
 			output.error(details.message);
 		}
 
-		const hasMissingSecrets = !!details.meta?.missingSecrets?.length;
-		if (hasMissingSecrets) {
-			for (const key of details.meta.missingSecrets) {
+		const missingSecrets = details.meta?.missingSecrets;
+		if (missingSecrets?.length) {
+			for (const key of missingSecrets) {
 				output.info(`  Run: jack secrets add ${key}`);
 			}
 		}
@@ -70,7 +70,7 @@ export default async function newProject(
 			console.error(details.meta.stderr);
 		}
 
-		if (details.suggestion && !details.meta?.reported && !hasMissingSecrets) {
+		if (details.suggestion && !details.meta?.reported && !missingSecrets?.length) {
 			output.info(details.suggestion);
 		}
 

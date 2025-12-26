@@ -38,7 +38,6 @@ export async function createManagedProjectRemote(
 		const runjackUrl = `https://${result.project.slug}.runjack.xyz`;
 
 		reporter?.stop();
-		reporter?.success(`Created: ${runjackUrl}`);
 
 		// Track managed project creation
 		track(Events.MANAGED_PROJECT_CREATED, {});

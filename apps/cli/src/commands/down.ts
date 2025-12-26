@@ -1,14 +1,15 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { select } from "@inquirer/prompts";
 import {
 	checkWorkerExists,
 	deleteDatabase,
 	deleteWorker,
 	exportDatabase,
 } from "../lib/cloudflare-api.ts";
+import { promptSelect } from "../lib/hooks.ts";
 import { managedDown } from "../lib/managed-down.ts";
 import { error, info, item, output, success, warn } from "../lib/output.ts";
+import { resolveProject } from "../lib/project-resolver.ts";
 import {
 	type Project,
 	getProject,
@@ -83,18 +84,53 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			}
 		}
 
-		// Get project from registry
+		// Resolve project from all sources (registry + control plane)
+		const resolved = await resolveProject(name);
+
+		// Check if found only on control plane (orphaned managed project)
+		if (resolved?.sources.controlPlane && !resolved.sources.registry) {
+			console.error("");
+			info(`Found "${name}" on jack cloud, linking locally...`);
+		}
+
+		// Get the registry project (may have been created by resolver cache)
 		const project = await getProject(name);
-		if (!project) {
-			warn(`Project '${name}' not found in registry`);
+
+		if (!resolved && !project) {
+			// Not found anywhere
+			warn(`Project '${name}' not found`);
 			info("Will attempt to undeploy if deployed");
 		}
 
-		// Check if this is a managed project
-		if (project?.deploy_mode === "managed" && project.remote?.project_id) {
+		// Check if this is a managed project (either from resolved or registry)
+		const isManaged =
+			resolved?.remote?.projectId ||
+			(project?.deploy_mode === "managed" && project.remote?.project_id);
+
+		if (isManaged) {
+			// Build project object for managedDown if we only have resolved data
+			const managedProject: Project = project || {
+				localPath: resolved?.localPath || null,
+				workerUrl: resolved?.url || null,
+				createdAt: resolved?.createdAt || new Date().toISOString(),
+				lastDeployed: resolved?.updatedAt || null,
+				status: resolved?.status === "live" ? "live" : "build_failed",
+				resources: { services: { db: null } },
+				deploy_mode: "managed",
+				remote:
+					resolved?.remote && resolved.url
+						? {
+								project_id: resolved.remote.projectId,
+								project_slug: resolved.slug,
+								org_id: resolved.remote.orgId,
+								runjack_url: resolved.url,
+							}
+						: undefined,
+			};
+
 			// Route to managed deletion flow
-			const success = await managedDown(project, name, flags);
-			if (!success) {
+			const deleteSuccess = await managedDown(managedProject, name, flags);
+			if (!deleteSuccess) {
 				process.exit(0); // User cancelled
 			}
 			return;
@@ -152,16 +188,11 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		console.error("");
 
 		// Confirm undeploy
-		console.error("  Esc to skip\n");
-		const action = await select({
-			message: "Undeploy this project?",
-			choices: [
-				{ name: "1. Yes", value: "yes" },
-				{ name: "2. No", value: "no" },
-			],
-		});
+		console.error("");
+		info("Undeploy this project?");
+		const action = await promptSelect(["Yes", "No"]);
 
-		if (action === "no") {
+		if (action !== 0) {
 			info("Cancelled");
 			return;
 		}
@@ -174,16 +205,11 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			info(`Found database: ${dbName}`);
 
 			// Ask if they want to export first
-			console.error("  Esc to skip\n");
-			const exportAction = await select({
-				message: `Export database '${dbName}' before deleting?`,
-				choices: [
-					{ name: "1. Yes", value: "yes" },
-					{ name: "2. No", value: "no" },
-				],
-			});
+			console.error("");
+			info(`Export database '${dbName}' before deleting?`);
+			const exportAction = await promptSelect(["Yes", "No"]);
 
-			if (exportAction === "yes") {
+			if (exportAction === 0) {
 				const exportPath = join(process.cwd(), `${dbName}-backup.sql`);
 				output.start(`Exporting database to ${exportPath}...`);
 				try {
@@ -193,15 +219,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 				} catch (err) {
 					output.stop();
 					error(`Failed to export database: ${err instanceof Error ? err.message : String(err)}`);
-					console.error("  Esc to skip\n");
-					const continueAction = await select({
-						message: "Continue without exporting?",
-						choices: [
-							{ name: "1. Yes", value: "yes" },
-							{ name: "2. No", value: "no" },
-						],
-					});
-					if (continueAction === "no") {
+					console.error("");
+					info("Continue without exporting?");
+					const continueAction = await promptSelect(["Yes", "No"]);
+					if (continueAction !== 0) {
 						info("Cancelled");
 						return;
 					}
@@ -209,31 +230,20 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			}
 
 			// Ask if they want to delete the database
-			console.error("  Esc to skip\n");
-			const deleteAction = await select({
-				message: `Delete database '${dbName}'?`,
-				choices: [
-					{ name: "1. Yes", value: "yes" },
-					{ name: "2. No", value: "no" },
-				],
-			});
+			console.error("");
+			info(`Delete database '${dbName}'?`);
+			const deleteAction = await promptSelect(["Yes", "No"]);
 
-			shouldDeleteDb = deleteAction === "yes";
+			shouldDeleteDb = deleteAction === 0;
 		}
 
 		// Handle backup deletion
 		let shouldDeleteR2 = false;
 		if (project) {
 			console.error("");
-			console.error("  Esc to skip\n");
-			const deleteR2Action = await select({
-				message: "Delete backup for this project?",
-				choices: [
-					{ name: "1. Yes", value: "yes" },
-					{ name: "2. No", value: "no" },
-				],
-			});
-			shouldDeleteR2 = deleteR2Action === "yes";
+			info("Delete backup for this project?");
+			const deleteR2Action = await promptSelect(["Yes", "No"]);
+			shouldDeleteR2 = deleteR2Action === 0;
 		}
 
 		// Execute deletions

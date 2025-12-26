@@ -1,15 +1,18 @@
+import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { select } from "@inquirer/prompts";
-import { formatRelativeTime } from "../lib/format.ts";
+import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import {
-	type ProjectStatus,
 	cleanupStaleProjects,
 	getProjectStatus,
-	listAllProjects,
 	scanStaleProjects,
 } from "../lib/project-operations.ts";
-import { removeProject } from "../lib/registry.ts";
+import {
+	type ResolvedProject,
+	listAllProjects,
+	removeProject as removeProjectEverywhere,
+	resolveProject,
+} from "../lib/project-resolver.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 
 /**
@@ -37,76 +40,58 @@ export default async function projects(subcommand?: string, args: string[] = [])
 /**
  * List all projects with status indicators
  */
-async function listProjects(args: string[]): Promise<void> {
-	// Parse flags
-	const flags = {
-		local: args.includes("--local"),
-		deployed: args.includes("--deployed"),
-		cloud: args.includes("--cloud"),
-	};
-
-	// Determine status for each project (with spinner for API calls)
+async function listProjects(_args: string[]): Promise<void> {
+	// Fetch all projects from registry and control plane
 	outputSpinner.start("Checking project status...");
-	const statuses: ProjectStatus[] = await listAllProjects();
+	const projects: ResolvedProject[] = await listAllProjects();
 	outputSpinner.stop();
 
-	if (statuses.length === 0) {
+	if (projects.length === 0) {
 		info("No projects found");
 		info("Create a project with: jack new <name>");
 		return;
 	}
 
-	// Filter based on flags
-	let filteredStatuses = statuses;
-	if (flags.local) {
-		filteredStatuses = filteredStatuses.filter((s) => s.local);
-	}
-	if (flags.deployed) {
-		filteredStatuses = filteredStatuses.filter((s) => s.deployed);
-	}
-	if (flags.cloud) {
-		filteredStatuses = filteredStatuses.filter((s) => s.backedUp);
-	}
+	// Separate local projects from cloud-only projects
+	const localProjects: ResolvedProject[] = [];
+	const cloudOnlyProjects: ResolvedProject[] = [];
 
-	if (filteredStatuses.length === 0) {
-		info("No projects match the specified filters");
-		return;
-	}
-
-	// Group projects by parent directory
-	interface DirectoryGroup {
-		path: string;
-		projects: ProjectStatus[];
-	}
-
-	const groups = new Map<string, DirectoryGroup>();
-	const workspaceMissing: ProjectStatus[] = [];
-
-	for (const status of filteredStatuses) {
-		// Workspace-missing projects go to their own section
-		if (status.missing || !status.localPath) {
-			workspaceMissing.push(status);
-		} else if (status.localPath && status.local) {
-			const parent = dirname(status.localPath);
-			if (!groups.has(parent)) {
-				groups.set(parent, { path: parent, projects: [] });
-			}
-			groups.get(parent)?.projects.push(status);
+	for (const proj of projects) {
+		if (proj.localPath && proj.sources.filesystem) {
+			localProjects.push(proj);
+		} else {
+			cloudOnlyProjects.push(proj);
 		}
 	}
 
-	// Display grouped projects
+	// Group local projects by parent directory
+	interface DirectoryGroup {
+		displayPath: string;
+		projects: ResolvedProject[];
+	}
+
+	const groups = new Map<string, DirectoryGroup>();
+	const home = homedir();
+
+	for (const proj of localProjects) {
+		if (!proj.localPath) continue;
+		const parent = dirname(proj.localPath);
+		if (!groups.has(parent)) {
+			// Replace home directory with ~ for display
+			const displayPath = parent.startsWith(home) ? `~${parent.slice(home.length)}` : parent;
+			groups.set(parent, { displayPath, projects: [] });
+		}
+		groups.get(parent)?.projects.push(proj);
+	}
+
+	// Display header
 	console.error("");
-	info("Tracked projects");
-	item(`${colors.dim}Badges: [workspace]=local folder, [deployed]=worker live${colors.reset}`);
-	item(
-		`${colors.dim}        [backup]=backup stored, [workspace missing]=no local folder${colors.reset}`,
-	);
+	info("Your projects");
 	console.error("");
 
-	// Display directory groups (active local projects)
+	// Display local project groups
 	for (const [_parentPath, group] of groups) {
-		console.error(`${colors.dim}${group.path}/${colors.reset}`);
+		console.error(`  ${colors.dim}${group.displayPath}/${colors.reset}`);
 		const sortedProjects = group.projects.sort((a, b) => a.name.localeCompare(b.name));
 
 		for (let i = 0; i < sortedProjects.length; i++) {
@@ -115,45 +100,41 @@ async function listProjects(args: string[]): Promise<void> {
 			const isLast = i === sortedProjects.length - 1;
 			const prefix = isLast ? "└──" : "├──";
 
-			const badges = buildStatusBadges(proj);
-			const createdLabel = formatCreatedAt(proj.createdAt);
-			const createdPart = createdLabel ? `  ${createdLabel}` : "";
-			console.error(
-				`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${badges}${createdPart}`,
-			);
+			const statusBadge = buildStatusBadge(proj);
+			console.error(`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${statusBadge}`);
 		}
 		console.error("");
 	}
 
-	// Display workspace-missing projects
-	if (workspaceMissing.length > 0) {
-		console.error(`${colors.dim}Tracked (workspace missing):${colors.reset}`);
-		for (const proj of workspaceMissing) {
-			const badges = buildStatusBadges(proj);
-			const createdLabel = formatCreatedAt(proj.createdAt);
-			const createdPart = createdLabel ? `  ${createdLabel}` : "";
-			console.error(`  ${colors.dim}${proj.name}${colors.reset}  ${badges}${createdPart}`);
+	// Display cloud-only projects
+	if (cloudOnlyProjects.length > 0) {
+		console.error(`  ${colors.dim}On jack cloud (no local files)${colors.reset}`);
+		const sortedCloudProjects = cloudOnlyProjects.sort((a, b) => a.name.localeCompare(b.name));
+
+		for (let i = 0; i < sortedCloudProjects.length; i++) {
+			const proj = sortedCloudProjects[i];
+			if (!proj) continue;
+			const isLast = i === sortedCloudProjects.length - 1;
+			const prefix = isLast ? "└──" : "├──";
+
+			const statusBadge = buildStatusBadge(proj);
+			console.error(`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${statusBadge}`);
 		}
 		console.error("");
 	}
 
 	// Summary
-	const deployedCount = statuses.filter((s) => s.deployed).length;
-	const notDeployedCount = statuses.filter((s) => s.local && !s.deployed).length;
-	const workspaceMissingCount = statuses.filter((s) => s.missing || !s.localPath).length;
+	const liveCount = projects.filter((p) => p.status === "live").length;
+	const localOnlyCount = projects.filter((p) => p.status === "local-only").length;
+	const errorCount = projects.filter((p) => p.status === "error").length;
 
-	const parts = [`${deployedCount} deployed`];
-	if (notDeployedCount > 0) {
-		parts.push(`${notDeployedCount} not deployed`);
-	}
-	if (workspaceMissingCount > 0) {
-		parts.push(`${workspaceMissingCount} workspace missing`);
-	}
-	info(`${statuses.length} tracked projects (${parts.join(", ")})`);
-	if (workspaceMissingCount > 0) {
-		console.error(`  ${colors.dim}Forget one: 'jack projects remove <name>'${colors.reset}`);
-		console.error(`  ${colors.dim}Forget all: 'jack projects cleanup'${colors.reset}`);
-	}
+	const parts: string[] = [];
+	if (liveCount > 0) parts.push(`${liveCount} live`);
+	if (localOnlyCount > 0) parts.push(`${localOnlyCount} local-only`);
+	if (errorCount > 0) parts.push(`${errorCount} error`);
+
+	const summary = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+	info(`${projects.length} projects${summary}`);
 	console.error("");
 }
 
@@ -168,32 +149,21 @@ const colors = {
 };
 
 /**
- * Build status badge string for a project
+ * Build a user-friendly status badge for a project
  */
-function buildStatusBadges(status: ProjectStatus): string {
-	const badges: string[] = [];
-
-	const workspaceMissing = status.missing || !status.localPath;
-
-	if (status.local) {
-		badges.push(`${colors.green}[workspace]${colors.reset}`);
+function buildStatusBadge(project: ResolvedProject): string {
+	switch (project.status) {
+		case "live":
+			return `${colors.green}[live]${colors.reset} ${colors.cyan}${project.url || ""}${colors.reset}`;
+		case "local-only":
+			return `${colors.dim}[local only]${colors.reset}`;
+		case "error":
+			return `${colors.red}[error]${colors.reset} ${project.errorMessage || "deployment failed"}`;
+		case "syncing":
+			return `${colors.yellow}[syncing]${colors.reset}`;
+		default:
+			return "";
 	}
-	if (status.deployed) {
-		badges.push(`${colors.green}[deployed]${colors.reset}`);
-	}
-	if (status.backedUp) {
-		badges.push(`${colors.dim}[backup]${colors.reset}`);
-	}
-	if (workspaceMissing) {
-		badges.push(`${colors.dim}[workspace missing]${colors.reset}`);
-	}
-
-	return badges.join(" ");
-}
-
-function formatCreatedAt(createdAt: string | null): string {
-	if (!createdAt) return "";
-	return `${colors.dim}${formatRelativeTime(createdAt)}${colors.reset}`;
 }
 
 /**
@@ -351,16 +321,10 @@ async function cleanupProjects(): Promise<void> {
 	}
 
 	// Prompt to remove
-	console.error("  Esc to skip\n");
-	const action = await select({
-		message: "Remove these from jack's tracking? (deployed services stay live)",
-		choices: [
-			{ name: "1. Yes", value: "yes" },
-			{ name: "2. No", value: "no" },
-		],
-	});
+	info("Remove these from jack's tracking? (deployed services stay live)");
+	const choice = await promptSelect(["Yes", "No"]);
 
-	if (action === "no") {
+	if (choice !== 0) {
 		info("Cleanup cancelled");
 		return;
 	}
@@ -376,7 +340,7 @@ async function cleanupProjects(): Promise<void> {
 }
 
 /**
- * Remove a project entry from the registry
+ * Remove a project from registry and jack cloud
  */
 async function removeProjectEntry(args: string[]): Promise<void> {
 	const name = args.find((arg) => !arg.startsWith("--"));
@@ -388,57 +352,93 @@ async function removeProjectEntry(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
-	// Check status (includes deployed + local info)
+	// Use resolver to find project anywhere (registry OR control plane)
 	outputSpinner.start("Checking project status...");
-	const status = await getProjectStatus(name);
+	const project = await resolveProject(name);
 	outputSpinner.stop();
 
-	if (!status) {
-		error(`Project "${name}" not found in registry`);
-		info("List projects with: jack projects list");
+	if (!project) {
+		error(`Project "${name}" not found`);
+		info("Check available projects with: jack projects");
 		process.exit(1);
 	}
 
+	// Show what we found and where
 	console.error("");
-	info(`Remove registry entry for: ${name}`);
-	if (status.localPath) {
-		item(`Workspace path: ${status.localPath}`);
-	} else {
-		item("Workspace path: none");
-		warn("Workspace path not set");
+	info(`Removing "${name}"...`);
+	console.error("");
+
+	// Show project details
+	if (project.localPath) {
+		item(`Workspace: ${project.localPath}`);
 	}
-	if (status.workerUrl) {
-		item(`Worker URL: ${status.workerUrl}`);
+	if (project.url) {
+		item(`URL: ${project.url}`);
 	}
-	if (status.deployed) {
-		warn("Project is still deployed; removal does not undeploy");
+
+	// Show where we'll remove from
+	const locations: string[] = [];
+	if (project.sources.registry) {
+		locations.push("local registry");
 	}
-	if (status.missing || !status.localPath) {
-		warn("Workspace folder is missing");
+	if (project.sources.controlPlane) {
+		locations.push("jack cloud");
 	}
+	if (locations.length > 0) {
+		item(`Will remove from: ${locations.join(", ")}`);
+	}
+
+	// Warn if still deployed
+	if (project.status === "live") {
+		console.error("");
+		warn("Project is still deployed; removal does not undeploy the worker");
+	}
+
 	console.error("");
 
 	if (!yes) {
-		console.error("  Esc to skip\n");
-		const action = await select({
-			message: "Remove this entry from jack's registry?",
-			choices: [
-				{ name: "1. Yes", value: "yes" },
-				{ name: "2. No", value: "no" },
-			],
-		});
+		info("Remove this project?");
+		const choice = await promptSelect(["Yes", "No"]);
 
-		if (action === "no") {
+		if (choice !== 0) {
 			info("Removal cancelled");
 			return;
 		}
 	}
 
-	await removeProject(name);
+	// Use resolver's removeProject to clean up everywhere
+	outputSpinner.start("Removing project...");
+	const result = await removeProjectEverywhere(name);
+	outputSpinner.stop();
 
 	console.error("");
-	success(`Removed '${name}' from registry`);
-	if (status.deployed) {
-		info(`To undeploy, run: jack down ${name}`);
+
+	// Show what was removed
+	if (result.removed.length > 0) {
+		for (const location of result.removed) {
+			success(`Removed from ${location}`);
+		}
+	}
+
+	// Show any errors
+	if (result.errors.length > 0) {
+		for (const err of result.errors) {
+			warn(err);
+		}
+	}
+
+	// Final status
+	if (result.removed.length > 0 && result.errors.length === 0) {
+		console.error("");
+		success(`Project "${name}" removed`);
+	} else if (result.removed.length === 0) {
+		console.error("");
+		error(`Failed to remove "${name}"`);
+	}
+
+	// Hint about undeploying
+	if (project.status === "live") {
+		console.error("");
+		info(`To undeploy the worker, run: jack down ${name}`);
 	}
 }
