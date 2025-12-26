@@ -27,8 +27,11 @@ async function getDatabaseFromWranglerConfig(projectPath: string): Promise<strin
 	if (existsSync(jsoncPath)) {
 		try {
 			const content = await Bun.file(jsoncPath).text();
-			// Remove comments for JSON parsing (simple approach)
-			const jsonContent = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+			// Remove comments for JSON parsing
+			// Note: Only remove line comments at the start of a line to avoid breaking URLs
+			const jsonContent = content
+				.replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+				.replace(/^\s*\/\/.*$/gm, ""); // line comments at start of line only
 			const config = JSON.parse(jsonContent);
 			if (config.d1_databases?.[0]?.database_name) {
 				return config.d1_databases[0].database_name;

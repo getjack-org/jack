@@ -100,7 +100,10 @@ export async function getD1DatabaseName(projectDir: string): Promise<string | nu
 	try {
 		const content = await Bun.file(wranglerPath).text();
 		// Strip comments for parsing
-		const cleaned = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+		// Note: Only remove line comments at the start of a line to avoid breaking URLs
+		const cleaned = content
+			.replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+			.replace(/^\s*\/\/.*$/gm, ""); // line comments at start of line only
 		const config = JSON.parse(cleaned);
 
 		return config.d1_databases?.[0]?.database_name || null;
