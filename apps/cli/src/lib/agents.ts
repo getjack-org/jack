@@ -420,9 +420,30 @@ export async function getPreferredLaunchAgent(): Promise<{
 	return null;
 }
 
+/**
+ * Context to pass to the agent on launch
+ */
+export interface AgentLaunchContext {
+	projectName?: string;
+	url?: string | null;
+}
+
+/**
+ * Build the initial prompt for the agent based on launch context
+ */
+function buildInitialPrompt(context: AgentLaunchContext): string | null {
+	if (!context.url) return null;
+
+	return `[From jack CLI]
+Project "${context.projectName}" is now live at ${context.url}
+
+Please welcome the user and help them build something awesome.`;
+}
+
 function buildLaunchCommand(
 	launch: AgentLaunchConfig,
 	projectDir: string,
+	context?: AgentLaunchContext,
 ): {
 	command: string;
 	args: string[];
@@ -431,9 +452,19 @@ function buildLaunchCommand(
 } | null {
 	if (launch.type !== "cli") return null;
 
+	const args = launch.args ? [...launch.args] : [];
+
+	// Add initial prompt if context is provided
+	if (context) {
+		const initialPrompt = buildInitialPrompt(context);
+		if (initialPrompt) {
+			args.push(initialPrompt);
+		}
+	}
+
 	return {
 		command: launch.command,
-		args: launch.args ?? [],
+		args,
 		options: { cwd: projectDir, stdio: "inherit" },
 		waitForExit: true,
 	};
@@ -442,8 +473,9 @@ function buildLaunchCommand(
 export async function launchAgent(
 	launch: AgentLaunchConfig,
 	projectDir: string,
+	context?: AgentLaunchContext,
 ): Promise<{ success: boolean; error?: string; command?: string[]; exitCode?: number | null }> {
-	const launchCommand = buildLaunchCommand(launch, projectDir);
+	const launchCommand = buildLaunchCommand(launch, projectDir, context);
 	if (!launchCommand) {
 		return { success: false, error: "No supported launch command found" };
 	}

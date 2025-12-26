@@ -95,7 +95,10 @@ export default async function newProject(
 			const choice = await promptSelect(["Yes", "No"]);
 
 			if (choice === 0) {
-				const launchResult = await launchAgent(preferred.launch, result.targetDir);
+				const launchResult = await launchAgent(preferred.launch, result.targetDir, {
+					projectName: result.projectName,
+					url: result.workerUrl,
+				});
 				if (!launchResult.success) {
 					output.warn(`Failed to launch ${preferred.definition.name}`);
 					if (launchResult.command?.length) {
