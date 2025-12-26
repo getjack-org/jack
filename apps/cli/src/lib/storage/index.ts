@@ -80,7 +80,11 @@ export async function getProjectNameFromDir(projectDir: string): Promise<string>
 	try {
 		const content = await Bun.file(jsoncPath).text();
 		// Remove comments and parse JSON
-		const jsonContent = content.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+		// Note: Only remove line comments at the start of a line (with optional whitespace)
+		// to avoid breaking URLs like https://example.com
+		const jsonContent = content
+			.replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+			.replace(/^\s*\/\/.*$/gm, ""); // line comments at start of line only
 		const config = JSON.parse(jsonContent);
 		if (config.name) {
 			return config.name;
