@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { select } from "@inquirer/prompts";
 import { formatSize } from "../lib/format.ts";
+import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import {
 	type Project,
@@ -283,16 +283,10 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 	console.error("");
 
 	// Confirm deletion
-	console.error("  Esc to skip\n");
-	const action = await select({
-		message: `Delete database '${dbName}'?`,
-		choices: [
-			{ name: "1. Yes", value: "yes" },
-			{ name: "2. No", value: "no" },
-		],
-	});
+	console.error(`  Delete database '${dbName}'?\n`);
+	const choice = await promptSelect(["Yes", "No"]);
 
-	if (action === "no") {
+	if (choice !== 0) {
 		info("Cancelled");
 		return;
 	}

@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { error, info } from "../lib/output.ts";
-import { getProject } from "../lib/registry.ts";
+import { resolveProject } from "../lib/project-resolver.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 
 export interface OpenFlags {
@@ -22,30 +22,25 @@ export default async function open(projectName?: string, flags: OpenFlags = {}):
 		}
 	}
 
-	// Get project from registry
-	const project = await getProject(name);
+	// Resolve project from registry and control plane
+	const project = await resolveProject(name);
 
 	// Determine URL based on flags and deploy mode
 	let url: string;
 
 	if (flags.dash) {
-		// Dashboard URLs
-		if (project?.deploy_mode === "managed" && project.remote) {
-			// For managed projects, still use Cloudflare dash until jack dashboard exists
-			url = `https://dash.cloudflare.com/workers/services/view/${name}`;
-		} else {
-			url = `https://dash.cloudflare.com/workers/services/view/${name}`;
-		}
+		// Dashboard URLs - use Cloudflare dash for now
+		url = `https://dash.cloudflare.com/workers/services/view/${name}`;
 	} else if (flags.logs) {
 		url = `https://dash.cloudflare.com/workers/services/view/${name}/logs`;
 	} else {
 		// Default: use mode-appropriate URL
-		if (project?.deploy_mode === "managed" && project.remote?.runjack_url) {
-			// Managed project: use runjack.xyz URL
-			url = project.remote.runjack_url;
+		if (project?.sources.controlPlane && project.url) {
+			// Managed project: use runjack URL
+			url = project.url;
 		} else {
-			// BYO project: use workers.dev URL
-			url = project?.workerUrl || `https://${name}.workers.dev`;
+			// BYO project: use workers.dev URL or stored URL
+			url = project?.url || `https://${name}.workers.dev`;
 		}
 	}
 

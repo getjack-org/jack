@@ -130,6 +130,16 @@ export interface DeleteProjectResponse {
 	warnings?: string;
 }
 
+export interface ManagedProject {
+	id: string;
+	org_id: string;
+	name: string;
+	slug: string;
+	status: "active" | "error" | "deleted";
+	created_at: string;
+	updated_at: string;
+}
+
 /**
  * Export a managed project's D1 database.
  */
@@ -172,4 +182,48 @@ export async function deleteManagedProject(projectId: string): Promise<DeletePro
 	}
 
 	return response.json() as Promise<DeleteProjectResponse>;
+}
+
+/**
+ * List all managed projects from the control plane.
+ */
+export async function listManagedProjects(): Promise<ManagedProject[]> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects`);
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to list managed projects: ${response.status}`);
+	}
+
+	const data = (await response.json()) as { projects: ManagedProject[] };
+	return data.projects;
+}
+
+/**
+ * Find a managed project by slug.
+ */
+export async function findProjectBySlug(slug: string): Promise<ManagedProject | null> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/by-slug/${encodeURIComponent(slug)}`,
+	);
+
+	if (response.status === 404) {
+		return null;
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to find project: ${response.status}`);
+	}
+
+	const data = (await response.json()) as { project: ManagedProject };
+	return data.project;
 }

@@ -3,7 +3,8 @@
 	"compilerOptions": {
 		"types": ["bun-types"],
 		"rootDir": ".",
-		"outDir": "./dist"
+		"outDir": "./dist",
+		"resolveJsonModule": true
 	},
-	"include": ["src/**/*"]
+	"include": ["src/**/*", "package.json"]
 }

@@ -2,12 +2,8 @@ import type { Server as McpServer } from "@modelcontextprotocol/sdk/server/index
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { JackError, JackErrorCode } from "../../lib/errors.ts";
-import {
-	createProject,
-	deployProject,
-	getProjectStatus,
-	listAllProjects,
-} from "../../lib/project-operations.ts";
+import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
+import { listAllProjects } from "../../lib/project-resolver.ts";
 import { Events, track, withTelemetry } from "../../lib/telemetry.ts";
 import type { DebugLogger, McpServerOptions } from "../types.ts";
 import { formatErrorResponse, formatSuccessResponse } from "../utils.ts";
@@ -230,7 +226,23 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					const wrappedListProjects = withTelemetry(
 						"list_projects",
 						async (filter?: "all" | "local" | "deployed" | "cloud") => {
-							return await listAllProjects(filter);
+							const allProjects = await listAllProjects();
+
+							// Apply filter if specified
+							if (!filter || filter === "all") {
+								return allProjects;
+							}
+
+							switch (filter) {
+								case "local":
+									return allProjects.filter((p) => p.sources.filesystem);
+								case "deployed":
+									return allProjects.filter((p) => p.status === "live");
+								case "cloud":
+									return allProjects.filter((p) => p.sources.controlPlane);
+								default:
+									return allProjects;
+							}
 						},
 						{ platform: "mcp" },
 					);

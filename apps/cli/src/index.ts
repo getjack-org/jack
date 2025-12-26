@@ -29,7 +29,6 @@ const cli = meow(
   Cloud & Sync
     clone <project>     Pull from cloud backup
     sync                Sync to cloud storage
-    cloud               Manage cloud storage
 
   Account
     login               Sign in
@@ -209,11 +208,6 @@ try {
 		case "clone": {
 			const { default: clone } = await import("./commands/clone.ts");
 			await withTelemetry("clone", clone)(args[0], { as: cli.flags.as });
-			break;
-		}
-		case "cloud": {
-			const { default: cloud } = await import("./commands/cloud.ts");
-			await withTelemetry("cloud", cloud)(args[0], args.slice(1));
 			break;
 		}
 		case "telemetry": {

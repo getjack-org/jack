@@ -28,11 +28,11 @@ export async function startDeviceAuth(): Promise<DeviceAuthResponse> {
 	});
 
 	if (!response.ok) {
-		const error = await response.json().catch(() => ({}));
-		throw new Error(error.message || "Failed to start device authorization");
+		const errorBody = (await response.json().catch(() => ({}))) as { message?: string };
+		throw new Error(errorBody.message || "Failed to start device authorization");
 	}
 
-	return response.json();
+	return response.json() as Promise<DeviceAuthResponse>;
 }
 
 export async function pollDeviceToken(deviceCode: string): Promise<TokenResponse | null> {
@@ -51,11 +51,11 @@ export async function pollDeviceToken(deviceCode: string): Promise<TokenResponse
 	}
 
 	if (!response.ok) {
-		const error = await response.json().catch(() => ({}));
-		throw new Error(error.message || "Failed to get token");
+		const errorBody = (await response.json().catch(() => ({}))) as { message?: string };
+		throw new Error(errorBody.message || "Failed to get token");
 	}
 
-	return response.json();
+	return response.json() as Promise<TokenResponse>;
 }
 
 export async function refreshToken(refreshTokenValue: string): Promise<TokenResponse> {
@@ -69,7 +69,7 @@ export async function refreshToken(refreshTokenValue: string): Promise<TokenResp
 		throw new Error("Failed to refresh token. Please login again.");
 	}
 
-	return response.json();
+	return response.json() as Promise<TokenResponse>;
 }
 
 export async function getValidAccessToken(): Promise<string | null> {

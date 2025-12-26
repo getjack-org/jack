@@ -41,6 +41,7 @@ import {
 	getProjectDatabaseName,
 	registerProject,
 	removeProject,
+	updateProject,
 } from "./registry.ts";
 import { applySchema, getD1Bindings, getD1DatabaseName, hasD1Config } from "./schema.ts";
 import { getSavedSecrets, saveSecrets } from "./secrets.ts";
@@ -116,6 +117,7 @@ export interface OperationSpinner {
 	success(message: string): void;
 	error(message: string): void;
 	stop(): void;
+	text?: string;
 }
 
 export interface OperationReporter extends HookOutput {
@@ -180,23 +182,17 @@ async function preflightD1Capacity(
 		return;
 	}
 
-	const { select } = await import("@inquirer/prompts");
+	const { promptSelect } = await import("./hooks.ts");
 	console.error("");
 	console.error(
 		`  You have ${count} D1 databases. If your limit is ${DEFAULT_D1_LIMIT}, deploy may fail.`,
 	);
 	console.error("");
-	console.error("  Esc to cancel\n");
+	console.error("  Continue anyway?");
 
-	const choice = await select({
-		message: "Continue anyway?",
-		choices: [
-			{ name: "1. Yes", value: "yes" },
-			{ name: "2. No", value: "no" },
-		],
-	});
+	const choice = await promptSelect(["Yes", "No"]);
 
-	if (choice === "no") {
+	if (choice !== 0) {
 		throw new JackError(
 			JackErrorCode.VALIDATION_ERROR,
 			"D1 limit likely reached",
@@ -263,18 +259,69 @@ export async function createProject(
 
 	// Early slug availability check for managed mode
 	if (deployMode === "managed") {
-		const { checkSlugAvailability } = await import("./control-plane.ts");
-		const availability = await checkSlugAvailability(projectName);
+		const { checkAvailability } = await import("./project-resolver.ts");
+		const { available, existingProject } = await checkAvailability(projectName);
 
-		if (!availability.available) {
-			const suggestion = availability.error
-				? "Fix the name format and try again"
-				: `Try a different name: jack new ${projectName}-2`;
-			throw new JackError(
-				JackErrorCode.VALIDATION_ERROR,
-				availability.error || `Project "${projectName}" already exists on jack cloud`,
-				suggestion,
-			);
+		if (!available && existingProject) {
+			// Project exists remotely but not locally - offer to link
+			if (existingProject.sources.controlPlane && !existingProject.sources.filesystem) {
+				if (interactive) {
+					const { promptSelect } = await import("./hooks.ts");
+					console.error("");
+					console.error(`  Project "${projectName}" exists on jack cloud but not locally.`);
+					console.error("");
+
+					const choice = await promptSelect(["Link existing project", "Choose different name"]);
+
+					if (choice === 0) {
+						// User chose to link - cache in registry and proceed
+						// The project is already cached by resolveProject in checkAvailability,
+						// but we need to update the localPath
+						await registerProject(projectName, {
+							localPath: targetDir,
+							workerUrl: existingProject.url || null,
+							createdAt: existingProject.createdAt,
+							lastDeployed: existingProject.updatedAt || null,
+							status: existingProject.status === "live" ? "live" : "build_failed",
+							resources: { services: { db: null } },
+							deploy_mode: "managed",
+							remote: existingProject.remote
+								? {
+										project_id: existingProject.remote.projectId,
+										project_slug: existingProject.slug,
+										org_id: existingProject.remote.orgId,
+										runjack_url:
+											existingProject.url || `https://${existingProject.slug}.runjack.org`,
+									}
+								: undefined,
+						});
+						reporter.success(`Linked to existing project: ${existingProject.url || projectName}`);
+						// Continue with project creation - user wants to link
+					} else {
+						// User chose different name
+						throw new JackError(
+							JackErrorCode.VALIDATION_ERROR,
+							`Project "${projectName}" already exists on jack cloud`,
+							`Try a different name: jack new ${projectName}-2`,
+							{ exitCode: 0, reported: true },
+						);
+					}
+				} else {
+					// Non-interactive mode - fail with clear message
+					throw new JackError(
+						JackErrorCode.VALIDATION_ERROR,
+						`Project "${projectName}" already exists on jack cloud`,
+						`Try a different name: jack new ${projectName}-2`,
+					);
+				}
+			} else {
+				// Project exists in registry with local path - it's truly taken
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					`Project "${projectName}" already exists`,
+					`Try a different name: jack new ${projectName}-2`,
+				);
+			}
 		}
 	}
 
@@ -473,9 +520,11 @@ export async function createProject(
 		await Bun.write(join(targetDir, filePath), content);
 	}
 
-	// Preflight: check D1 capacity before spending time on installs
+	// Preflight: check D1 capacity before spending time on installs (BYO only)
 	reporter.stop();
-	await preflightD1Capacity(targetDir, reporter, interactive);
+	if (deployMode === "byo") {
+		await preflightD1Capacity(targetDir, reporter, interactive);
+	}
 	reporter.start("Creating project...");
 
 	// Write secrets files (.env for Vite, .dev.vars for wrangler local, .secrets.json for wrangler bulk)
@@ -645,18 +694,58 @@ export async function createProject(
 	if (deployMode === "managed") {
 		// Managed mode: create project and deploy via jack cloud
 		const remoteResult = await createManagedProjectRemote(projectName, reporter);
-		await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
+		const dbName = await getD1DatabaseName(targetDir);
+
+		// Register project as soon as remote is created
+		try {
+			await registerProject(projectName, {
+				localPath: targetDir,
+				workerUrl: remoteResult.runjackUrl,
+				createdAt: new Date().toISOString(),
+				lastDeployed: null,
+				status: "created",
+				resources: {
+					services: {
+						db: dbName,
+					},
+				},
+				template: templateOrigin,
+				deploy_mode: "managed",
+				remote: {
+					project_id: remoteResult.projectId,
+					project_slug: remoteResult.projectSlug,
+					org_id: remoteResult.orgId,
+					runjack_url: remoteResult.runjackUrl,
+				},
+			});
+		} catch (err) {
+			debug("Failed to register managed project:", err);
+		}
+
+		try {
+			await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
+		} catch (err) {
+			try {
+				await updateProject(projectName, {
+					status: "build_failed",
+					workerUrl: remoteResult.runjackUrl,
+				});
+			} catch (updateErr) {
+				debug("Failed to update managed project status:", updateErr);
+			}
+			throw err;
+		}
 		workerUrl = remoteResult.runjackUrl;
+		reporter.success(`Created: ${workerUrl}`);
 
 		// Register project with managed mode metadata
 		try {
-			const dbName = await getD1DatabaseName(targetDir);
-
 			await registerProject(projectName, {
 				localPath: targetDir,
 				workerUrl,
 				createdAt: new Date().toISOString(),
 				lastDeployed: new Date().toISOString(),
+				status: "live",
 				resources: {
 					services: {
 						db: dbName,
@@ -1049,89 +1138,6 @@ export async function getProjectStatus(
 		backupFiles,
 		backupLastSync,
 	};
-}
-
-// ============================================================================
-// List All Projects Operation
-// ============================================================================
-
-/**
- * List all projects with status information
- *
- * Extracted from commands/projects.ts listProjects to enable programmatic project listing.
- *
- * @param filter - Filter projects by status
- * @returns Array of project statuses
- */
-export async function listAllProjects(
-	filter?: "all" | "local" | "deployed" | "cloud",
-): Promise<ProjectStatus[]> {
-	const projects = await getAllProjects();
-	const projectNames = Object.keys(projects);
-
-	if (projectNames.length === 0) {
-		return [];
-	}
-
-	// Determine status for each project
-	const statuses: ProjectStatus[] = await Promise.all(
-		projectNames.map(async (name) => {
-			const project = projects[name];
-			if (!project) {
-				return null;
-			}
-
-			const local = project.localPath ? existsSync(project.localPath) : false;
-			const missing = project.localPath ? !local : false;
-
-			// Check if deployed
-			let deployed = false;
-			if (project.workerUrl) {
-				deployed = true;
-			} else {
-				deployed = await checkWorkerExists(name);
-			}
-
-			// Check if backed up
-			const manifest = await getRemoteManifest(name);
-			const backedUp = manifest !== null;
-			const backupFiles = manifest ? manifest.files.length : null;
-			const backupLastSync = manifest ? manifest.lastSync : null;
-
-			return {
-				name,
-				localPath: project.localPath,
-				workerUrl: project.workerUrl,
-				lastDeployed: project.lastDeployed,
-				createdAt: project.createdAt,
-				accountId: project.cloudflare?.accountId ?? null,
-				workerId: project.cloudflare?.workerId ?? null,
-				dbName: getProjectDatabaseName(project),
-				local,
-				deployed,
-				backedUp,
-				missing,
-				backupFiles,
-				backupLastSync,
-			};
-		}),
-	).then((results) => results.filter((s): s is ProjectStatus => s !== null));
-
-	// Apply filter
-	if (!filter || filter === "all") {
-		return statuses;
-	}
-
-	switch (filter) {
-		case "local":
-			return statuses.filter((s) => s.local);
-		case "deployed":
-			return statuses.filter((s) => s.deployed);
-		case "cloud":
-			return statuses.filter((s) => s.backedUp);
-		default:
-			return statuses;
-	}
 }
 
 // ============================================================================

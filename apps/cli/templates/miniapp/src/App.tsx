@@ -158,11 +158,11 @@ export default function App() {
 			});
 
 			if (!res.ok) {
-				const error = await res.json();
-				throw new Error(error.error || "Analysis failed");
+				const errorData = (await res.json()) as { error?: string };
+				throw new Error(errorData.error || "Analysis failed");
 			}
 
-			const result = await res.json();
+			const result = (await res.json()) as { category: string; reason: string };
 			setAiResult({ category: result.category, reason: result.reason });
 		} catch (err) {
 			console.error("Failed to analyze profile:", err);
@@ -331,7 +331,9 @@ export default function App() {
 						</div>
 
 						{/* Error */}
-						{addEntry.isError && <p className="text-red-400 text-xs">{addEntry.error.message}</p>}
+						{addEntry.isError && addEntry.error && (
+							<p className="text-red-400 text-xs">{addEntry.error.message}</p>
+						)}
 
 						{/* Entries */}
 						{guestbookLoading && <p className="text-zinc-500 text-sm">Loading...</p>}
@@ -501,7 +503,7 @@ export default function App() {
 
 							{castIdeaError && (
 								<div className="p-3 bg-red-900/20 border border-red-500/20 rounded-lg">
-									<p className="text-sm text-red-400">{castIdeaError.message}</p>
+									<p className="text-sm text-red-400">{castIdeaError}</p>
 								</div>
 							)}
 

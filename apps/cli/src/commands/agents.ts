@@ -145,8 +145,10 @@ async function scanAndPrompt(): Promise<void> {
 function getFlagValues(args: string[], flag: string): string[] {
 	const values: string[] = [];
 	for (let i = 0; i < args.length; i++) {
-		if (args[i] === flag && args[i + 1]) {
-			values.push(args[i + 1]);
+		const current = args[i];
+		const next = args[i + 1];
+		if (current === flag && next) {
+			values.push(next);
 			i++;
 		}
 	}

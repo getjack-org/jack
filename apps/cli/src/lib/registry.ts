@@ -33,6 +33,7 @@ export interface Project {
 	workerUrl: string | null;
 	createdAt: string;
 	lastDeployed: string | null;
+	status?: "created" | "build_failed" | "live";
 	cloudflare?: {
 		accountId: string;
 		workerId: string;
