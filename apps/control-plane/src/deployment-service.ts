@@ -1,8 +1,10 @@
 import { unzipSync } from "fflate";
 import {
+	type AssetManifest,
 	CloudflareClient,
 	type DispatchScriptBinding,
 	createAssetManifest,
+	getMimeType,
 } from "./cloudflare-api";
 import type { Bindings, Deployment, Project, Resource } from "./types";
 
@@ -20,7 +22,16 @@ interface ManifestData {
 	bindings?: {
 		d1?: { binding: string };
 		ai?: { binding: string };
-		assets?: { binding: string; directory: string };
+		assets?: {
+			binding: string;
+			directory: string;
+			not_found_handling?: "single-page-application" | "404-page" | "none";
+			html_handling?:
+				| "auto-trailing-slash"
+				| "force-trailing-slash"
+				| "drop-trailing-slash"
+				| "none";
+		};
 		vars?: Record<string, string>;
 	};
 }
@@ -152,6 +163,8 @@ interface CodeDeploymentInput {
 	schemaSql: string | null;
 	secretsJson: Record<string, string> | null;
 	assetsZip: ArrayBuffer | null;
+	/** Pre-computed asset manifest from CLI (saves CPU by avoiding hash computation) */
+	assetManifest?: AssetManifest;
 }
 
 // Template definitions
@@ -482,6 +495,7 @@ export class DeploymentService {
 				input.manifest,
 				deploymentId,
 				input.assetsZip,
+				input.assetManifest,
 			);
 
 			// Set secrets (must be after worker upload)
@@ -526,6 +540,7 @@ export class DeploymentService {
 		manifest: ManifestData,
 		deploymentId: string,
 		assetsZip?: ArrayBuffer | null,
+		precomputedAssetManifest?: AssetManifest,
 	): Promise<void> {
 		// Get worker name from resources
 		const workerResource = await this.db
@@ -572,6 +587,7 @@ export class DeploymentService {
 				bindings,
 				manifest,
 				assetsZip,
+				precomputedAssetManifest,
 			);
 		} else {
 			// Standard deployment without assets
@@ -590,6 +606,7 @@ export class DeploymentService {
 
 	/**
 	 * Deploy worker with assets using Workers Assets API
+	 * @param precomputedManifest - Optional pre-computed asset manifest from CLI (saves CPU)
 	 */
 	private async deployWithAssets(
 		workerName: string,
@@ -597,6 +614,7 @@ export class DeploymentService {
 		bindings: DispatchScriptBinding[],
 		manifest: ManifestData,
 		assetsZip: ArrayBuffer,
+		precomputedManifest?: AssetManifest,
 	): Promise<void> {
 		// 1. Unzip assets
 		const files = unzipSync(new Uint8Array(assetsZip));
@@ -614,8 +632,8 @@ export class DeploymentService {
 			throw new Error("No assets found in assets.zip");
 		}
 
-		// 2. Create asset manifest with hashes
-		const assetManifest = await createAssetManifest(assetFiles);
+		// 2. Use pre-computed manifest if provided, otherwise compute hashes
+		const assetManifest = precomputedManifest ?? (await createAssetManifest(assetFiles));
 
 		// 3. Create upload session
 		const session = await this.cfClient.createAssetUploadSession(
@@ -628,32 +646,35 @@ export class DeploymentService {
 		let completionJwt = session.jwt;
 
 		if (session.buckets.length > 0) {
-			// Build a lookup from hash to content
-			const hashToContent = new Map<string, Uint8Array>();
+			// Build a lookup from hash to content AND path (for MIME type)
+			const hashToData = new Map<string, { content: Uint8Array; path: string }>();
 			for (const [path, content] of assetFiles) {
 				const entry = assetManifest[path];
 				if (entry) {
-					hashToContent.set(entry.hash, content);
+					hashToData.set(entry.hash, { content, path });
 				}
 			}
 
-			// Build payloads for each bucket
-			const payloads: Array<Record<string, string>> = [];
+			// Build payloads for each bucket with MIME type info
+			const payloads: Array<Record<string, { content: string; mimeType: string }>> = [];
 			for (const bucket of session.buckets) {
-				const payload: Record<string, string> = {};
+				const payload: Record<string, { content: string; mimeType: string }> = {};
 				for (const hash of bucket) {
-					const content = hashToContent.get(hash);
-					if (!content) {
+					const data = hashToData.get(hash);
+					if (!data) {
 						throw new Error(`Content not found for asset hash: ${hash}`);
 					}
 					// Convert to base64
 					let base64 = "";
 					const chunkSize = 0x8000;
-					for (let i = 0; i < content.length; i += chunkSize) {
-						const chunk = content.subarray(i, Math.min(i + chunkSize, content.length));
+					for (let i = 0; i < data.content.length; i += chunkSize) {
+						const chunk = data.content.subarray(i, Math.min(i + chunkSize, data.content.length));
 						base64 += String.fromCharCode.apply(null, Array.from(chunk));
 					}
-					payload[hash] = btoa(base64);
+					payload[hash] = {
+						content: btoa(base64),
+						mimeType: getMimeType(data.path),
+					};
 				}
 				payloads.push(payload);
 			}
@@ -676,8 +697,9 @@ export class DeploymentService {
 				compatibilityDate: manifest.compatibility_date,
 				compatibilityFlags: manifest.compatibility_flags,
 				assetConfig: {
-					html_handling: "auto-trailing-slash",
-					not_found_handling: "none",
+					html_handling: manifest.bindings?.assets?.html_handling || "auto-trailing-slash",
+					not_found_handling:
+						manifest.bindings?.assets?.not_found_handling || "single-page-application",
 				},
 			},
 		);

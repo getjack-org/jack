@@ -644,6 +644,7 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 	const schemaFile = formData.get("schema") as File | null;
 	const secretsFile = formData.get("secrets") as File | null;
 	const assetsFile = formData.get("assets") as File | null;
+	const assetManifestFile = formData.get("asset-manifest") as File | null;
 
 	// Validate required parts
 	if (!manifestFile || !bundleFile) {
@@ -703,6 +704,8 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 		const secretsText = secretsFile ? await secretsFile.text() : null;
 		const secretsJson = secretsText ? JSON.parse(secretsText) : null;
 		const assetsData = assetsFile ? await assetsFile.arrayBuffer() : null;
+		const assetManifestText = assetManifestFile ? await assetManifestFile.text() : null;
+		const assetManifest = assetManifestText ? JSON.parse(assetManifestText) : undefined;
 
 		// Call DeploymentService.createCodeDeployment()
 		const deploymentService = new DeploymentService(c.env);
@@ -714,6 +717,7 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 			schemaSql: schemaText,
 			secretsJson,
 			assetsZip: assetsData,
+			assetManifest,
 		});
 
 		return c.json(deployment, 201);
@@ -748,6 +752,171 @@ api.get("/projects/:projectId/deployments", async (c) => {
 	const deploymentService = new DeploymentService(c.env);
 	const deployments = await deploymentService.listDeployments(projectId);
 	return c.json({ deployments });
+});
+
+// Secrets endpoints - never stores secrets in D1, passes directly to Cloudflare
+api.post("/projects/:projectId/secrets", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	// Get project and verify it exists
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Parse request body
+	const body = await c.req.json<{ name: string; value: string }>();
+	if (!body.name || !body.value) {
+		return c.json({ error: "invalid_request", message: "name and value are required" }, 400);
+	}
+
+	// Validate secret name (alphanumeric and underscores only)
+	if (!/^[A-Z_][A-Z0-9_]*$/i.test(body.name)) {
+		return c.json(
+			{
+				error: "invalid_request",
+				message:
+					"Secret name must start with a letter or underscore, and contain only letters, numbers, and underscores",
+			},
+			400,
+		);
+	}
+
+	try {
+		// Get worker resource name for this project
+		const workerResource = await c.env.DB.prepare(
+			"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+		)
+			.bind(projectId)
+			.first<{ resource_name: string }>();
+
+		if (!workerResource) {
+			return c.json({ error: "not_found", message: "Project has no deployed worker" }, 404);
+		}
+
+		const cfClient = new CloudflareClient(c.env);
+		await cfClient.setDispatchScriptSecrets("jack-tenants", workerResource.resource_name, {
+			[body.name]: body.value,
+		});
+
+		return c.json({ success: true, name: body.name }, 201);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to set secret";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+api.get("/projects/:projectId/secrets", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	// Get project and verify it exists
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	try {
+		// Get worker resource name for this project
+		const workerResource = await c.env.DB.prepare(
+			"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+		)
+			.bind(projectId)
+			.first<{ resource_name: string }>();
+
+		if (!workerResource) {
+			// No worker deployed yet - return empty list
+			return c.json({ secrets: [] });
+		}
+
+		const cfClient = new CloudflareClient(c.env);
+		const secrets = await cfClient.listDispatchScriptSecrets(
+			"jack-tenants",
+			workerResource.resource_name,
+		);
+
+		// Only return names, not values (Cloudflare API already doesn't return values)
+		return c.json({
+			secrets: secrets.map((s) => ({ name: s.name })),
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to list secrets";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+api.delete("/projects/:projectId/secrets/:secretName", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const secretName = c.req.param("secretName");
+	const provisioning = new ProvisioningService(c.env);
+
+	// Get project and verify it exists
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	try {
+		// Get worker resource name for this project
+		const workerResource = await c.env.DB.prepare(
+			"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+		)
+			.bind(projectId)
+			.first<{ resource_name: string }>();
+
+		if (!workerResource) {
+			return c.json({ error: "not_found", message: "Project has no deployed worker" }, 404);
+		}
+
+		const cfClient = new CloudflareClient(c.env);
+		await cfClient.deleteDispatchScriptSecret(
+			"jack-tenants",
+			workerResource.resource_name,
+			secretName,
+		);
+
+		return c.json({ success: true, name: secretName });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to delete secret";
+		return c.json({ error: "internal_error", message }, 500);
+	}
 });
 
 app.route("/v1", api);
