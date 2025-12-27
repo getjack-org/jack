@@ -922,8 +922,8 @@ export class CloudflareClient {
 		if (!data.success) {
 			const errorMsg =
 				data.errors?.length > 0
-					? data.errors.map((e) => e.message).join(", ")
-					: "Unknown Cloudflare API error";
+					? data.errors.map((e) => `${e.code}: ${e.message}`).join(", ")
+					: `HTTP ${response.status}: ${JSON.stringify(data)}`;
 			throw new Error(`Failed to create tail session: ${errorMsg}`);
 		}
 
