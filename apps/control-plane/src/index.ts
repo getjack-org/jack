@@ -1004,18 +1004,62 @@ api.delete("/projects/:projectId/secrets/:secretName", async (c) => {
 	}
 });
 
+// Enable observability (Workers Logs) for a project
+api.post("/projects/:projectId/observability", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const workerResource = await c.env.DB.prepare(
+		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ resource_name: string }>();
+
+	if (!workerResource) {
+		return c.json({ error: "not_found", message: "No worker deployed" }, 404);
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		await cfClient.enableScriptObservability("jack-tenants", workerResource.resource_name);
+
+		return c.json({
+			success: true,
+			message: "Observability enabled. Logs will appear in the Cloudflare dashboard.",
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to enable observability";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
 // Real-time logs streaming endpoint
 // NOTE: Cloudflare's Tail API doesn't support dispatch namespace scripts.
-// Workers for Platforms requires Tail Workers or Logpush for observability.
-// See: https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/observability/
+// For now, use the observability endpoint to enable Workers Logs (stored logs).
 api.get("/projects/:projectId/logs/stream", async (c) => {
 	return c.json(
 		{
 			error: "not_implemented",
 			message:
 				"Real-time log streaming is not yet available for managed projects. " +
-				"Cloudflare Workers for Platforms requires a Tail Worker for log collection. " +
-				"This feature is on our roadmap.",
+				"Use POST /projects/:projectId/observability to enable stored Workers Logs. " +
+				"Logs can then be viewed in the Cloudflare dashboard.",
 			docs: "https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/observability/",
 		},
 		501,

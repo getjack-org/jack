@@ -181,6 +181,13 @@ export class ProvisioningService {
 				bindings,
 			);
 
+			// Enable observability (Workers Logs) for the script
+			try {
+				await this.cfClient.enableScriptObservability(DISPATCH_NAMESPACE, resourceNames.worker);
+			} catch {
+				// Non-fatal: observability is nice-to-have
+			}
+
 			const workerResource = await this.registerResource(
 				projectId,
 				"worker",
