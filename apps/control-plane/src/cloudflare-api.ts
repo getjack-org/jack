@@ -885,6 +885,51 @@ export class CloudflareClient {
 	 * // Worker can now use: env.ASSETS.fetch(request)
 	 * ```
 	 */
+	/**
+	 * Creates a tail session for streaming logs from a dispatch namespace script.
+	 *
+	 * @param namespace - The dispatch namespace name
+	 * @param scriptName - The name of the worker script
+	 * @returns Tail session with WebSocket URL for streaming logs
+	 *
+	 * @example
+	 * ```typescript
+	 * const tail = await client.createDispatchTail("jack-tenants", "my-script");
+	 * // Connect to tail.url via WebSocket to receive log messages
+	 * ```
+	 */
+	async createDispatchTail(
+		namespace: string,
+		scriptName: string,
+	): Promise<{ id: string; url: string; expires_at: string }> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/tails`;
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({}),
+		});
+
+		const data = (await response.json()) as CloudflareResponse<{
+			id: string;
+			url: string;
+			expires_at: string;
+		}>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Failed to create tail session: ${errorMsg}`);
+		}
+
+		return data.result;
+	}
+
 	async uploadDispatchScriptWithAssets(
 		namespace: string,
 		scriptName: string,
