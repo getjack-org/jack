@@ -109,6 +109,7 @@ export async function deployCodeToManagedProject(
 			schemaPath: pkg.schemaPath ?? undefined,
 			secretsPath: pkg.secretsPath ?? undefined,
 			assetsZipPath: pkg.assetsZipPath ?? undefined,
+			assetManifest: pkg.assetManifest ?? undefined,
 		});
 
 		reporter?.stop();

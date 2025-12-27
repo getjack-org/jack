@@ -28,7 +28,13 @@ export interface WranglerConfig {
 	// Supported bindings
 	d1_databases?: Array<{ binding: string; database_name?: string; database_id?: string }>;
 	ai?: { binding?: string };
-	assets?: { directory?: string; binding?: string };
+	assets?: {
+		directory?: string;
+		binding?: string;
+		not_found_handling?: "single-page-application" | "404-page" | "none";
+		html_handling?: "auto-trailing-slash" | "force-trailing-slash" | "drop-trailing-slash" | "none";
+		run_worker_first?: boolean;
+	};
 	vars?: Record<string, string>;
 	// Unsupported bindings (for validation)
 	kv_namespaces?: unknown;

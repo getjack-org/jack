@@ -2,8 +2,9 @@ import { existsSync } from "node:fs";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import archiver from "archiver";
+import { type AssetManifest, computeAssetHash } from "./asset-hash.ts";
 import type { BuildOutput, WranglerConfig } from "./build-helper.ts";
 import { scanProjectFiles } from "./storage/file-filter.ts";
 
@@ -14,6 +15,7 @@ export interface ZipPackageResult {
 	schemaPath: string | null;
 	secretsPath: string | null;
 	assetsZipPath: string | null;
+	assetManifest: AssetManifest | null;
 	cleanup: () => Promise<void>;
 }
 
@@ -28,7 +30,16 @@ export interface ManifestData {
 	bindings?: {
 		d1?: { binding: string };
 		ai?: { binding: string };
-		assets?: { binding: string; directory: string };
+		assets?: {
+			binding: string;
+			directory: string;
+			not_found_handling?: "single-page-application" | "404-page" | "none";
+			html_handling?:
+				| "auto-trailing-slash"
+				| "force-trailing-slash"
+				| "drop-trailing-slash"
+				| "none";
+		};
 		vars?: Record<string, string>;
 	};
 }
@@ -70,6 +81,49 @@ async function createZipArchive(
 }
 
 /**
+ * Recursively collects all file paths in a directory
+ */
+async function collectAllFiles(dir: string, baseDir: string = dir): Promise<string[]> {
+	const entries = await readdir(dir, { withFileTypes: true });
+	const files: string[] = [];
+
+	for (const entry of entries) {
+		const fullPath = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...(await collectAllFiles(fullPath, baseDir)));
+		} else if (entry.isFile()) {
+			files.push(fullPath);
+		}
+	}
+
+	return files;
+}
+
+/**
+ * Creates an asset manifest for all files in a directory.
+ * Maps paths starting with "/" (e.g., "/index.html", "/assets/app.js")
+ * to their content-addressable hashes.
+ *
+ * @param assetsDir - Absolute path to the assets directory
+ * @returns Asset manifest mapping paths to hash entries
+ */
+export async function createAssetManifest(assetsDir: string): Promise<AssetManifest> {
+	const allFiles = await collectAllFiles(assetsDir);
+
+	const entries = await Promise.all(
+		allFiles.map(async (filePath) => {
+			const content = await readFile(filePath);
+			const hash = await computeAssetHash(new Uint8Array(content), filePath);
+			const fileStats = await stat(filePath);
+			const relativePath = "/" + relative(assetsDir, filePath);
+			return [relativePath, { hash, size: fileStats.size }] as const;
+		}),
+	);
+
+	return Object.fromEntries(entries);
+}
+
+/**
  * Extracts binding intent from wrangler config for the manifest.
  * Returns undefined if no bindings are configured.
  */
@@ -96,6 +150,8 @@ function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindi
 		bindings.assets = {
 			binding: config.assets.binding || "ASSETS",
 			directory: config.assets.directory || "./dist",
+			not_found_handling: config.assets.not_found_handling,
+			html_handling: config.assets.html_handling,
 		};
 	}
 
@@ -168,11 +224,17 @@ export async function packageForDeploy(
 		await Bun.write(secretsPath, await readFile(secretsSrcPath));
 	}
 
-	// 5. If assets directory exists, create assets.zip
+	// 5. If assets directory exists, create assets.zip and asset manifest
 	let assetsZipPath: string | null = null;
+	let assetManifest: AssetManifest | null = null;
 	if (buildOutput.assetsDir) {
+		// Create zip and manifest in parallel for speed
+		const [, manifest] = await Promise.all([
+			createZipArchive(join(packageDir, "assets.zip"), buildOutput.assetsDir),
+			createAssetManifest(buildOutput.assetsDir),
+		]);
 		assetsZipPath = join(packageDir, "assets.zip");
-		await createZipArchive(assetsZipPath, buildOutput.assetsDir);
+		assetManifest = manifest;
 	}
 
 	// Return package result with cleanup function
@@ -183,6 +245,7 @@ export async function packageForDeploy(
 		schemaPath,
 		secretsPath,
 		assetsZipPath,
+		assetManifest,
 		cleanup: async () => {
 			await rm(packageDir, { recursive: true, force: true });
 			// Also cleanup build output directory

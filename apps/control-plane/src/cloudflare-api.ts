@@ -1,5 +1,48 @@
 import type { Bindings } from "./types";
 
+/**
+ * Gets MIME type from file path extension.
+ * Covers common web assets; defaults to application/octet-stream for unknown types.
+ */
+export function getMimeType(filePath: string): string {
+	const ext = filePath.includes(".") ? filePath.split(".").pop()?.toLowerCase() : "";
+
+	const mimeTypes: Record<string, string> = {
+		// HTML
+		html: "text/html",
+		htm: "text/html",
+		// JavaScript
+		js: "text/javascript",
+		mjs: "text/javascript",
+		// CSS
+		css: "text/css",
+		// JSON
+		json: "application/json",
+		// Images
+		png: "image/png",
+		jpg: "image/jpeg",
+		jpeg: "image/jpeg",
+		gif: "image/gif",
+		webp: "image/webp",
+		svg: "image/svg+xml",
+		ico: "image/x-icon",
+		avif: "image/avif",
+		// Fonts
+		woff: "font/woff",
+		woff2: "font/woff2",
+		ttf: "font/ttf",
+		otf: "font/otf",
+		// Other
+		pdf: "application/pdf",
+		xml: "application/xml",
+		txt: "text/plain",
+		map: "application/json",
+		webmanifest: "application/manifest+json",
+	};
+
+	return mimeTypes[ext || ""] || "application/octet-stream";
+}
+
 // =====================================================
 // Workers Assets API - Overview & Limitations
 // =====================================================
@@ -163,9 +206,19 @@ interface AssetUploadSessionResponse {
 }
 
 /**
- * Asset upload payload - maps file hash to base64-encoded content
+ * Asset upload payload entry with content and MIME type
  */
-export type AssetUploadPayload = Record<string, string>;
+export interface AssetUploadPayloadEntry {
+	/** Base64-encoded file content */
+	content: string;
+	/** MIME type for Content-Type header */
+	mimeType: string;
+}
+
+/**
+ * Asset upload payload - maps file hash to entry with content and MIME type
+ */
+export type AssetUploadPayload = Record<string, AssetUploadPayloadEntry>;
 
 /**
  * Response from uploading asset payloads
@@ -529,6 +582,59 @@ export class CloudflareClient {
 	}
 
 	/**
+	 * List secrets for a dispatch namespace script (names only, not values)
+	 */
+	async listDispatchScriptSecrets(
+		namespace: string,
+		scriptName: string,
+	): Promise<Array<{ name: string; type: string }>> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/secrets`;
+
+		const response = await fetch(url, {
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+			},
+		});
+
+		const data = (await response.json()) as CloudflareResponse<
+			Array<{ name: string; type: string }>
+		>;
+
+		if (!data.success) {
+			const errorMsg = data.errors?.map((e) => e.message).join(", ") || "Failed to list secrets";
+			throw new Error(`Failed to list secrets: ${errorMsg}`);
+		}
+
+		return data.result || [];
+	}
+
+	/**
+	 * Delete a secret from a dispatch namespace script
+	 */
+	async deleteDispatchScriptSecret(
+		namespace: string,
+		scriptName: string,
+		secretName: string,
+	): Promise<void> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/secrets/${secretName}`;
+
+		const response = await fetch(url, {
+			method: "DELETE",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+			},
+		});
+
+		const data = (await response.json()) as CloudflareResponse<unknown>;
+
+		if (!data.success) {
+			const errorMsg = data.errors?.map((e) => e.message).join(", ") || "Failed to delete secret";
+			throw new Error(`Failed to delete secret ${secretName}: ${errorMsg}`);
+		}
+	}
+
+	/**
 	 * Upload a file to an R2 bucket
 	 */
 	async uploadToR2Bucket(bucketName: string, key: string, content: Uint8Array): Promise<void> {
@@ -691,44 +797,53 @@ export class CloudflareClient {
 		// Note: The upload endpoint is account-level, not per-script
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/assets/upload?base64=true`;
 
+		// Upload buckets in parallel batches (matches wrangler's BULK_UPLOAD_CONCURRENCY)
+		const CONCURRENCY = 3;
 		let completionJwt: string | undefined;
 
-		for (let i = 0; i < payloads.length; i++) {
-			const payload = payloads[i];
+		for (let i = 0; i < payloads.length; i += CONCURRENCY) {
+			const batch = payloads.slice(i, i + CONCURRENCY);
 
-			// Create multipart form data for this batch
-			const formData = new FormData();
-			for (const [hash, base64Content] of Object.entries(payload)) {
-				// Each file is added as a form part with the hash as the name
-				// Content-Type should be provided for proper serving
-				const blob = new Blob([base64Content], { type: "application/octet-stream" });
-				formData.append(hash, blob, hash);
-			}
+			const results = await Promise.all(
+				batch.map(async (payload, batchIndex) => {
+					// Create multipart form data for this bucket
+					const formData = new FormData();
+					for (const [hash, entry] of Object.entries(payload)) {
+						// Use the provided MIME type for proper Content-Type serving
+						const blob = new Blob([entry.content], { type: entry.mimeType });
+						formData.append(hash, blob, hash);
+					}
 
-			const response = await fetch(url, {
-				method: "POST",
-				headers: {
-					// Use the upload JWT for authentication (not the API token)
-					Authorization: `Bearer ${uploadJwt}`,
-				},
-				body: formData,
-			});
+					const response = await fetch(url, {
+						method: "POST",
+						headers: {
+							// Use the upload JWT for authentication (not the API token)
+							Authorization: `Bearer ${uploadJwt}`,
+						},
+						body: formData,
+					});
 
-			const data = (await response.json()) as CloudflareResponse<AssetUploadResponse>;
+					const data = (await response.json()) as CloudflareResponse<AssetUploadResponse>;
 
-			if (!data.success) {
-				const errorMsg =
-					data.errors?.length > 0
-						? data.errors.map((e) => e.message).join(", ")
-						: "Unknown Cloudflare API error";
-				throw new Error(
-					`Failed to upload asset payload batch ${i + 1}/${payloads.length}: ${errorMsg}`,
-				);
-			}
+					if (!data.success) {
+						const errorMsg =
+							data.errors?.length > 0
+								? data.errors.map((e) => e.message).join(", ")
+								: "Unknown Cloudflare API error";
+						throw new Error(
+							`Failed to upload asset payload batch ${i + batchIndex + 1}/${payloads.length}: ${errorMsg}`,
+						);
+					}
 
-			// The last successful upload returns the completion JWT
-			if (data.result?.jwt) {
-				completionJwt = data.result.jwt;
+					return data;
+				}),
+			);
+
+			// Capture completion JWT from any response that has it
+			for (const data of results) {
+				if (data.result?.jwt) {
+					completionJwt = data.result.jwt;
+				}
 			}
 		}
 

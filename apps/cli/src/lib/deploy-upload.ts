@@ -3,6 +3,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import type { AssetManifest } from "./asset-hash.ts";
 import { authFetch } from "./auth/index.ts";
 import { getControlApiUrl } from "./control-plane.ts";
 
@@ -14,6 +15,7 @@ export interface DeployUploadOptions {
 	schemaPath?: string;
 	secretsPath?: string;
 	assetsZipPath?: string;
+	assetManifest?: AssetManifest;
 }
 
 export interface DeployUploadResult {
@@ -62,6 +64,14 @@ export async function uploadDeployment(options: DeployUploadOptions): Promise<De
 	if (options.assetsZipPath) {
 		const assetsContent = await readFile(options.assetsZipPath);
 		formData.append("assets", new Blob([assetsContent], { type: "application/zip" }), "assets.zip");
+	}
+
+	if (options.assetManifest) {
+		formData.append(
+			"asset-manifest",
+			new Blob([JSON.stringify(options.assetManifest)], { type: "application/json" }),
+			"asset-manifest.json",
+		);
 	}
 
 	// POST to control plane
