@@ -249,6 +249,27 @@ api.get("/projects", async (c) => {
 	return c.json({ projects });
 });
 
+api.get("/projects/by-slug/:slug", async (c) => {
+	const auth = c.get("auth");
+	const slug = c.req.param("slug");
+
+	// Find project by slug within user's orgs
+	const project = await c.env.DB.prepare(
+		`SELECT p.id, p.org_id, p.name, p.slug, p.status, p.created_at, p.updated_at
+		 FROM projects p
+		 JOIN org_memberships om ON p.org_id = om.org_id
+		 WHERE p.slug = ? AND om.user_id = ? AND p.status != 'deleted'`,
+	)
+		.bind(slug, auth.userId)
+		.first();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	return c.json({ project });
+});
+
 api.get("/projects/:projectId", async (c) => {
 	const auth = c.get("auth");
 	const projectId = c.req.param("projectId");
@@ -915,6 +936,55 @@ api.delete("/projects/:projectId/secrets/:secretName", async (c) => {
 		return c.json({ success: true, name: secretName });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Failed to delete secret";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+// Real-time logs streaming endpoint
+api.get("/projects/:projectId/logs/stream", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	// Get project and verify it exists
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get worker resource name for this project
+	const workerResource = await c.env.DB.prepare(
+		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ resource_name: string }>();
+
+	if (!workerResource) {
+		return c.json({ error: "not_found", message: "No worker deployed" }, 404);
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const tail = await cfClient.createDispatchTail("jack-tenants", workerResource.resource_name);
+
+		return c.json({
+			websocket_url: tail.url,
+			tail_id: tail.id,
+			expires_at: tail.expires_at,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to create log stream";
 		return c.json({ error: "internal_error", message }, 500);
 	}
 });
