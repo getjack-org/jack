@@ -41,6 +41,70 @@ app.get("/health", (c) => {
 	return c.json({ status: "ok", service: "jack-control" });
 });
 
+// Feedback endpoint - no auth required
+app.post("/v1/feedback", async (c) => {
+	// Rate limit by IP
+	const ip = c.req.header("cf-connecting-ip") || "unknown";
+	const { success } = await c.env.FEEDBACK_LIMITER.limit({ key: ip });
+	if (!success) {
+		return c.json(
+			{ error: "rate_limited", message: "Too many feedback submissions. Try again in a minute." },
+			429,
+		);
+	}
+
+	const body = await c.req.json<{
+		message: string;
+		email?: string | null;
+		metadata?: {
+			jack_version?: string;
+			os?: string;
+			project_name?: string | null;
+			deploy_mode?: string | null;
+		};
+	}>();
+
+	// Validate message
+	if (!body.message || typeof body.message !== "string") {
+		return c.json({ error: "invalid_request", message: "Message is required" }, 400);
+	}
+
+	const message = body.message.trim();
+	if (message.length === 0) {
+		return c.json({ error: "invalid_request", message: "Message cannot be empty" }, 400);
+	}
+
+	if (message.length > 10000) {
+		return c.json({ error: "invalid_request", message: "Message too long (max 10000 chars)" }, 400);
+	}
+
+	// Extract metadata
+	const metadata = body.metadata ?? {};
+	const feedbackId = `fb_${crypto.randomUUID()}`;
+
+	try {
+		await c.env.DB.prepare(
+			`INSERT INTO feedback (id, message, email, jack_version, os, project_name, deploy_mode)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		)
+			.bind(
+				feedbackId,
+				message,
+				body.email ?? null,
+				metadata.jack_version ?? null,
+				metadata.os ?? null,
+				metadata.project_name ?? null,
+				metadata.deploy_mode ?? null,
+			)
+			.run();
+
+		return c.json({ success: true, id: feedbackId }, 201);
+	} catch (error) {
+		console.error("Failed to store feedback:", error);
+		return c.json({ error: "internal_error", message: "Failed to store feedback" }, 500);
+	}
+});
+
 // Registration endpoint - called by CLI after login to sync user info
 app.post("/v1/register", async (c) => {
 	const authHeader = c.req.header("Authorization");
@@ -941,52 +1005,21 @@ api.delete("/projects/:projectId/secrets/:secretName", async (c) => {
 });
 
 // Real-time logs streaming endpoint
+// NOTE: Cloudflare's Tail API doesn't support dispatch namespace scripts.
+// Workers for Platforms requires Tail Workers or Logpush for observability.
+// See: https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/observability/
 api.get("/projects/:projectId/logs/stream", async (c) => {
-	const auth = c.get("auth");
-	const projectId = c.req.param("projectId");
-	const provisioning = new ProvisioningService(c.env);
-
-	// Get project and verify it exists
-	const project = await provisioning.getProject(projectId);
-	if (!project) {
-		return c.json({ error: "not_found", message: "Project not found" }, 404);
-	}
-
-	// Verify user has org membership access
-	const membership = await c.env.DB.prepare(
-		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
-	)
-		.bind(project.org_id, auth.userId)
-		.first();
-
-	if (!membership) {
-		return c.json({ error: "not_found", message: "Project not found" }, 404);
-	}
-
-	// Get worker resource name for this project
-	const workerResource = await c.env.DB.prepare(
-		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
-	)
-		.bind(projectId)
-		.first<{ resource_name: string }>();
-
-	if (!workerResource) {
-		return c.json({ error: "not_found", message: "No worker deployed" }, 404);
-	}
-
-	try {
-		const cfClient = new CloudflareClient(c.env);
-		const tail = await cfClient.createDispatchTail("jack-tenants", workerResource.resource_name);
-
-		return c.json({
-			websocket_url: tail.url,
-			tail_id: tail.id,
-			expires_at: tail.expires_at,
-		});
-	} catch (error) {
-		const message = error instanceof Error ? error.message : "Failed to create log stream";
-		return c.json({ error: "internal_error", message }, 500);
-	}
+	return c.json(
+		{
+			error: "not_implemented",
+			message:
+				"Real-time log streaming is not yet available for managed projects. " +
+				"Cloudflare Workers for Platforms requires a Tail Worker for log collection. " +
+				"This feature is on our roadmap.",
+			docs: "https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/observability/",
+		},
+		501,
+	);
 });
 
 app.route("/v1", api);
