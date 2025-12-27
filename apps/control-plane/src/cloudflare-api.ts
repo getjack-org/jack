@@ -484,6 +484,39 @@ export class CloudflareClient {
 	}
 
 	/**
+	 * Enables observability (Workers Logs) for a dispatch namespace script.
+	 * This allows logs to be stored and queried via the Cloudflare dashboard.
+	 */
+	async enableScriptObservability(namespace: string, scriptName: string): Promise<void> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/settings`;
+
+		const formData = new FormData();
+		const settings = {
+			observability: {
+				enabled: true,
+				head_sampling_rate: 1, // Log 100% of requests
+			},
+		};
+		formData.append("settings", new Blob([JSON.stringify(settings)], { type: "application/json" }));
+
+		const response = await fetch(url, {
+			method: "PATCH",
+			headers: { Authorization: `Bearer ${this.apiToken}` },
+			body: formData,
+		});
+
+		const data = (await response.json()) as CloudflareResponse<unknown>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => `${e.code}: ${e.message}`).join(", ")
+					: `HTTP ${response.status}: ${JSON.stringify(data)}`;
+			throw new Error(`Failed to enable observability: ${errorMsg}`);
+		}
+	}
+
+	/**
 	 * Creates an R2 bucket. Returns true if created, false if already exists.
 	 */
 	async createR2BucketIfNotExists(name: string): Promise<boolean> {

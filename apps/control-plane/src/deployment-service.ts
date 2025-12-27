@@ -320,6 +320,13 @@ export class DeploymentService {
 			bindings,
 		);
 
+		// Enable observability (Workers Logs) for the script
+		try {
+			await this.cfClient.enableScriptObservability(DISPATCH_NAMESPACE, workerResource.resource_name);
+		} catch {
+			// Non-fatal: observability is nice-to-have, don't fail deployment
+		}
+
 		// Store artifact in CODE_BUCKET
 		const artifactKey = `projects/${projectId}/deployments/${deploymentId}/worker.js`;
 		await this.codeBucket.put(artifactKey, workerScript);
@@ -601,6 +608,16 @@ export class DeploymentService {
 					compatibilityFlags: manifest.compatibility_flags,
 				},
 			);
+
+			// Enable observability (Workers Logs) for the script
+			try {
+				await this.cfClient.enableScriptObservability(
+					DISPATCH_NAMESPACE,
+					workerResource.resource_name,
+				);
+			} catch {
+				// Non-fatal: observability is nice-to-have, don't fail deployment
+			}
 		}
 	}
 
@@ -703,6 +720,13 @@ export class DeploymentService {
 				},
 			},
 		);
+
+		// Enable observability (Workers Logs) for the script
+		try {
+			await this.cfClient.enableScriptObservability(DISPATCH_NAMESPACE, workerName);
+		} catch {
+			// Non-fatal: observability is nice-to-have, don't fail deployment
+		}
 	}
 
 	/**
