@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import {
@@ -30,9 +31,11 @@ export default async function projects(subcommand?: string, args: string[] = [])
 			return await removeProjectEntry(args);
 		case "cleanup":
 			return await cleanupProjects();
+		case "scan":
+			return await scanProjects(args);
 		default:
 			error(`Unknown subcommand: ${subcommand}`);
-			info("Available: list, info, remove, cleanup");
+			info("Available: list, info, remove, cleanup, scan");
 			process.exit(1);
 	}
 }
@@ -202,7 +205,7 @@ async function infoProject(args: string[]): Promise<void> {
 	// Status section
 	const statuses: string[] = [];
 	if (status.local) {
-		statuses.push("workspace");
+		statuses.push("local");
 	}
 	if (status.deployed) {
 		statuses.push("deployed");
@@ -210,23 +213,13 @@ async function infoProject(args: string[]): Promise<void> {
 	if (status.backedUp) {
 		statuses.push("backup");
 	}
-	if (status.missing || !status.localPath) {
-		statuses.push("workspace missing");
-	}
 
 	item(`Status: ${statuses.join(", ") || "none"}`);
 	console.error("");
 
-	// Workspace info
+	// Workspace info (only shown if running from project directory)
 	if (status.localPath) {
 		item(`Workspace path: ${status.localPath}`);
-		if (status.missing) {
-			warn("  Workspace path no longer exists");
-		}
-		console.error("");
-	} else {
-		item("Workspace path: none");
-		warn("  Workspace path not set");
 		console.error("");
 	}
 
@@ -273,10 +266,10 @@ async function infoProject(args: string[]): Promise<void> {
 }
 
 /**
- * Remove workspace-missing entries
+ * Find and remove stale registry entries (projects with URLs but no deployed worker)
  */
 async function cleanupProjects(): Promise<void> {
-	outputSpinner.start("Scanning for workspace-missing projects...");
+	outputSpinner.start("Scanning for stale projects...");
 
 	const scan = await scanStaleProjects();
 	if (scan.total === 0) {
@@ -288,7 +281,7 @@ async function cleanupProjects(): Promise<void> {
 	outputSpinner.stop();
 
 	if (scan.stale.length === 0) {
-		success("No workspace-missing projects found");
+		success("No stale projects found");
 		return;
 	}
 
@@ -296,32 +289,21 @@ async function cleanupProjects(): Promise<void> {
 	console.error("");
 	info("What cleanup does:");
 	item("Removes entries from jack's local tracking registry");
-	item("Does NOT undeploy live services");
 	item("Does NOT delete backups or databases");
 	info("Remove a single entry with: jack projects remove <name>");
 	console.error("");
 
 	// Show found issues
-	warn(`Found ${scan.stale.length} workspace-missing project(s):`);
+	warn(`Found ${scan.stale.length} stale project(s):`);
 	console.error("");
-
-	// Check which have deployed workers
-	const deployedStale = scan.stale.filter((stale) => stale.workerUrl);
 
 	for (const stale of scan.stale) {
-		const hasWorker = stale.workerUrl ? ` ${colors.yellow}(still deployed)${colors.reset}` : "";
-		item(`${stale.name}: ${stale.reason}${hasWorker}`);
+		item(`${stale.name}: ${stale.reason} (URL: ${stale.workerUrl})`);
 	}
 	console.error("");
 
-	if (deployedStale.length > 0) {
-		warn(`${deployedStale.length} project(s) are still deployed`);
-		info("To fully remove, run 'jack down <name>' first");
-		console.error("");
-	}
-
 	// Prompt to remove
-	info("Remove these from jack's tracking? (deployed services stay live)");
+	info("Remove these from jack's tracking?");
 	const choice = await promptSelect(["Yes", "No"]);
 
 	if (choice !== 0) {
@@ -329,14 +311,11 @@ async function cleanupProjects(): Promise<void> {
 		return;
 	}
 
-	// Remove workspace-missing entries
+	// Remove stale entries
 	await cleanupStaleProjects(scan.stale.map((stale) => stale.name));
 
 	console.error("");
 	success(`Removed ${scan.stale.length} entry/entries from jack's registry`);
-	if (deployedStale.length > 0) {
-		info("Note: Deployed services are still live");
-	}
 }
 
 /**
@@ -441,4 +420,53 @@ async function removeProjectEntry(args: string[]): Promise<void> {
 		console.error("");
 		info(`To undeploy the worker, run: jack down ${name}`);
 	}
+}
+
+/**
+ * Scan a directory for jack projects and register them
+ */
+async function scanProjects(args: string[]): Promise<void> {
+	const targetDir = args[0] || process.cwd();
+	const absoluteDir = resolve(targetDir);
+
+	if (!existsSync(absoluteDir)) {
+		error(`Directory not found: ${targetDir}`);
+		process.exit(1);
+	}
+
+	outputSpinner.start(`Scanning ${targetDir} for jack projects...`);
+
+	const { scanDirectoryForProjects, registerDiscoveredProjects } = await import(
+		"../lib/local-paths.ts"
+	);
+
+	const discovered = await scanDirectoryForProjects(absoluteDir);
+	outputSpinner.stop();
+
+	if (discovered.length === 0) {
+		info("No jack projects found");
+		info("Projects must have a wrangler.toml or wrangler.jsonc file");
+		return;
+	}
+
+	console.error("");
+	info(`Found ${discovered.length} project(s):`);
+
+	const home = homedir();
+	for (let i = 0; i < discovered.length; i++) {
+		const proj = discovered[i];
+		if (!proj) continue;
+		const displayPath = proj.path.startsWith(home) ? `~${proj.path.slice(home.length)}` : proj.path;
+		const isLast = i === discovered.length - 1;
+		const prefix = isLast ? "└──" : "├──";
+		console.error(
+			`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${colors.dim}${displayPath}${colors.reset}`,
+		);
+	}
+
+	// Register all discovered projects
+	await registerDiscoveredProjects(discovered);
+
+	console.error("");
+	success(`Registered ${discovered.length} local path(s)`);
 }
