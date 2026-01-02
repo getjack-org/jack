@@ -13,7 +13,13 @@
  */
 
 import { isLoggedIn } from "./auth/index.ts";
-import { type ManagedProject, findProjectBySlug, listManagedProjects } from "./control-plane.ts";
+import {
+	type ManagedProject,
+	fetchProjectResources,
+	findProjectBySlug,
+	listManagedProjects,
+} from "./control-plane.ts";
+import { getAllLocalPaths } from "./local-paths.ts";
 import {
 	type Project as RegistryProject,
 	getAllProjects,
@@ -21,6 +27,11 @@ import {
 	registerProject,
 	removeProject as removeFromRegistry,
 } from "./registry.ts";
+import {
+	type ResolvedResources,
+	convertControlPlaneResources,
+	parseWranglerResources,
+} from "./resources.ts";
 
 /**
  * User-facing project status
@@ -56,6 +67,9 @@ export interface ResolvedProject {
 	// Metadata
 	createdAt: string;
 	updatedAt?: string;
+
+	// Resources (fetched on-demand)
+	resources?: ResolvedResources;
 }
 
 /**
@@ -81,9 +95,9 @@ function fromRegistryProject(name: string, project: RegistryProject): ResolvedPr
 		sources: {
 			registry: true,
 			controlPlane: false,
-			filesystem: !!project.localPath,
+			filesystem: false, // localPath removed from registry - filesystem detection done elsewhere
 		},
-		localPath: project.localPath || undefined,
+		localPath: undefined, // localPath removed from registry
 		remote: project.remote
 			? {
 					projectId: project.remote.project_id,
@@ -105,7 +119,7 @@ function fromManagedProject(managed: ManagedProject): ResolvedProject {
 		name: managed.name,
 		slug: managed.slug,
 		status,
-		url: `https://${managed.slug}.runjack.org`,
+		url: `https://${managed.slug}.runjack.xyz`,
 		errorMessage: managed.status === "error" ? "deployment failed" : undefined,
 		sources: {
 			registry: false,
@@ -141,76 +155,183 @@ function mergeProjects(registry: ResolvedProject, managed: ResolvedProject): Res
 }
 
 /**
+ * Options for resolving a project
+ */
+export interface ResolveProjectOptions {
+	/** Include resources in the resolved project (fetched on-demand) */
+	includeResources?: boolean;
+	/** Project path for BYO projects (defaults to cwd) */
+	projectPath?: string;
+	/** Allow fallback lookup by managed project name when slug lookup fails */
+	matchByName?: boolean;
+}
+
+interface RegistryIndex {
+	byRemoteId: Map<string, string>;
+	byRemoteSlug: Map<string, string>;
+}
+
+function buildRegistryIndexes(registryProjects: Record<string, RegistryProject>): RegistryIndex {
+	const byRemoteId = new Map<string, string>();
+	const byRemoteSlug = new Map<string, string>();
+
+	for (const [name, project] of Object.entries(registryProjects)) {
+		const remote = project.remote;
+		if (!remote) continue;
+		if (remote.project_id) {
+			byRemoteId.set(remote.project_id, name);
+		}
+		if (remote.project_slug) {
+			byRemoteSlug.set(remote.project_slug, name);
+		}
+	}
+
+	return { byRemoteId, byRemoteSlug };
+}
+
+/**
+ * Resolve project resources based on deploy mode.
+ * For managed: fetch from control plane
+ * For BYO: parse from wrangler.jsonc
+ */
+export async function resolveProjectResources(
+	project: ResolvedProject,
+	projectPath?: string,
+): Promise<ResolvedResources | null> {
+	// Managed: fetch from control plane
+	if (project.remote?.projectId) {
+		try {
+			const resources = await fetchProjectResources(project.remote.projectId);
+			// Cast ProjectResource[] to ControlPlaneResource[] (compatible shapes)
+			return convertControlPlaneResources(
+				resources as Parameters<typeof convertControlPlaneResources>[0],
+			);
+		} catch {
+			// Network error, return null
+			return null;
+		}
+	}
+
+	// BYO: parse from wrangler config
+	const path = projectPath || process.cwd();
+	try {
+		return await parseWranglerResources(path);
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Resolve a project by name/slug
  * Checks: registry → control plane → filesystem
  * Caches result in registry
  */
-export async function resolveProject(name: string): Promise<ResolvedProject | null> {
+export async function resolveProject(
+	name: string,
+	options?: ResolveProjectOptions,
+): Promise<ResolvedProject | null> {
+	let resolved: ResolvedProject | null = null;
+	const matchByName = options?.matchByName !== false;
+	let registryName = name;
+	let registryProjects: Record<string, RegistryProject> | null = null;
+	let registryIndex: RegistryIndex | null = null;
+
 	// Check registry first (fast)
-	const registryProject = await getProject(name);
+	let registryProject = await getProject(name);
+	if (!registryProject) {
+		registryProjects = await getAllProjects();
+		registryIndex = buildRegistryIndexes(registryProjects);
+		const slugMatchName = registryIndex.byRemoteSlug.get(name);
+		if (slugMatchName) {
+			registryProject = registryProjects[slugMatchName] ?? null;
+			registryName = slugMatchName;
+		}
+	}
 	if (registryProject) {
-		const resolved = fromRegistryProject(name, registryProject);
+		resolved = fromRegistryProject(registryName, registryProject);
 
 		// If it's a BYOC project, don't check control plane
 		if (registryProject.deploy_mode === "byo") {
-			return resolved;
-		}
-
-		// If it's managed, try to get latest status from control plane
-		if (registryProject.deploy_mode === "managed" && (await isLoggedIn())) {
+			// resolved stays as-is
+		} else if (registryProject.deploy_mode === "managed" && (await isLoggedIn())) {
+			// If it's managed, try to get latest status from control plane
 			try {
 				const managed = await findProjectBySlug(resolved.slug);
 				if (managed) {
-					const merged = mergeProjects(resolved, fromManagedProject(managed));
+					resolved = mergeProjects(resolved, fromManagedProject(managed));
 
 					// Update registry cache with latest status
-					await registerProject(name, {
+					await registerProject(registryName, {
 						...registryProject,
 						status: managed.status === "active" ? "live" : "build_failed",
 					});
-
-					return merged;
 				}
 			} catch {
 				// Control plane unavailable, use cached data
 			}
 		}
-
-		return resolved;
-	}
-
-	// Not in registry, check control plane if logged in
-	if (await isLoggedIn()) {
+	} else if (await isLoggedIn()) {
+		// Not in registry, check control plane if logged in
 		try {
-			const managed = await findProjectBySlug(name);
+			let managed = await findProjectBySlug(name);
+			if (!managed && matchByName) {
+				const managedProjects = await listManagedProjects();
+				managed = managedProjects.find((project) => project.name === name) ?? null;
+			}
 			if (managed) {
-				const resolved = fromManagedProject(managed);
+				if (!registryProjects || !registryIndex) {
+					registryProjects = await getAllProjects();
+					registryIndex = buildRegistryIndexes(registryProjects);
+				}
 
-				// Cache in registry for future lookups
-				await registerProject(name, {
-					localPath: null,
-					workerUrl: resolved.url || null,
-					createdAt: managed.created_at,
-					lastDeployed: managed.updated_at,
-					status: managed.status === "active" ? "live" : "build_failed",
-					resources: { services: { db: null } },
-					deploy_mode: "managed",
-					remote: {
-						project_id: managed.id,
-						project_slug: managed.slug,
-						org_id: managed.org_id,
-						runjack_url: `https://${managed.slug}.runjack.org`,
-					},
-				});
+				const existingRegistryName =
+					registryIndex.byRemoteId.get(managed.id) ?? registryIndex.byRemoteSlug.get(managed.slug);
 
-				return resolved;
+				if (existingRegistryName && registryProjects[existingRegistryName]) {
+					const existingProject = registryProjects[existingRegistryName];
+					resolved = mergeProjects(
+						fromRegistryProject(existingRegistryName, existingProject),
+						fromManagedProject(managed),
+					);
+
+					// Update registry cache with latest status
+					await registerProject(existingRegistryName, {
+						...existingProject,
+						status: managed.status === "active" ? "live" : "build_failed",
+					});
+				} else {
+					resolved = fromManagedProject(managed);
+
+					// Cache in registry for future lookups
+					await registerProject(managed.slug, {
+						workerUrl: resolved.url || null,
+						createdAt: managed.created_at,
+						lastDeployed: managed.updated_at,
+						status: managed.status === "active" ? "live" : "build_failed",
+						deploy_mode: "managed",
+						remote: {
+							project_id: managed.id,
+							project_slug: managed.slug,
+							org_id: managed.org_id,
+							runjack_url: `https://${managed.slug}.runjack.xyz`,
+						},
+					});
+				}
 			}
 		} catch {
 			// Control plane unavailable or not found
 		}
 	}
 
-	return null;
+	// Optionally fetch resources
+	if (resolved && options?.includeResources) {
+		const resources = await resolveProjectResources(resolved, options.projectPath || process.cwd());
+		if (resources) {
+			resolved.resources = resources;
+		}
+	}
+
+	return resolved;
 }
 
 /**
@@ -222,8 +343,10 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 
 	// Get all registry projects
 	const registryProjects = await getAllProjects();
+	const registryIndex = buildRegistryIndexes(registryProjects);
 	for (const [name, project] of Object.entries(registryProjects)) {
-		projectMap.set(name, fromRegistryProject(name, project));
+		const key = project.remote?.project_slug ?? name;
+		projectMap.set(key, fromRegistryProject(name, project));
 	}
 
 	// Get all managed projects if logged in
@@ -243,25 +366,50 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 					projectMap.set(managed.slug, resolved);
 
 					// Cache in registry
-					await registerProject(managed.slug, {
-						localPath: null,
+					const registryName =
+						registryIndex.byRemoteId.get(managed.id) ??
+						registryIndex.byRemoteSlug.get(managed.slug) ??
+						managed.slug;
+					await registerProject(registryName, {
 						workerUrl: resolved.url || null,
 						createdAt: managed.created_at,
 						lastDeployed: managed.updated_at,
 						status: managed.status === "active" ? "live" : "build_failed",
-						resources: { services: { db: null } },
 						deploy_mode: "managed",
 						remote: {
 							project_id: managed.id,
 							project_slug: managed.slug,
 							org_id: managed.org_id,
-							runjack_url: `https://${managed.slug}.runjack.org`,
+							runjack_url: `https://${managed.slug}.runjack.xyz`,
 						},
 					});
 				}
 			}
 		} catch {
 			// Control plane unavailable, use registry-only data
+		}
+	}
+
+	// Enrich with local paths
+	const localPaths = await getAllLocalPaths();
+
+	for (const [name, paths] of Object.entries(localPaths)) {
+		const existing = projectMap.get(name);
+
+		if (existing) {
+			// Update existing project with local info
+			existing.localPath = paths[0]; // Primary path
+			existing.sources.filesystem = true;
+		} else {
+			// Project exists locally but not in registry/cloud
+			projectMap.set(name, {
+				name,
+				slug: name,
+				status: "local-only",
+				sources: { registry: false, controlPlane: false, filesystem: true },
+				localPath: paths[0],
+				createdAt: new Date().toISOString(),
+			});
 		}
 	}
 
@@ -275,7 +423,7 @@ export async function checkAvailability(name: string): Promise<{
 	available: boolean;
 	existingProject?: ResolvedProject;
 }> {
-	const existing = await resolveProject(name);
+	const existing = await resolveProject(name, { matchByName: false });
 
 	return {
 		available: !existing,
@@ -314,7 +462,7 @@ export async function removeProject(name: string): Promise<{
 	// Remove from registry
 	if (project.sources.registry) {
 		try {
-			await removeFromRegistry(name);
+			await removeFromRegistry(project.name);
 			removed.push("local registry");
 		} catch (error) {
 			errors.push(`Failed to remove from registry: ${error}`);
