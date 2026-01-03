@@ -1,8 +1,9 @@
 import { verifyJwt } from "@getjack/auth";
 import type { JwtPayload } from "@getjack/auth";
+import { unzipSync } from "fflate";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { CloudflareClient } from "./cloudflare-api";
+import { CloudflareClient, getMimeType } from "./cloudflare-api";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import type { Bindings } from "./types";
@@ -1064,6 +1065,184 @@ api.get("/projects/:projectId/logs/stream", async (c) => {
 		},
 		501,
 	);
+});
+
+// Source code retrieval endpoints
+api.get("/projects/:projectId/source/tree", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const deploymentService = new DeploymentService(c.env);
+	const deployment = await deploymentService.getLatestDeployment(projectId);
+
+	if (!deployment) {
+		return c.json({ error: "not_found", message: "No deployment found" }, 404);
+	}
+
+	if (!deployment.artifact_bucket_key) {
+		return c.json({ error: "not_found", message: "No source code available" }, 404);
+	}
+
+	// Check KV cache first
+	const cacheKey = `source-tree:${deployment.id}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	// Fetch source.zip from R2
+	const sourceKey = `${deployment.artifact_bucket_key}/source.zip`;
+	const sourceObj = await c.env.CODE_BUCKET.get(sourceKey);
+
+	if (!sourceObj) {
+		return c.json({ error: "not_found", message: "Source code not found in storage" }, 404);
+	}
+
+	try {
+		const zipData = await sourceObj.arrayBuffer();
+		const files = unzipSync(new Uint8Array(zipData));
+
+		// Build file tree
+		const tree: Array<{ path: string; size: number; type: "file" | "directory" }> = [];
+		const directories = new Set<string>();
+
+		for (const [path, content] of Object.entries(files)) {
+			const parts = path.split("/");
+			for (let i = 1; i < parts.length; i++) {
+				directories.add(parts.slice(0, i).join("/"));
+			}
+			tree.push({ path, size: content.length, type: "file" });
+		}
+
+		for (const dir of directories) {
+			tree.push({ path: dir, size: 0, type: "directory" });
+		}
+
+		tree.sort((a, b) => {
+			if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+			return a.path.localeCompare(b.path);
+		});
+
+		const response = {
+			deployment_id: deployment.id,
+			files: tree,
+			total_files: tree.filter((f) => f.type === "file").length,
+		};
+
+		// Cache for 1 hour
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), { expirationTtl: 3600 });
+
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to read source";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+api.get("/projects/:projectId/source/file", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const filePath = c.req.query("path");
+
+	if (!filePath) {
+		return c.json({ error: "invalid_request", message: "path query parameter is required" }, 400);
+	}
+
+	// Path traversal protection
+	if (filePath.includes("..") || filePath.includes("//")) {
+		return c.json({ error: "invalid_request", message: "Invalid path" }, 400);
+	}
+
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const deploymentService = new DeploymentService(c.env);
+	const deployment = await deploymentService.getLatestDeployment(projectId);
+
+	if (!deployment) {
+		return c.json({ error: "not_found", message: "No deployment found" }, 404);
+	}
+
+	if (!deployment.artifact_bucket_key) {
+		return c.json({ error: "not_found", message: "No source code available" }, 404);
+	}
+
+	const sourceKey = `${deployment.artifact_bucket_key}/source.zip`;
+	const sourceObj = await c.env.CODE_BUCKET.get(sourceKey);
+
+	if (!sourceObj) {
+		return c.json({ error: "not_found", message: "Source code not found in storage" }, 404);
+	}
+
+	try {
+		const zipData = await sourceObj.arrayBuffer();
+		const files = unzipSync(new Uint8Array(zipData));
+
+		// Normalize path
+		const normalizedPath = filePath.startsWith("/") ? filePath.slice(1) : filePath;
+
+		const fileContent = files[normalizedPath];
+		if (!fileContent) {
+			return c.json({ error: "not_found", message: `File not found: ${filePath}` }, 404);
+		}
+
+		const contentType = getMimeType(normalizedPath);
+		const isText =
+			contentType.startsWith("text/") ||
+			contentType === "application/json" ||
+			contentType === "application/javascript" ||
+			contentType === "application/xml";
+
+		if (isText) {
+			const text = new TextDecoder().decode(fileContent);
+			return new Response(text, {
+				headers: {
+					"Content-Type": `${contentType}; charset=utf-8`,
+					"X-Deployment-Id": deployment.id,
+				},
+			});
+		}
+
+		return new Response(fileContent, {
+			headers: {
+				"Content-Type": contentType,
+				"X-Deployment-Id": deployment.id,
+			},
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to read source";
+		return c.json({ error: "internal_error", message }, 500);
+	}
 });
 
 app.route("/v1", api);

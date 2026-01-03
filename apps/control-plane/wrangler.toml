@@ -23,6 +23,12 @@ bucket_name = "jack-code-internal"
 binding = "TENANT_DISPATCH"
 namespace = "jack-tenants"
 
+[[unsafe.bindings]]
+name = "FEEDBACK_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
+
 # Note: Run `wrangler d1 create jack-control-db` first
 # Then add the database_id here
 # Secrets:
