@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
 	checkWorkerExists,
@@ -6,64 +5,51 @@ import {
 	deleteWorker,
 	exportDatabase,
 } from "../lib/cloudflare-api.ts";
+import { fetchProjectResources } from "../lib/control-plane.ts";
 import { promptSelect } from "../lib/hooks.ts";
 import { managedDown } from "../lib/managed-down.ts";
 import { error, info, item, output, success, warn } from "../lib/output.ts";
 import { resolveProject } from "../lib/project-resolver.ts";
-import {
-	type Project,
-	getProject,
-	getProjectDatabaseName,
-	updateProject,
-	updateProjectDatabase,
-} from "../lib/registry.ts";
+import { type Project, getProject, updateProject } from "../lib/registry.ts";
+import { parseWranglerResources } from "../lib/resources.ts";
 import { deleteCloudProject, getProjectNameFromDir } from "../lib/storage/index.ts";
 
 /**
- * Get database name for a project, with fallback to wrangler config
+ * Resolve database name for a project.
+ * For managed projects: fetch from control plane.
+ * For BYO projects: parse from wrangler.jsonc in cwd.
  */
-async function resolveDbName(project: Project): Promise<string | null> {
-	// First check registry
-	const dbFromRegistry = getProjectDatabaseName(project);
-	if (dbFromRegistry) {
-		return dbFromRegistry;
-	}
-
-	// Fallback: read from wrangler config file
-	if (project.localPath && existsSync(project.localPath)) {
-		const jsoncPath = join(project.localPath, "wrangler.jsonc");
-		if (existsSync(jsoncPath)) {
-			try {
-				const content = await Bun.file(jsoncPath).text();
-				// Remove comments for JSON parsing
-				// Note: Only remove line comments at the start of a line to avoid breaking URLs
-				const jsonContent = content
-					.replace(/\/\*[\s\S]*?\*\//g, "") // block comments
-					.replace(/^\s*\/\/.*$/gm, ""); // line comments at start of line only
-				const config = JSON.parse(jsonContent);
-				if (config.d1_databases?.[0]?.database_name) {
-					return config.d1_databases[0].database_name;
-				}
-			} catch {
-				// Ignore parse errors
-			}
-		}
-
-		const tomlPath = join(project.localPath, "wrangler.toml");
-		if (existsSync(tomlPath)) {
-			try {
-				const content = await Bun.file(tomlPath).text();
-				const match = content.match(/database_name\s*=\s*"([^"]+)"/);
-				if (match?.[1]) {
-					return match[1];
-				}
-			} catch {
-				// Ignore read errors
-			}
+async function resolveDatabaseName(project: Project, projectName: string): Promise<string | null> {
+	// For managed projects, fetch from control plane
+	if (project.deploy_mode === "managed" && project.remote?.project_id) {
+		try {
+			const resources = await fetchProjectResources(project.remote.project_id);
+			const d1 = resources.find((r) => r.resource_type === "d1");
+			return d1?.resource_name || null;
+		} catch {
+			return null;
 		}
 	}
 
-	return null;
+	// For BYO, parse from wrangler config in cwd
+	try {
+		let cwdProjectName: string | null = null;
+		try {
+			cwdProjectName = await getProjectNameFromDir(process.cwd());
+		} catch {
+			cwdProjectName = null;
+		}
+
+		if (!cwdProjectName || cwdProjectName !== projectName) {
+			warn(`Run this command from the ${projectName} project directory to manage its database.`);
+			return null;
+		}
+
+		const resources = await parseWranglerResources(process.cwd());
+		return resources.d1?.name || null;
+	} catch {
+		return null;
+	}
 }
 
 export interface DownFlags {
@@ -110,12 +96,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		if (isManaged) {
 			// Build project object for managedDown if we only have resolved data
 			const managedProject: Project = project || {
-				localPath: resolved?.localPath || null,
 				workerUrl: resolved?.url || null,
 				createdAt: resolved?.createdAt || new Date().toISOString(),
 				lastDeployed: resolved?.updatedAt || null,
 				status: resolved?.status === "live" ? "live" : "build_failed",
-				resources: { services: { db: null } },
 				deploy_mode: "managed",
 				remote:
 					resolved?.remote && resolved.url
@@ -181,7 +165,7 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		if (project?.workerUrl) {
 			item(`URL: ${project.workerUrl}`);
 		}
-		const dbName = project ? await resolveDbName(project) : null;
+		const dbName = project ? await resolveDatabaseName(project, name) : null;
 		if (dbName) {
 			item(`Database: ${dbName}`);
 		}
@@ -270,9 +254,6 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 				await deleteDatabase(dbName);
 				output.stop();
 				success(`Database '${dbName}' deleted`);
-
-				// Update registry
-				await updateProjectDatabase(name, null);
 			} catch (err) {
 				output.stop();
 				warn(

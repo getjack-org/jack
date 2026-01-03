@@ -1,77 +1,80 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { fetchProjectResources } from "../lib/control-plane.ts";
 import { formatSize } from "../lib/format.ts";
 import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
-import {
-	type Project,
-	getProject,
-	getProjectDatabaseName,
-	updateProjectDatabase,
-} from "../lib/registry.ts";
+import { getProject } from "../lib/registry.ts";
+import { parseWranglerResources } from "../lib/resources.ts";
 import {
 	deleteDatabase,
 	exportDatabase,
 	generateExportFilename,
-	getDatabaseInfo,
+	getDatabaseInfo as getWranglerDatabaseInfo,
 } from "../lib/services/db.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 
 /**
- * Get database name from wrangler.jsonc/toml file
- * Fallback when registry doesn't have the info
+ * Database info from control plane or wrangler config
  */
-async function getDatabaseFromWranglerConfig(projectPath: string): Promise<string | null> {
-	// Try wrangler.jsonc first
-	const jsoncPath = join(projectPath, "wrangler.jsonc");
-	if (existsSync(jsoncPath)) {
-		try {
-			const content = await Bun.file(jsoncPath).text();
-			// Remove comments for JSON parsing
-			// Note: Only remove line comments at the start of a line to avoid breaking URLs
-			const jsonContent = content
-				.replace(/\/\*[\s\S]*?\*\//g, "") // block comments
-				.replace(/^\s*\/\/.*$/gm, ""); // line comments at start of line only
-			const config = JSON.parse(jsonContent);
-			if (config.d1_databases?.[0]?.database_name) {
-				return config.d1_databases[0].database_name;
-			}
-		} catch {
-			// Ignore parse errors
-		}
-	}
+interface ResolvedDatabaseInfo {
+	name: string;
+	id?: string;
+	source: "control-plane" | "wrangler";
+}
 
-	// Try wrangler.toml
-	const tomlPath = join(projectPath, "wrangler.toml");
-	if (existsSync(tomlPath)) {
-		try {
-			const content = await Bun.file(tomlPath).text();
-			// Simple regex to extract database_name from [[d1_databases]] section
-			const match = content.match(/database_name\s*=\s*"([^"]+)"/);
-			if (match?.[1]) {
-				return match[1];
-			}
-		} catch {
-			// Ignore read errors
+async function ensureLocalProjectContext(projectName: string): Promise<void> {
+	try {
+		const cwdProjectName = await getProjectNameFromDir(process.cwd());
+		if (cwdProjectName !== projectName) {
+			error(`Current directory is not the "${projectName}" project`);
+			info(`Run this command from the ${projectName} project directory`);
+			process.exit(1);
 		}
+	} catch {
+		error("Could not determine project from current directory");
+		info(`Run this command from the ${projectName} project directory`);
+		process.exit(1);
 	}
-
-	return null;
 }
 
 /**
- * Get database name for a project, with fallback to wrangler config
+ * Get database info for a project.
+ * For managed: fetch from control plane
+ * For BYO: parse from wrangler.jsonc
  */
-async function resolveDbName(project: Project): Promise<string | null> {
-	// First check registry
-	const dbFromRegistry = getProjectDatabaseName(project);
-	if (dbFromRegistry) {
-		return dbFromRegistry;
+async function resolveDatabaseInfo(projectName: string): Promise<ResolvedDatabaseInfo | null> {
+	const project = await getProject(projectName);
+
+	// For managed projects, fetch from control plane
+	if (project?.deploy_mode === "managed" && project.remote?.project_id) {
+		try {
+			const resources = await fetchProjectResources(project.remote.project_id);
+			const d1 = resources.find((r) => r.resource_type === "d1");
+			if (d1) {
+				return {
+					name: d1.resource_name,
+					id: d1.provider_id,
+					source: "control-plane",
+				};
+			}
+		} catch {
+			// Fall through to wrangler parsing
+		}
 	}
 
-	// Fallback: read from wrangler config file
-	if (project.localPath && existsSync(project.localPath)) {
-		return await getDatabaseFromWranglerConfig(project.localPath);
+	// For BYO or fallback, parse from wrangler config
+	try {
+		await ensureLocalProjectContext(projectName);
+		const resources = await parseWranglerResources(process.cwd());
+		if (resources.d1) {
+			return {
+				name: resources.d1.name,
+				id: resources.d1.id,
+				source: "wrangler",
+			};
+		}
+	} catch {
+		// No database found
 	}
 
 	return null;
@@ -150,29 +153,23 @@ async function resolveProjectName(options: ServiceOptions): Promise<string> {
  */
 async function dbInfo(options: ServiceOptions): Promise<void> {
 	const projectName = await resolveProjectName(options);
-	const project = await getProject(projectName);
+	const dbInfo = await resolveDatabaseInfo(projectName);
 
-	if (!project) {
-		error(`Project "${projectName}" not found in registry`);
-		info("List projects with: jack projects list");
-		process.exit(1);
-	}
-
-	const dbName = await resolveDbName(project);
-
-	if (!dbName) {
+	if (!dbInfo) {
 		console.error("");
-		info("No database configured for this project");
+		error("No database found for this project.");
+		info("For managed projects, create a database with: jack services db create");
+		info("For BYO projects, add d1_databases to your wrangler.jsonc");
 		console.error("");
 		return;
 	}
 
-	// Fetch database info
+	// Fetch detailed database info via wrangler
 	outputSpinner.start("Fetching database info...");
-	const dbInfo = await getDatabaseInfo(dbName);
+	const wranglerDbInfo = await getWranglerDatabaseInfo(dbInfo.name);
 	outputSpinner.stop();
 
-	if (!dbInfo) {
+	if (!wranglerDbInfo) {
 		console.error("");
 		error("Database not found");
 		info("It may have been deleted");
@@ -182,11 +179,14 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 
 	// Display info
 	console.error("");
-	success(`Database: ${dbInfo.name}`);
+	success(`Database: ${wranglerDbInfo.name}`);
 	console.error("");
-	item(`Size: ${formatSize(dbInfo.sizeBytes)}`);
-	item(`Tables: ${dbInfo.numTables}`);
-	item(`ID: ${dbInfo.id}`);
+	item(`Size: ${formatSize(wranglerDbInfo.sizeBytes)}`);
+	item(`Tables: ${wranglerDbInfo.numTables}`);
+	item(`ID: ${dbInfo.id || wranglerDbInfo.id}`);
+	if (dbInfo.source === "control-plane") {
+		item("Source: managed (jack cloud)");
+	}
 	console.error("");
 }
 
@@ -195,42 +195,27 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
  */
 async function dbExport(options: ServiceOptions): Promise<void> {
 	const projectName = await resolveProjectName(options);
-	const project = await getProject(projectName);
+	const dbInfo = await resolveDatabaseInfo(projectName);
 
-	if (!project) {
-		error(`Project "${projectName}" not found in registry`);
-		info("List projects with: jack projects list");
-		process.exit(1);
-	}
-
-	const dbName = await resolveDbName(project);
-
-	if (!dbName) {
+	if (!dbInfo) {
 		console.error("");
-		info("No database configured for this project");
+		error("No database found for this project.");
+		info("For managed projects, create a database with: jack services db create");
+		info("For BYO projects, add d1_databases to your wrangler.jsonc");
 		console.error("");
 		return;
 	}
 
 	// Generate filename
-	const filename = generateExportFilename(dbName);
+	const filename = generateExportFilename(dbInfo.name);
 
-	// Determine output directory (project dir if in it, cwd otherwise)
-	let outputDir = process.cwd();
-	if (project.localPath && existsSync(project.localPath)) {
-		// Check if we're in the project directory or subdirectory
-		const cwd = process.cwd();
-		if (cwd === project.localPath || cwd.startsWith(`${project.localPath}/`)) {
-			outputDir = project.localPath;
-		}
-	}
-
-	const outputPath = join(outputDir, filename);
+	// Export to current directory
+	const outputPath = join(process.cwd(), filename);
 
 	// Export
 	outputSpinner.start("Exporting database...");
 	try {
-		await exportDatabase(dbName, outputPath);
+		await exportDatabase(dbInfo.name, outputPath);
 		outputSpinner.stop();
 
 		console.error("");
@@ -249,41 +234,35 @@ async function dbExport(options: ServiceOptions): Promise<void> {
  */
 async function dbDelete(options: ServiceOptions): Promise<void> {
 	const projectName = await resolveProjectName(options);
-	const project = await getProject(projectName);
+	const dbInfo = await resolveDatabaseInfo(projectName);
 
-	if (!project) {
-		error(`Project "${projectName}" not found in registry`);
-		info("List projects with: jack projects list");
-		process.exit(1);
-	}
-
-	const dbName = await resolveDbName(project);
-
-	if (!dbName) {
+	if (!dbInfo) {
 		console.error("");
-		info("No database configured for this project");
+		error("No database found for this project.");
+		info("For managed projects, create a database with: jack services db create");
+		info("For BYO projects, add d1_databases to your wrangler.jsonc");
 		console.error("");
 		return;
 	}
 
-	// Get database info to show what will be deleted
+	// Get detailed database info to show what will be deleted
 	outputSpinner.start("Fetching database info...");
-	const dbInfo = await getDatabaseInfo(dbName);
+	const wranglerDbInfo = await getWranglerDatabaseInfo(dbInfo.name);
 	outputSpinner.stop();
 
 	// Show what will be deleted
 	console.error("");
-	info(`Database: ${dbName}`);
-	if (dbInfo) {
-		item(`Size: ${formatSize(dbInfo.sizeBytes)}`);
-		item(`Tables: ${dbInfo.numTables}`);
+	info(`Database: ${dbInfo.name}`);
+	if (wranglerDbInfo) {
+		item(`Size: ${formatSize(wranglerDbInfo.sizeBytes)}`);
+		item(`Tables: ${wranglerDbInfo.numTables}`);
 	}
 	console.error("");
 	warn("This will permanently delete the database and all its data");
 	console.error("");
 
 	// Confirm deletion
-	console.error(`  Delete database '${dbName}'?\n`);
+	console.error(`  Delete database '${dbInfo.name}'?\n`);
 	const choice = await promptSelect(["Yes", "No"]);
 
 	if (choice !== 0) {
@@ -294,11 +273,8 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 	// Delete database
 	outputSpinner.start("Deleting database...");
 	try {
-		await deleteDatabase(dbName);
+		await deleteDatabase(dbInfo.name);
 		outputSpinner.stop();
-
-		// Update registry (set db to null in services structure)
-		await updateProjectDatabase(projectName, null);
 
 		console.error("");
 		success("Database deleted");

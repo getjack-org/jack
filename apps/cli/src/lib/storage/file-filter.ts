@@ -43,6 +43,7 @@ export const DEFAULT_EXCLUDES: string[] = [
 	".env",
 	".env.*",
 	".dev.vars",
+	".secrets.json",
 	"*.log",
 	".DS_Store",
 	"dist/**",
