@@ -227,3 +227,32 @@ export async function findProjectBySlug(slug: string): Promise<ManagedProject | 
 	const data = (await response.json()) as { project: ManagedProject };
 	return data.project;
 }
+
+export interface ProjectResource {
+	id: string;
+	resource_type: string;
+	resource_name: string;
+	provider_id: string;
+	status: string;
+	created_at: string;
+}
+
+/**
+ * Fetch all resources for a managed project.
+ * Uses GET /v1/projects/:id/resources endpoint.
+ */
+export async function fetchProjectResources(projectId: string): Promise<ProjectResource[]> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/resources`);
+
+	if (!response.ok) {
+		if (response.status === 404) {
+			return [];
+		}
+		throw new Error(`Failed to fetch resources: ${response.status}`);
+	}
+
+	const data = (await response.json()) as { resources: ProjectResource[] };
+	return data.resources;
+}

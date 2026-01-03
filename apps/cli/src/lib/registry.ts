@@ -29,7 +29,6 @@ export interface ManagedRemote {
  * Project data stored in registry
  */
 export interface Project {
-	localPath: string | null;
 	workerUrl: string | null;
 	createdAt: string;
 	lastDeployed: string | null;
@@ -37,11 +36,6 @@ export interface Project {
 	cloudflare?: {
 		accountId: string;
 		workerId: string;
-	};
-	resources: {
-		services: {
-			db: string | null;
-		};
 	};
 	template?: TemplateOrigin;
 	deploy_mode?: DeployMode;
@@ -52,23 +46,67 @@ export interface Project {
  * Project registry structure
  */
 export interface Registry {
-	version: 1;
+	version: 2;
 	projects: Record<string, Project>;
 }
 
 export const REGISTRY_PATH = join(CONFIG_DIR, "projects.json");
 
 /**
+ * Migrate registry from v1 to v2
+ * - Removes localPath field (no longer tracked)
+ * - Removes resources.services.db field (fetch from control plane instead)
+ */
+async function migrateV1ToV2(v1Registry: {
+	version: 1;
+	projects: Record<string, unknown>;
+}): Promise<Registry> {
+	const migrated: Registry = {
+		version: 2,
+		projects: {},
+	};
+
+	for (const [name, project] of Object.entries(v1Registry.projects)) {
+		const p = project as Record<string, unknown>;
+		// Remove localPath and resources, keep everything else
+		const { localPath, resources, ...rest } = p;
+		migrated.projects[name] = rest as unknown as Project;
+	}
+
+	return migrated;
+}
+
+/**
  * Read project registry from disk
  */
 export async function readRegistry(): Promise<Registry> {
 	if (!existsSync(REGISTRY_PATH)) {
-		return { version: 1, projects: {} };
+		return { version: 2, projects: {} };
 	}
+
 	try {
-		return await Bun.file(REGISTRY_PATH).json();
+		const raw = await Bun.file(REGISTRY_PATH).json();
+
+		// Auto-migrate v1 to v2
+		if (raw.version === 1) {
+			const migrated = await migrateV1ToV2(raw);
+			await writeRegistry(migrated);
+			return migrated;
+		}
+
+		// Handle unversioned (legacy) registries
+		if (!raw.version) {
+			const migrated = await migrateV1ToV2({
+				version: 1,
+				projects: raw.projects || {},
+			});
+			await writeRegistry(migrated);
+			return migrated;
+		}
+
+		return raw as Registry;
 	} catch {
-		return { version: 1, projects: {} };
+		return { version: 2, projects: {} };
 	}
 }
 
@@ -140,30 +178,4 @@ export async function getProject(name: string): Promise<Project | null> {
 export async function getAllProjects(): Promise<Record<string, Project>> {
 	const registry = await readRegistry();
 	return registry.projects;
-}
-
-/**
- * Get database name for a project
- * @returns Database name or null if no database is configured
- */
-export function getProjectDatabaseName(project: Project): string | null {
-	return project.resources?.services?.db ?? null;
-}
-
-/**
- * Update the database for a project using the new services structure
- */
-export async function updateProjectDatabase(name: string, dbName: string | null): Promise<void> {
-	const project = await getProject(name);
-	if (!project) return;
-
-	await updateProject(name, {
-		resources: {
-			...project.resources,
-			services: {
-				...project.resources.services,
-				db: dbName,
-			},
-		},
-	});
 }

@@ -329,11 +329,13 @@ async function preferAgentCommand(args: string[]): Promise<void> {
  * Refresh agent context files from template
  */
 async function refreshAgentFilesCommand(options: AgentsOptions = {}): Promise<void> {
-	let projectDir = process.cwd();
+	const projectDir = process.cwd();
 	let projectName: string;
 	let project = null;
 
 	if (options.project) {
+		// When --project is specified, we still need to run from that project's directory
+		// since localPath is no longer stored in the registry
 		projectName = options.project;
 		project = await getProject(projectName);
 
@@ -343,16 +345,17 @@ async function refreshAgentFilesCommand(options: AgentsOptions = {}): Promise<vo
 			process.exit(1);
 		}
 
-		if (!project.localPath) {
-			error(`Project "${projectName}" has no workspace path`);
-			info("Run this command from a project directory instead");
-			process.exit(1);
-		}
-
-		projectDir = project.localPath;
-		if (!existsSync(projectDir)) {
-			error(`Workspace not found at ${projectDir}`);
-			info("Run this command from a project directory instead");
+		// Verify the current directory matches the project
+		try {
+			const cwdProjectName = await getProjectNameFromDir(projectDir);
+			if (cwdProjectName !== projectName) {
+				error(`Current directory is not the project "${projectName}"`);
+				info(`Run this command from the ${projectName} project directory`);
+				process.exit(1);
+			}
+		} catch {
+			error(`Current directory is not a valid project`);
+			info(`Run this command from the ${projectName} project directory`);
 			process.exit(1);
 		}
 	} else {
