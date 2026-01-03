@@ -160,8 +160,10 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 
 	// Determine assets directory if configured
 	let assetsDir: string | null = null;
-	if (config.assets?.directory) {
-		const assetsDirPath = join(projectPath, config.assets.directory);
+	if (config.assets) {
+		// Default to "dist" if assets binding exists but directory not specified (Vite convention)
+		const directory = config.assets.directory || "dist";
+		const assetsDirPath = join(projectPath, directory);
 		if (existsSync(assetsDirPath)) {
 			assetsDir = assetsDirPath;
 		}
