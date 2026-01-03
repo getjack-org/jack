@@ -38,6 +38,7 @@ export async function createManagedProjectRemote(
 		const runjackUrl = `https://${result.project.slug}.runjack.xyz`;
 
 		reporter?.stop();
+		reporter?.success("Created managed project");
 
 		// Track managed project creation
 		track(Events.MANAGED_PROJECT_CREATED, {});
@@ -98,6 +99,8 @@ export async function deployCodeToManagedProject(
 		// Step 3: Package artifacts
 		reporter?.start("Packaging artifacts...");
 		pkg = await packageForDeploy(projectPath, buildOutput, config);
+		reporter?.stop();
+		reporter?.success("Packaged artifacts");
 
 		// Step 4: Upload to control plane
 		reporter?.start("Uploading to jack cloud...");
