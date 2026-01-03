@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-jack is a CLI tool for vibecoders to rapidly deploy to Cloudflare Workers. Read `docs/SPIRIT.md` for the philosophy.
+jack is a CLI tool for vibecoders to rapidly deploy to Cloudflare Workers. Read `docs/internal/SPIRIT.md` for the philosophy.
 
 ## Key Directories
 
@@ -12,10 +12,10 @@ src/
 ├── commands/          # Command implementations
 └── lib/               # Shared utilities (config, telemetry, etc.)
 
-docs/
+docs/internal/
 ├── SPIRIT.md          # Philosophy and design principles
-├── PRD-*.md           # Product requirement documents
-└── telemetry-events.md # Event registry (when created)
+├── done/              # Completed PRDs
+└── future/            # Future feature ideas
 
 templates/             # Project templates (miniapp, api, etc.)
 ```

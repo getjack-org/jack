@@ -5,6 +5,7 @@ dist/
 
 # Test projects created during development
 tmp/
+api-managed/
 
 # Internal docs (PRDs, architecture notes)
 docs/internal/
