@@ -322,7 +322,10 @@ export class DeploymentService {
 
 		// Enable observability (Workers Logs) for the script
 		try {
-			await this.cfClient.enableScriptObservability(DISPATCH_NAMESPACE, workerResource.resource_name);
+			await this.cfClient.enableScriptObservability(
+				DISPATCH_NAMESPACE,
+				workerResource.resource_name,
+			);
 		} catch {
 			// Non-fatal: observability is nice-to-have, don't fail deployment
 		}
@@ -349,6 +352,20 @@ export class DeploymentService {
 			.all<Deployment>();
 
 		return result.results || [];
+	}
+
+	/**
+	 * Get the latest live deployment for a project
+	 */
+	async getLatestDeployment(projectId: string): Promise<Deployment | null> {
+		const deployment = await this.db
+			.prepare(
+				"SELECT * FROM deployments WHERE project_id = ? AND status = 'live' ORDER BY created_at DESC LIMIT 1",
+			)
+			.bind(projectId)
+			.first<Deployment>();
+
+		return deployment || null;
 	}
 
 	/**

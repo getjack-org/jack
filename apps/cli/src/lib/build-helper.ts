@@ -88,18 +88,9 @@ export async function needsViteBuild(projectPath: string): Promise<boolean> {
  * @throws JackError if build fails
  */
 export async function runViteBuild(projectPath: string): Promise<void> {
-	// Try `bun run build` first (respects package.json scripts)
-	const packageJsonPath = join(projectPath, "package.json");
-	let buildCommand = "bunx vite build";
-
-	if (existsSync(packageJsonPath)) {
-		const packageJson = JSON.parse(await readFile(packageJsonPath, "utf-8"));
-		if (packageJson.scripts?.build) {
-			buildCommand = "bun run build";
-		}
-	}
-
-	const buildResult = await $`${buildCommand.split(" ")}`.cwd(projectPath).nothrow().quiet();
+	// Jack controls the build for managed projects (omakase)
+	// Users wanting tsc can run `bun run build` manually before shipping
+	const buildResult = await $`bunx vite build`.cwd(projectPath).nothrow().quiet();
 
 	if (buildResult.exitCode !== 0) {
 		throw new JackError(
