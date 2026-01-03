@@ -79,7 +79,11 @@ export async function deployCodeToManagedProject(
 	try {
 		const config = await parseWranglerConfig(projectPath);
 
-		// Validate bindings are supported
+		// Step 1: Build the project (must happen before validation, as build creates dist/)
+		reporter?.start("Building project...");
+		const buildOutput = await buildProject({ projectPath, reporter });
+
+		// Step 2: Validate bindings are supported (after build, so assets dir exists)
 		const validation = validateBindings(config, projectPath);
 		if (!validation.valid) {
 			throw new JackError(
@@ -91,15 +95,11 @@ export async function deployCodeToManagedProject(
 			);
 		}
 
-		// Step 1: Build the project
-		reporter?.start("Building project...");
-		const buildOutput = await buildProject({ projectPath, reporter });
-
-		// Step 2: Package artifacts
+		// Step 3: Package artifacts
 		reporter?.start("Packaging artifacts...");
 		pkg = await packageForDeploy(projectPath, buildOutput, config);
 
-		// Step 3: Upload to control plane
+		// Step 4: Upload to control plane
 		reporter?.start("Uploading to jack cloud...");
 		const result = await uploadDeployment({
 			projectId,
