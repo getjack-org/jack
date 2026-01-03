@@ -249,7 +249,12 @@ export async function createProject(
 		throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
 	}
 
+	// Close the "Starting..." spinner from new.ts
+	reporter.stop();
+	reporter.success("Initialized");
+
 	// Generate or use provided name
+	const nameWasProvided = name !== undefined;
 	const projectName = name ?? generateProjectName();
 	const targetDir = resolve(projectName);
 
@@ -258,10 +263,16 @@ export async function createProject(
 		throw new JackError(JackErrorCode.VALIDATION_ERROR, `Directory ${projectName} already exists`);
 	}
 
-	// Early slug availability check for managed mode
-	if (deployMode === "managed") {
+	// Early slug availability check for managed mode (only if user provided explicit name)
+	// Skip for auto-generated names - collision is rare, control plane will catch it anyway
+	if (deployMode === "managed" && nameWasProvided) {
+		reporter.start("Checking name availability...");
 		const { checkAvailability } = await import("./project-resolver.ts");
 		const { available, existingProject } = await checkAvailability(projectName);
+		reporter.stop();
+		if (available) {
+			reporter.success("Name available");
+		}
 
 		if (!available && existingProject) {
 			// Project exists remotely but not locally - offer to link
