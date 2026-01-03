@@ -37,9 +37,11 @@ const cli = meow(
 
   Advanced
     agents              Manage AI agent configs
+    secrets             Manage project secrets
     services            Manage databases
     mcp                 MCP server for AI agents
     telemetry           Usage data settings
+    feedback            Share feedback or report issues
 
   Run 'jack <command> --help' for command-specific options.
 
@@ -252,6 +254,13 @@ try {
 			});
 			break;
 		}
+		case "secrets": {
+			const { default: secrets } = await import("./commands/secrets.ts");
+			await withTelemetry("secrets", secrets)(args[0], args.slice(1), {
+				project: cli.flags.project,
+			});
+			break;
+		}
 		case "mcp": {
 			const { default: mcp } = await import("./commands/mcp.ts");
 			// Note: Don't use withTelemetry wrapper for MCP serve - it runs indefinitely
@@ -285,6 +294,11 @@ try {
 		case "whoami": {
 			const { default: whoami } = await import("./commands/whoami.ts");
 			await withTelemetry("whoami", whoami)();
+			break;
+		}
+		case "feedback": {
+			const { default: feedback } = await import("./commands/feedback.ts");
+			await withTelemetry("feedback", feedback)();
 			break;
 		}
 		default:

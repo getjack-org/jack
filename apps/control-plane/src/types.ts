@@ -7,6 +7,9 @@ export type Bindings = {
 	PROJECTS_CACHE: KVNamespace;
 	CODE_BUCKET: R2Bucket;
 	TENANT_DISPATCH: DispatchNamespace;
+	FEEDBACK_LIMITER: {
+		limit: (options: { key: string }) => Promise<{ success: boolean }>;
+	};
 };
 
 // Project status enum
