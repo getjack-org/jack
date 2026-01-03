@@ -3,6 +3,7 @@ import {
 	type AssetManifest,
 	CloudflareClient,
 	type DispatchScriptBinding,
+	type WorkerModule,
 	createAssetManifest,
 	getMimeType,
 } from "./cloudflare-api";
@@ -599,8 +600,12 @@ export class DeploymentService {
 		// Resolve bindings from manifest intent (uses manifest bindings, not legacy getBindingsForProject)
 		const bindings = await this.resolveBindingsFromManifest(projectId, manifest.bindings);
 
-		// Extract the main module from the ZIP
-		const workerCode = await this.extractMainModule(bundleZip, manifest.entrypoint);
+		// Extract all modules from the ZIP (main module and additional modules like WASM)
+		const { mainModule, additionalModules } = await this.extractAllModules(
+			bundleZip,
+			manifest.entrypoint,
+		);
+		const workerCode = new TextDecoder().decode(mainModule.content);
 
 		// Deploy with or without assets
 		if (hasAssetsZip && hasAssetsBinding) {
@@ -612,6 +617,8 @@ export class DeploymentService {
 				manifest,
 				assetsZip,
 				precomputedAssetManifest,
+				mainModule.name,
+				additionalModules,
 			);
 		} else {
 			// Standard deployment without assets
@@ -623,6 +630,8 @@ export class DeploymentService {
 				{
 					compatibilityDate: manifest.compatibility_date,
 					compatibilityFlags: manifest.compatibility_flags,
+					mainModule: mainModule.name,
+					additionalModules: additionalModules,
 				},
 			);
 
@@ -641,6 +650,8 @@ export class DeploymentService {
 	/**
 	 * Deploy worker with assets using Workers Assets API
 	 * @param precomputedManifest - Optional pre-computed asset manifest from CLI (saves CPU)
+	 * @param mainModuleName - Name of the main module file
+	 * @param additionalModules - Additional modules (WASM, etc.) to include in the upload
 	 */
 	private async deployWithAssets(
 		workerName: string,
@@ -649,6 +660,8 @@ export class DeploymentService {
 		manifest: ManifestData,
 		assetsZip: ArrayBuffer,
 		precomputedManifest?: AssetManifest,
+		mainModuleName?: string,
+		additionalModules?: WorkerModule[],
 	): Promise<void> {
 		// 1. Unzip assets
 		const files = unzipSync(new Uint8Array(assetsZip));
@@ -730,6 +743,8 @@ export class DeploymentService {
 			{
 				compatibilityDate: manifest.compatibility_date,
 				compatibilityFlags: manifest.compatibility_flags,
+				mainModule: mainModuleName,
+				additionalModules: additionalModules,
 				assetConfig: {
 					html_handling: manifest.bindings?.assets?.html_handling || "auto-trailing-slash",
 					not_found_handling:
@@ -747,25 +762,67 @@ export class DeploymentService {
 	}
 
 	/**
-	 * Extract main module from bundle ZIP
+	 * Get MIME type for a module based on file extension
 	 */
-	private async extractMainModule(bundleZip: ArrayBuffer, entrypoint: string): Promise<string> {
+	private getModuleMimeType(filename: string): string {
+		const ext = filename.split(".").pop()?.toLowerCase();
+		switch (ext) {
+			case "js":
+			case "mjs":
+				return "application/javascript+module";
+			case "wasm":
+				return "application/wasm";
+			default:
+				return "application/octet-stream";
+		}
+	}
+
+	/**
+	 * Extract all modules from bundle ZIP
+	 */
+	private async extractAllModules(
+		bundleZip: ArrayBuffer,
+		entrypoint: string,
+	): Promise<{ mainModule: WorkerModule; additionalModules: WorkerModule[] }> {
 		const files = unzipSync(new Uint8Array(bundleZip));
 
-		// Find the entrypoint file
-		const entrypointData = files[entrypoint];
+		let entrypointName = entrypoint;
+		let entrypointData = files[entrypoint];
+
 		if (!entrypointData) {
-			// Try common variations
 			const variations = [entrypoint, `${entrypoint}.js`, "worker.js", "index.js"];
 			for (const name of variations) {
 				if (files[name]) {
-					return new TextDecoder().decode(files[name]);
+					entrypointName = name;
+					entrypointData = files[name];
+					break;
 				}
 			}
+		}
+
+		if (!entrypointData) {
 			throw new Error(`Entrypoint ${entrypoint} not found in bundle`);
 		}
 
-		return new TextDecoder().decode(entrypointData);
+		const mainModule: WorkerModule = {
+			name: entrypointName,
+			content: entrypointData,
+			mimeType: this.getModuleMimeType(entrypointName),
+		};
+
+		const additionalModules: WorkerModule[] = [];
+		for (const [filename, content] of Object.entries(files)) {
+			if (filename === entrypointName || content.length === 0) {
+				continue;
+			}
+			additionalModules.push({
+				name: filename,
+				content: content,
+				mimeType: this.getModuleMimeType(filename),
+			});
+		}
+
+		return { mainModule, additionalModules };
 	}
 
 	/**

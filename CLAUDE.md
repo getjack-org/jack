@@ -99,6 +99,10 @@ wrangler secret put WORKOS_API_KEY --cwd apps/auth-worker
 **GitHub Secrets Required:**
 - `CLOUDFLARE_API_TOKEN` - For deploying workers (Edit Workers + D1 permissions)
 
+## Control Plane Deployment
+
+When uploading Workers to Cloudflare's dispatch namespace, upload ALL files from the wrangler build output (JS + WASM + any modules) via FormData. When debugging API issues, check docs for fields implying unused capabilities - `main_module` existing in Cloudflare's metadata schema revealed multi-file upload support we weren't using.
+
 ## Code Style
 
 - TypeScript with Bun runtime

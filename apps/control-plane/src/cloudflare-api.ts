@@ -238,6 +238,18 @@ export interface AssetConfig {
 	not_found_handling?: "single-page-application" | "404-page" | "none";
 }
 
+/**
+ * Worker module for uploading additional files (WASM, text, data, etc.)
+ */
+export interface WorkerModule {
+	/** Module name (e.g., "parser.wasm", "config.json") */
+	name: string;
+	/** Module content as binary data */
+	content: Uint8Array;
+	/** MIME type (e.g., "application/wasm", "application/json") */
+	mimeType: string;
+}
+
 // Supported binding types for dispatch scripts
 export type DispatchBindingType =
 	| "d1"
@@ -379,6 +391,7 @@ export class CloudflareClient {
 			compatibilityDate?: string;
 			compatibilityFlags?: string[];
 			mainModule?: string;
+			additionalModules?: WorkerModule[];
 		},
 	): Promise<void> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}`;
@@ -387,8 +400,9 @@ export class CloudflareClient {
 		const formData = new FormData();
 
 		// Add metadata with bindings
+		const mainModuleName = options?.mainModule ?? "worker.js";
 		const metadata: Record<string, unknown> = {
-			main_module: options?.mainModule ?? "worker.js",
+			main_module: mainModuleName,
 			bindings,
 		};
 		if (options?.compatibilityDate) {
@@ -399,9 +413,17 @@ export class CloudflareClient {
 		}
 		formData.append("metadata", JSON.stringify(metadata));
 
-		// Add worker script as a file part
+		// Add main worker script
 		const scriptBlob = new Blob([scriptContent], { type: "application/javascript+module" });
-		formData.append("worker.js", scriptBlob, "worker.js");
+		formData.append(mainModuleName, scriptBlob, mainModuleName);
+
+		// Add additional modules (WASM, etc.)
+		if (options?.additionalModules) {
+			for (const module of options.additionalModules) {
+				const blob = new Blob([module.content], { type: module.mimeType });
+				formData.append(module.name, blob, module.name);
+			}
+		}
 
 		const fetchOptions: RequestInit = {
 			method: "PUT",
@@ -975,6 +997,7 @@ export class CloudflareClient {
 			compatibilityFlags?: string[];
 			mainModule?: string;
 			assetConfig?: AssetConfig;
+			additionalModules?: WorkerModule[];
 		},
 	): Promise<void> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}`;
@@ -1000,8 +1023,9 @@ export class CloudflareClient {
 		];
 
 		// Build metadata with assets configuration
+		const mainModuleName = options?.mainModule ?? "worker.js";
 		const metadata: Record<string, unknown> = {
-			main_module: options?.mainModule ?? "worker.js",
+			main_module: mainModuleName,
 			bindings: allBindings,
 			assets: assetsConfig,
 		};
@@ -1015,9 +1039,17 @@ export class CloudflareClient {
 
 		formData.append("metadata", JSON.stringify(metadata));
 
-		// Add worker script as a file part
+		// Add main worker script
 		const scriptBlob = new Blob([scriptContent], { type: "application/javascript+module" });
-		formData.append("worker.js", scriptBlob, "worker.js");
+		formData.append(mainModuleName, scriptBlob, mainModuleName);
+
+		// Add additional modules (WASM, etc.)
+		if (options?.additionalModules) {
+			for (const module of options.additionalModules) {
+				const blob = new Blob([module.content], { type: module.mimeType });
+				formData.append(module.name, blob, module.name);
+			}
+		}
 
 		const fetchOptions: RequestInit = {
 			method: "PUT",
