@@ -16,6 +16,7 @@ import {
 } from "../templates/index.ts";
 import type { Template } from "../templates/types.ts";
 import { generateAgentFiles } from "./agent-files.ts";
+import { needsViteBuild, runViteBuild } from "./build-helper.ts";
 import {
 	getActiveAgents,
 	getAgentDefinition,
@@ -664,26 +665,6 @@ export async function createProject(
 		}
 	}
 
-	// For Vite projects, build first (needed for both modes)
-	const hasVite = existsSync(join(targetDir, "vite.config.ts"));
-	if (hasVite) {
-		reporter.start("Building...");
-
-		const buildResult = await $`npx vite build`.cwd(targetDir).nothrow().quiet();
-		if (buildResult.exitCode !== 0) {
-			reporter.stop();
-			reporter.error("Build failed");
-			throw new JackError(JackErrorCode.BUILD_FAILED, "Build failed", undefined, {
-				exitCode: 0,
-				stderr: buildResult.stderr.toString(),
-				reported: hasReporter,
-			});
-		}
-
-		reporter.stop();
-		reporter.success("Built");
-	}
-
 	let workerUrl: string | null = null;
 
 	// Deploy based on mode
@@ -749,6 +730,21 @@ export async function createProject(
 		}
 	} else {
 		// BYO mode: deploy via wrangler
+
+		// Build first if needed (wrangler needs dist/ for assets)
+		if (await needsViteBuild(targetDir)) {
+			reporter.start("Building...");
+			try {
+				await runViteBuild(targetDir);
+				reporter.stop();
+				reporter.success("Built");
+			} catch (err) {
+				reporter.stop();
+				reporter.error("Build failed");
+				throw err;
+			}
+		}
+
 		reporter.start("Deploying...");
 
 		const deployResult = await $`wrangler deploy`.cwd(targetDir).nothrow().quiet();
@@ -920,27 +916,6 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
 	}
 
-	// For Vite projects, build first
-	const isViteProject =
-		existsSync(join(projectPath, "vite.config.ts")) ||
-		existsSync(join(projectPath, "vite.config.js")) ||
-		existsSync(join(projectPath, "vite.config.mjs"));
-
-	if (isViteProject) {
-		const buildSpin = reporter.spinner("Building...");
-		const buildResult = await $`npx vite build`.cwd(projectPath).nothrow().quiet();
-
-		if (buildResult.exitCode !== 0) {
-			buildSpin.error("Build failed");
-			throw new JackError(JackErrorCode.BUILD_FAILED, "Build failed", undefined, {
-				exitCode: buildResult.exitCode ?? 1,
-				stderr: buildResult.stderr.toString(),
-				reported: hasReporter,
-			});
-		}
-		buildSpin.success("Built");
-	}
-
 	let workerUrl: string | null = null;
 	let deployOutput: string | undefined;
 
@@ -966,6 +941,19 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 	} else {
 		// BYO mode: deploy via wrangler
+
+		// Build first if needed (wrangler needs dist/ for assets)
+		if (await needsViteBuild(projectPath)) {
+			const buildSpin = reporter.spinner("Building...");
+			try {
+				await runViteBuild(projectPath);
+				buildSpin.success("Built");
+			} catch (err) {
+				buildSpin.error("Build failed");
+				throw err;
+			}
+		}
+
 		const spin = reporter.spinner("Deploying...");
 		const result = await $`wrangler deploy`.cwd(projectPath).nothrow().quiet();
 
