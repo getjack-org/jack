@@ -20,7 +20,6 @@
 	"references": [
 		{ "path": "./apps/cli" },
 		{ "path": "./apps/auth-worker" },
-		{ "path": "./apps/api-worker" },
 		{ "path": "./apps/control-plane" },
 		{ "path": "./apps/dispatch-worker" },
 		{ "path": "./packages/auth" }

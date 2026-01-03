@@ -7,11 +7,11 @@ jack/
 ├── apps/
 │   ├── cli/              # @getjack/jack CLI (npm published)
 │   ├── auth-worker/      # Authentication service (Cloudflare Worker)
-│   └── api-worker/       # API service with D1 (Cloudflare Worker)
+│   ├── control-plane/    # Control plane API (Cloudflare Worker)
+│   └── dispatch-worker/  # Dispatch worker (Cloudflare Worker)
 ├── packages/
 │   └── auth/             # Shared JWT verification middleware
 ├── docs/                 # Documentation site (vocs)
-├── migrations/           # D1 database migrations
 ├── vocs.config.tsx       # Docs configuration
 └── package.json          # Workspace root
 ```
@@ -20,7 +20,8 @@ jack/
 
 - **apps/cli**: The `jack` CLI tool (`@getjack/jack`) - see `apps/cli/CLAUDE.md` for detailed context
 - **apps/auth-worker**: WorkOS device auth proxy at `auth.getjack.org`
-- **apps/api-worker**: User API with D1 database at `api.getjack.org`
+- **apps/control-plane**: Control plane API at `control.getjack.org`
+- **apps/dispatch-worker**: Dispatch worker for tenant Workers
 - **packages/auth**: Shared `@getjack/auth` package for JWT middleware
 
 ## Commands
@@ -29,14 +30,16 @@ jack/
 # Development
 bun run dev:cli           # Run CLI locally
 bun run dev:auth          # Run auth worker locally
-bun run dev:api           # Run API worker locally
+bun run dev:control       # Run control plane locally
+bun run dev:dispatch      # Run dispatch worker locally
 
 # Or run directly
 ./apps/cli/src/index.ts --help
 
 # Deployment
 bun run deploy:auth       # Deploy auth worker
-bun run deploy:api        # Deploy API worker
+bun run deploy:control    # Deploy control plane
+bun run deploy:dispatch   # Deploy dispatch worker
 
 # Linting
 bun run lint              # Check all packages
@@ -77,19 +80,6 @@ app.get("/api/me", (c) => {
   const auth = c.get("auth"); // { userId, email, firstName, lastName }
   return c.json({ user: auth });
 });
-```
-
-## API Worker D1 Setup
-
-Before deploying api-worker:
-```bash
-# Create the D1 database
-wrangler d1 create jack-api-db
-
-# Update apps/api-worker/wrangler.toml with the database_id
-
-# Apply migrations
-bun run --cwd apps/api-worker db:migrate
 ```
 
 ## Auth Worker Secrets
