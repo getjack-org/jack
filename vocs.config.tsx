@@ -50,13 +50,19 @@ export default defineConfig({
 				{ text: "new", link: "/commands/new" },
 				{ text: "ship", link: "/commands/ship" },
 				{ text: "ls", link: "/commands/ls" },
+				{ text: "projects", link: "/commands/projects" },
 				{ text: "open", link: "/commands/open" },
 				{ text: "services", link: "/commands/services" },
+				{ text: "secrets", link: "/commands/secrets" },
+				{ text: "feedback", link: "/commands/feedback" },
 			],
 		},
 		{
 			text: "Guides",
-			items: [{ text: "Using with AI Agents", link: "/guides/ai-agents" }],
+			items: [
+				{ text: "Using with AI Agents", link: "/guides/ai-agents" },
+				{ text: "Troubleshooting", link: "/guides/troubleshooting" },
+			],
 		},
 	],
 	socials: [
