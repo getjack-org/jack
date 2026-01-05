@@ -220,9 +220,9 @@ When a cast includes a URL, Farcaster scrapes it for `fc:miniapp` meta tags to r
 To serve both static assets AND dynamic routes (like `/share` with meta tags):
 
 ```jsonc
-// wrangler.jsonc
+// wrangler.jsonc (miniapp template)
 "assets": {
-  "directory": "./dist",
+  "directory": "dist/client",  // Cloudflare Vite plugin outputs client assets here
   "binding": "ASSETS",
   "not_found_handling": "single-page-application",
   "run_worker_first": true  // CRITICAL - without this, assets bypass the worker!
