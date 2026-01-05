@@ -354,7 +354,10 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 		try {
 			const managedProjects = await listManagedProjects();
 
-			for (const managed of managedProjects) {
+			// Filter out deleted projects - they're orphaned control plane records
+			const activeProjects = managedProjects.filter((p) => p.status !== "deleted");
+
+			for (const managed of activeProjects) {
 				const existing = projectMap.get(managed.slug);
 
 				if (existing) {
