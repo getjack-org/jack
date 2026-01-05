@@ -1,6 +1,6 @@
 # jack ls
 
-List all your jack projects.
+List all your jack projects. This is an alias for `jack projects list`.
 
 ## Usage
 
@@ -10,22 +10,31 @@ jack ls
 
 ## Output
 
-Shows a table of all projects with:
+Shows projects grouped by directory:
 
-| Column | Description |
-|--------|-------------|
-| Name | Project name |
-| Status | Deployed / Not deployed |
-| URL | Live URL (if deployed) |
-| Path | Local project path |
-
-## Examples
-
-```bash
-$ jack ls
-
-  Name          Status      URL                              Path
-  my-app        deployed    https://my-app.workers.dev       ~/projects/my-app
-  test-api      deployed    https://test-api.workers.dev     ~/projects/test-api
-  wip-project   local       -                                ~/projects/wip
 ```
+  ~/dev/apps/
+  ├── my-app      [live] https://my-app.hellno.workers.dev
+  └── test-api    [local only]
+
+  ~/projects/
+  └── wip-project [live] https://wip.hellno.workers.dev
+
+  On jack cloud (no local files)
+  └── old-project [live] https://old.hellno.workers.dev
+
+ℹ 3 projects (2 live, 1 local-only)
+```
+
+## Status Indicators
+
+| Status | Meaning |
+|--------|---------|
+| `[live]` | Deployed and accessible |
+| `[local only]` | Exists locally but not deployed |
+| `[error]` | Deployment failed |
+| `[syncing]` | Currently deploying |
+
+## See Also
+
+- [`jack projects`](/commands/projects) — Full project management (info, remove, scan)

@@ -1,0 +1,58 @@
+# jack feedback
+
+Submit feedback, report bugs, or suggest features.
+
+## Usage
+
+```bash
+jack feedback
+```
+
+No login required. Works from anywhere.
+
+## How It Works
+
+1. Run the command
+2. Type your feedback (multi-line supported)
+3. Press Enter on an empty line to submit
+4. Press Escape to cancel
+
+```bash
+jack feedback
+# ℹ Share feedback, report a bug, or suggest a feature.
+# ℹ Press Enter on an empty line to submit. Escape to cancel.
+#
+# > The deployment was super fast but I'd love to see logs in the CLI
+# > Also, maybe add a way to rollback?
+# >
+# ⏳ Sending feedback...
+# ✓ Done! Thanks for your feedback.
+```
+
+## What Gets Sent
+
+The feedback includes some metadata to help us understand context:
+
+| Data | When Included |
+|------|---------------|
+| Your message | Always |
+| jack version | Always |
+| Operating system | Always |
+| Project name | Only if telemetry enabled |
+| Deploy mode | Only if telemetry enabled |
+| Email | Only if logged in and telemetry enabled |
+
+## Privacy
+
+Your privacy is respected:
+
+- **No telemetry?** Project info and email are not included
+- **`DO_NOT_TRACK=1`** Disables metadata collection
+- **`JACK_TELEMETRY_DISABLED=1`** Same effect
+- **CI environments** Metadata is automatically minimal
+
+## Notes
+
+- Requires an interactive terminal (won't work in CI)
+- For bugs in CI environments, open an issue at [github.com/getjack-org/jack](https://github.com/getjack-org/jack)
+- We read every piece of feedback

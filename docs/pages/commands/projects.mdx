@@ -1,0 +1,151 @@
+# jack projects
+
+Manage and discover your jack projects.
+
+## Usage
+
+```bash
+jack projects [command]
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all projects (default) |
+| `info <name>` | Show detailed project info |
+| `remove <name>` | Remove a project from tracking |
+| `cleanup` | Find and remove stale entries |
+| `scan <dir>` | Discover projects in a directory |
+
+## jack projects list
+
+Lists all your projects, grouped by location. Same as `jack ls`.
+
+```bash
+jack projects list
+# or simply
+jack ls
+```
+
+**Output:**
+
+```
+  ~/dev/apps/
+  ├── my-app      [live] https://my-app.hellno.workers.dev
+  └── test-api    [local only]
+
+  ~/projects/
+  └── wip-project [live] https://wip.hellno.workers.dev
+
+  On jack cloud (no local files)
+  └── old-project [live] https://old.hellno.workers.dev
+
+ℹ 3 projects (2 live, 1 local-only)
+```
+
+## jack projects info
+
+Show detailed information about a project.
+
+```bash
+jack projects info my-app
+```
+
+**Output:**
+
+```
+ℹ Project: my-app
+
+  Status: local, deployed, backup
+
+  Workspace path: ~/dev/apps/my-app
+
+  Worker URL: https://my-app.hellno.workers.dev
+  Last deployed: 1/2/2025, 3:45:00 PM
+
+  Backup: 12 files
+  Last synced: 1/2/2025, 3:46:00 PM
+
+  Account ID: abc123...
+  Worker ID: xyz789...
+
+  Database: my-app-db
+
+  Created: 12/15/2024, 10:00:00 AM
+```
+
+Run from a project directory to auto-detect the name:
+
+```bash
+cd my-app
+jack projects info
+```
+
+## jack projects remove
+
+Remove a project from jack's tracking. This does **not** undeploy the worker.
+
+```bash
+jack projects remove my-app
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--yes` | Skip confirmation prompt |
+
+**What gets removed:**
+- Entry from local registry
+- Entry from jack cloud (if using managed mode)
+
+**What stays intact:**
+- The deployed worker (use `jack down` to undeploy)
+- Cloud backups
+- Databases
+
+## jack projects cleanup
+
+Find and remove stale registry entries—projects that have URLs but no deployed worker.
+
+```bash
+jack projects cleanup
+```
+
+Useful for cleaning up after manual deletions or failed deployments.
+
+## jack projects scan
+
+Discover jack projects in a directory and register them locally.
+
+```bash
+jack projects scan ~/dev
+```
+
+This is helpful when:
+- You've cloned projects that jack doesn't know about
+- Projects show as "cloud only" even though local files exist
+- You want to import existing Cloudflare Workers projects
+
+**What it looks for:**
+- Directories with `wrangler.toml` or `wrangler.jsonc`
+
+**Example:**
+
+```bash
+jack projects scan ~/dev
+# ⏳ Scanning ~/dev for jack projects...
+#
+# ℹ Found 3 project(s):
+#   ├── my-app       ~/dev/my-app
+#   ├── test-api     ~/dev/test-api
+#   └── old-worker   ~/dev/legacy/old-worker
+#
+# ✓ Registered 3 local path(s)
+```
+
+## Aliases
+
+- `jack ls` → `jack projects list`
+- `jack info` → `jack projects info`
