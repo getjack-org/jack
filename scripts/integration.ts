@@ -373,7 +373,9 @@ const steps: Step[] = [
 		name: `Create + deploy (${projectName}, template=${template})`,
 		run: async () => {
 			await mkdir(workRoot, { recursive: true });
-			await runJack(["new", projectName, "--template", template], { cwd: workRoot });
+			await runJack(["new", projectName, "--template", template], {
+				cwd: workRoot,
+			});
 			state.projectCreated = true;
 			state.projectDeployed = true;
 		},

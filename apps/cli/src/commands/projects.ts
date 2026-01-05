@@ -33,10 +33,21 @@ export default async function projects(subcommand?: string, args: string[] = [])
 			return await cleanupProjects();
 		case "scan":
 			return await scanProjects(args);
-		default:
+		case "down":
+			return await handleDown(args);
+		default: {
+			// Commands that are valid top-level commands users might try under projects
+			const topLevelCommands = ["open", "logs", "clone", "sync"];
+			const isTopLevel = topLevelCommands.includes(subcommand);
+
 			error(`Unknown subcommand: ${subcommand}`);
-			info("Available: list, info, remove, cleanup, scan");
+			if (isTopLevel) {
+				const projectArg = args[0] ? ` ${args[0]}` : "";
+				info(`Did you mean: jack ${subcommand}${projectArg}`);
+			}
+			info("Available: list, info, remove, cleanup, scan, down");
 			process.exit(1);
+		}
 	}
 }
 
@@ -469,4 +480,14 @@ async function scanProjects(args: string[]): Promise<void> {
 
 	console.error("");
 	success(`Registered ${discovered.length} local path(s)`);
+}
+
+/**
+ * Handle down subcommand - routes to top-level down command
+ */
+async function handleDown(args: string[]): Promise<void> {
+	const { default: down } = await import("./down.ts");
+	const projectName = args.find((arg) => !arg.startsWith("--"));
+	const force = args.includes("--force");
+	return await down(projectName, { force });
 }
