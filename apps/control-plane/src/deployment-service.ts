@@ -866,4 +866,101 @@ export class DeploymentService {
 			secrets,
 		);
 	}
+
+	/**
+	 * Deploy a project from a pre-built template stored in R2
+	 * Templates are stored at: bundles/jack/{templateId}-v{cliVersion}/
+	 */
+	async deployFromPrebuiltTemplate(
+		projectId: string,
+		scriptName: string,
+		templateId: string,
+		cliVersion: string,
+	): Promise<{ deploymentId: string }> {
+		const r2Prefix = `bundles/jack/${templateId}-v${cliVersion}`;
+
+		// Fetch bundle.zip, assets.zip (optional), manifest.json, and asset-manifest.json from R2
+		const [bundleObj, assetsObj, manifestObj, assetManifestObj] = await Promise.all([
+			this.codeBucket.get(`${r2Prefix}/bundle.zip`),
+			this.codeBucket.get(`${r2Prefix}/assets.zip`),
+			this.codeBucket.get(`${r2Prefix}/manifest.json`),
+			this.codeBucket.get(`${r2Prefix}/asset-manifest.json`),
+		]);
+
+		// Validate required files exist
+		if (!bundleObj || !manifestObj) {
+			throw new Error(`Pre-built template not found: ${templateId}-v${cliVersion}`);
+		}
+
+		// Parse manifest
+		const manifestText = await manifestObj.text();
+		const manifest = JSON.parse(manifestText) as ManifestData;
+
+		// Validate manifest
+		const validation = validateManifest(manifest);
+		if (!validation.valid) {
+			throw new Error(`Invalid template manifest: ${validation.errors.join(", ")}`);
+		}
+
+		// Get bundle as ArrayBuffer
+		const bundleZip = await bundleObj.arrayBuffer();
+
+		// Get assets as ArrayBuffer (optional)
+		const assetsZip = assetsObj ? await assetsObj.arrayBuffer() : null;
+
+		// Get pre-computed asset manifest if available (improves performance, avoids recomputing hashes)
+		let precomputedAssetManifest: AssetManifest | undefined;
+		if (assetManifestObj) {
+			try {
+				precomputedAssetManifest = JSON.parse(await assetManifestObj.text()) as AssetManifest;
+			} catch {
+				// Non-fatal: will compute hashes on-the-fly if manifest is invalid
+				console.warn(
+					`Invalid asset-manifest.json for ${templateId}-v${cliVersion}, will compute hashes`,
+				);
+			}
+		}
+
+		// Create deployment record
+		const deploymentId = `dep_${crypto.randomUUID()}`;
+		await this.db
+			.prepare(
+				`INSERT INTO deployments (id, project_id, status, source)
+         VALUES (?, ?, 'queued', ?)`,
+			)
+			.bind(deploymentId, projectId, `prebuilt:${templateId}-v${cliVersion}`)
+			.run();
+
+		try {
+			// Deploy code to worker using existing infrastructure
+			await this.deployCodeToWorker(
+				projectId,
+				bundleZip,
+				manifest,
+				deploymentId,
+				assetsZip,
+				precomputedAssetManifest,
+			);
+
+			// Update deployment status to 'live'
+			const artifactPrefix = `projects/${projectId}/deployments/${deploymentId}`;
+			await this.db
+				.prepare(
+					`UPDATE deployments SET status = 'live', artifact_bucket_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				)
+				.bind(artifactPrefix, deploymentId)
+				.run();
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
+			await this.db
+				.prepare(
+					`UPDATE deployments SET status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				)
+				.bind(errorMessage, deploymentId)
+				.run();
+			throw error;
+		}
+
+		return { deploymentId };
+	}
 }

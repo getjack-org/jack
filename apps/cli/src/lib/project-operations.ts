@@ -16,7 +16,6 @@ import {
 } from "../templates/index.ts";
 import type { Template } from "../templates/types.ts";
 import { generateAgentFiles } from "./agent-files.ts";
-import { needsViteBuild, runViteBuild } from "./build-helper.ts";
 import {
 	getActiveAgents,
 	getAgentDefinition,
@@ -24,6 +23,7 @@ import {
 	runAgentOneShot,
 	validateAgentPaths,
 } from "./agents.ts";
+import { needsViteBuild, runViteBuild } from "./build-helper.ts";
 import { checkWorkerExists, getAccountId, listD1Databases } from "./cloudflare-api.ts";
 import { getSyncConfig } from "./config.ts";
 import { debug, isDebug } from "./debug.ts";
@@ -229,7 +229,12 @@ export async function createProject(
 	} = options;
 	const reporter = providedReporter ?? noopReporter;
 	const hasReporter = Boolean(providedReporter);
-	const isCi = process.env.CI === "true" || process.env.CI === "1";
+	// CI mode: JACK_CI env or standard CI env
+	const isCi =
+		process.env.JACK_CI === "1" ||
+		process.env.JACK_CI === "true" ||
+		process.env.CI === "true" ||
+		process.env.CI === "1";
 	const interactive = interactiveOption ?? !isCi;
 
 	// Check if jack init was run (throws if not)
@@ -681,15 +686,18 @@ export async function createProject(
 	// Deploy based on mode
 	if (deployMode === "managed") {
 		// Managed mode: create project and deploy via jack cloud
-		const remoteResult = await createManagedProjectRemote(projectName, reporter);
+		const remoteResult = await createManagedProjectRemote(projectName, reporter, {
+			template: resolvedTemplate || "hello",
+			usePrebuilt: true,
+		});
 
 		// Register project as soon as remote is created
 		try {
 			await registerProject(projectName, {
 				workerUrl: remoteResult.runjackUrl,
 				createdAt: new Date().toISOString(),
-				lastDeployed: null,
-				status: "created",
+				lastDeployed: remoteResult.status === "live" ? new Date().toISOString() : null,
+				status: remoteResult.status === "live" ? "live" : "created",
 				template: templateOrigin,
 				deploy_mode: "managed",
 				remote: {
@@ -703,41 +711,46 @@ export async function createProject(
 			debug("Failed to register managed project:", err);
 		}
 
-		try {
-			await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
-		} catch (err) {
+		// Check if prebuilt deployment succeeded
+		if (remoteResult.status === "live") {
+			// Prebuilt succeeded - skip the fresh build
+			workerUrl = remoteResult.runjackUrl;
+			reporter.success(`Deployed: ${workerUrl}`);
+		} else {
+			// Prebuilt not available - fall back to fresh build
+			if (remoteResult.prebuiltFailed) {
+				// Show debug info about why prebuilt failed
+				const errorDetail = remoteResult.prebuiltError ? ` (${remoteResult.prebuiltError})` : "";
+				debug(`Prebuilt failed${errorDetail}`);
+				reporter.info("Pre-built not available, building fresh...");
+			}
+
+			try {
+				await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
+			} catch (err) {
+				try {
+					await updateProject(projectName, {
+						status: "build_failed",
+						workerUrl: remoteResult.runjackUrl,
+					});
+				} catch (updateErr) {
+					debug("Failed to update managed project status:", updateErr);
+				}
+				throw err;
+			}
+			workerUrl = remoteResult.runjackUrl;
+			reporter.success(`Created: ${workerUrl}`);
+
+			// Update project status to live after successful fresh build
 			try {
 				await updateProject(projectName, {
-					status: "build_failed",
-					workerUrl: remoteResult.runjackUrl,
+					lastDeployed: new Date().toISOString(),
+					status: "live",
 				});
-			} catch (updateErr) {
-				debug("Failed to update managed project status:", updateErr);
+			} catch (err) {
+				// Log but don't fail - registry is convenience, not critical path
+				debug("Failed to update managed project status:", err);
 			}
-			throw err;
-		}
-		workerUrl = remoteResult.runjackUrl;
-		reporter.success(`Created: ${workerUrl}`);
-
-		// Register project with managed mode metadata
-		try {
-			await registerProject(projectName, {
-				workerUrl,
-				createdAt: new Date().toISOString(),
-				lastDeployed: new Date().toISOString(),
-				status: "live",
-				template: templateOrigin,
-				deploy_mode: "managed",
-				remote: {
-					project_id: remoteResult.projectId,
-					project_slug: remoteResult.projectSlug,
-					org_id: remoteResult.orgId,
-					runjack_url: remoteResult.runjackUrl,
-				},
-			});
-		} catch (err) {
-			// Log but don't fail - registry is convenience, not critical path
-			debug("Failed to register managed project:", err);
 		}
 	} else {
 		// BYO mode: deploy via wrangler
@@ -888,7 +901,12 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	} = options;
 	const reporter = providedReporter ?? noopReporter;
 	const hasReporter = Boolean(providedReporter);
-	const isCi = process.env.CI === "true" || process.env.CI === "1";
+	// CI mode: JACK_CI env or standard CI env
+	const isCi =
+		process.env.JACK_CI === "1" ||
+		process.env.JACK_CI === "true" ||
+		process.env.CI === "true" ||
+		process.env.CI === "1";
 	const interactive = interactiveOption ?? !isCi;
 
 	// Check for wrangler config

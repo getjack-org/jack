@@ -8,12 +8,18 @@ import { createProject } from "../lib/project-operations.ts";
 
 export default async function newProject(
 	nameOrPhrase?: string,
-	options: { template?: string; intent?: string; managed?: boolean; byo?: boolean } = {},
+	options: { template?: string; intent?: string; managed?: boolean; byo?: boolean; ci?: boolean } = {},
 ): Promise<void> {
 	// Immediate feedback
 	output.start("Starting...");
 	debug("newProject called", { nameOrPhrase, options });
-	const isCi = process.env.CI === "true" || process.env.CI === "1";
+	// CI mode: explicit --ci flag, JACK_CI env, or standard CI env
+	const isCi =
+		options.ci ||
+		process.env.JACK_CI === "1" ||
+		process.env.JACK_CI === "true" ||
+		process.env.CI === "true" ||
+		process.env.CI === "1";
 
 	// Determine if first arg is intent phrase or project name
 	let projectName: string | undefined;
@@ -85,8 +91,8 @@ export default async function newProject(
 	console.error("");
 	output.info(`Project: ${result.targetDir}`);
 
-	// Prompt to open preferred agent (only in interactive TTY)
-	if (process.stdout.isTTY) {
+	// Prompt to open preferred agent (only in interactive TTY, skip in CI mode)
+	if (process.stdout.isTTY && !isCi) {
 		const preferred = await getPreferredLaunchAgent();
 		if (preferred) {
 			console.error("");

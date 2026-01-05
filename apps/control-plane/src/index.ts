@@ -259,7 +259,13 @@ api.get("/slugs/:slug/available", async (c) => {
 // Project endpoints
 api.post("/projects", async (c) => {
 	const auth = c.get("auth");
-	const body = await c.req.json<{ name: string; slug?: string; content_bucket?: boolean }>();
+	const body = await c.req.json<{
+		name: string;
+		slug?: string;
+		content_bucket?: boolean;
+		use_prebuilt?: boolean;
+		template?: string;
+	}>();
 
 	if (!body.name) {
 		return c.json({ error: "invalid_request", message: "Name is required" }, 400);
@@ -297,6 +303,49 @@ api.post("/projects", async (c) => {
 			slug,
 			body.content_bucket ?? false,
 		);
+
+		// If pre-built deployment is requested, attempt it
+		if (body.use_prebuilt && body.template) {
+			const cliVersion = c.req.header("X-Jack-Version") || "latest";
+			try {
+				const deploymentService = new DeploymentService(c.env);
+				await deploymentService.deployFromPrebuiltTemplate(
+					result.project.id,
+					result.project.slug,
+					body.template,
+					cliVersion,
+				);
+				// Return with live status and URL
+				return c.json(
+					{
+						...result,
+						status: "live",
+						url: `https://${result.project.slug}.runjack.xyz`,
+					},
+					201,
+				);
+			} catch (error) {
+				// Pre-built deploy failed - return result with prebuilt_failed flag
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				const errorStack = error instanceof Error ? error.stack : undefined;
+				console.error("Pre-built deploy failed:", {
+					template: body.template,
+					cliVersion,
+					projectId: result.project.id,
+					error: errorMessage,
+					stack: errorStack,
+				});
+				return c.json(
+					{
+						...result,
+						prebuilt_failed: true,
+						prebuilt_error: errorMessage,
+					},
+					201,
+				);
+			}
+		}
+
 		return c.json(result, 201);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Project creation failed";

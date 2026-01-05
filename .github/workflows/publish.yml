@@ -43,6 +43,12 @@ jobs:
         working-directory: apps/cli
         run: npm publish --provenance --access public
 
+      - name: Pre-build templates
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: bun run scripts/prebuild-templates.ts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
