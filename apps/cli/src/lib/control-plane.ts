@@ -11,6 +11,14 @@ export function getControlApiUrl(): string {
 export interface CreateProjectRequest {
 	name: string;
 	slug?: string;
+	template?: string;
+	use_prebuilt?: boolean;
+}
+
+export interface CreateManagedProjectOptions {
+	slug?: string;
+	template?: string;
+	usePrebuilt?: boolean;
 }
 
 export interface CreateProjectResponse {
@@ -29,6 +37,9 @@ export interface CreateProjectResponse {
 		resource_name: string;
 		status: string;
 	}>;
+	status?: "live" | "created";
+	url?: string;
+	prebuilt_failed?: boolean;
 }
 
 export interface SlugAvailabilityResponse {
@@ -54,14 +65,29 @@ export interface CreateDeploymentResponse {
  */
 export async function createManagedProject(
 	name: string,
-	slug?: string,
+	options?: CreateManagedProjectOptions,
 ): Promise<CreateProjectResponse> {
 	const { authFetch } = await import("./auth/index.ts");
+	const pkg = await import("../../package.json");
+
+	const requestBody: CreateProjectRequest = { name };
+	if (options?.slug) {
+		requestBody.slug = options.slug;
+	}
+	if (options?.template) {
+		requestBody.template = options.template;
+	}
+	if (options?.usePrebuilt !== undefined) {
+		requestBody.use_prebuilt = options.usePrebuilt;
+	}
 
 	const response = await authFetch(`${getControlApiUrl()}/v1/projects`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ name, slug } satisfies CreateProjectRequest),
+		headers: {
+			"Content-Type": "application/json",
+			"X-Jack-Version": pkg.version,
+		},
+		body: JSON.stringify(requestBody),
 	});
 
 	if (!response.ok) {
@@ -173,6 +199,17 @@ export async function deleteManagedProject(projectId: string): Promise<DeletePro
 	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}`, {
 		method: "DELETE",
 	});
+
+	// 404 means project doesn't exist - treat as already deleted
+	if (response.status === 404) {
+		return {
+			success: true,
+			project_id: projectId,
+			deleted_at: new Date().toISOString(),
+			resources: [],
+			warnings: "Project was already deleted or not found",
+		};
+	}
 
 	if (!response.ok) {
 		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {

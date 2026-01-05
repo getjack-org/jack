@@ -18,6 +18,14 @@ export interface ManagedCreateResult {
 	projectSlug: string;
 	orgId: string;
 	runjackUrl: string;
+	status?: "live" | "created";
+	prebuiltFailed?: boolean;
+	prebuiltError?: string;
+}
+
+export interface ManagedCreateOptions {
+	template?: string;
+	usePrebuilt?: boolean;
 }
 
 /**
@@ -29,11 +37,15 @@ export interface ManagedCreateResult {
 export async function createManagedProjectRemote(
 	projectName: string,
 	reporter?: OperationReporter,
+	options?: ManagedCreateOptions,
 ): Promise<ManagedCreateResult> {
 	reporter?.start("Creating managed project...");
 
 	try {
-		const result = await createManagedProject(projectName);
+		const result = await createManagedProject(projectName, {
+			template: options?.template,
+			usePrebuilt: options?.usePrebuilt ?? true,
+		});
 
 		const runjackUrl = `https://${result.project.slug}.runjack.xyz`;
 
@@ -48,6 +60,9 @@ export async function createManagedProjectRemote(
 			projectSlug: result.project.slug,
 			orgId: result.project.org_id,
 			runjackUrl,
+			status: result.status,
+			prebuiltFailed: result.prebuilt_failed,
+			prebuiltError: result.prebuilt_error,
 		};
 	} catch (error) {
 		reporter?.stop();

@@ -121,6 +121,10 @@ const cli = meow(
 				type: "boolean",
 				default: false,
 			},
+			ci: {
+				type: "boolean",
+				default: false,
+			},
 		},
 	},
 );
@@ -156,6 +160,7 @@ try {
 				intent: cli.flags.message,
 				managed: cli.flags.managed,
 				byo: cli.flags.byo,
+				ci: cli.flags.ci,
 			});
 			break;
 		}
@@ -244,6 +249,7 @@ try {
 			if (cli.flags.deployed) projectArgs.push("--deployed");
 			if (cli.flags.cloud) projectArgs.push("--cloud");
 			if (cli.flags.yes) projectArgs.push("--yes");
+			if (cli.flags.force) projectArgs.push("--force");
 			await withTelemetry("projects", projects)(args[0], projectArgs);
 			break;
 		}
