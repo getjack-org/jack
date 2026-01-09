@@ -44,7 +44,19 @@ export async function deleteCredentials(): Promise<void> {
 
 export async function isLoggedIn(): Promise<boolean> {
 	const creds = await getCredentials();
-	return creds !== null;
+	if (!creds) return false;
+
+	// If token is not expired, we're logged in
+	if (!isTokenExpired(creds)) return true;
+
+	// If expired, try to refresh (dynamic import to avoid circular dep)
+	try {
+		const { getValidAccessToken } = await import("./client.ts");
+		const token = await getValidAccessToken();
+		return token !== null;
+	} catch {
+		return false;
+	}
 }
 
 export function isTokenExpired(creds: AuthCredentials): boolean {
