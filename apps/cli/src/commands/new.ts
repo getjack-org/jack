@@ -8,7 +8,13 @@ import { createProject } from "../lib/project-operations.ts";
 
 export default async function newProject(
 	nameOrPhrase?: string,
-	options: { template?: string; intent?: string; managed?: boolean; byo?: boolean; ci?: boolean } = {},
+	options: {
+		template?: string;
+		intent?: string;
+		managed?: boolean;
+		byo?: boolean;
+		ci?: boolean;
+	} = {},
 ): Promise<void> {
 	// Immediate feedback
 	output.start("Starting...");

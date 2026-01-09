@@ -40,6 +40,7 @@ export interface CreateProjectResponse {
 	status?: "live" | "created";
 	url?: string;
 	prebuilt_failed?: boolean;
+	prebuilt_error?: string;
 }
 
 export interface SlugAvailabilityResponse {

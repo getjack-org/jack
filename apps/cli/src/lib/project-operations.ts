@@ -26,6 +26,7 @@ import {
 import { needsViteBuild, runViteBuild } from "./build-helper.ts";
 import { checkWorkerExists, getAccountId, listD1Databases } from "./cloudflare-api.ts";
 import { getSyncConfig } from "./config.ts";
+import { deleteManagedProject } from "./control-plane.ts";
 import { debug, isDebug } from "./debug.ts";
 import { resolveDeployMode, validateModeAvailability } from "./deploy-mode.ts";
 import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parser.ts";
@@ -33,7 +34,11 @@ import { JackError, JackErrorCode } from "./errors.ts";
 import { type HookOutput, runHook } from "./hooks.ts";
 import { loadTemplateKeywords, matchTemplateByIntent } from "./intent.ts";
 import { registerLocalPath } from "./local-paths.ts";
-import { createManagedProjectRemote, deployToManagedProject } from "./managed-deploy.ts";
+import {
+	type ManagedCreateResult,
+	createManagedProjectRemote,
+	deployToManagedProject,
+} from "./managed-deploy.ts";
 import { generateProjectName } from "./names.ts";
 import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
 import type { DeployMode, TemplateOrigin } from "./registry.ts";
@@ -145,6 +150,90 @@ const noopReporter: OperationReporter = {
 	success() {},
 	box() {},
 };
+
+/**
+ * Run bun install and managed project creation in parallel.
+ * Handles partial failures with cleanup.
+ */
+async function runParallelSetup(
+	targetDir: string,
+	projectName: string,
+	options: {
+		template?: string;
+		usePrebuilt?: boolean;
+	},
+): Promise<{
+	installSuccess: boolean;
+	remoteResult: ManagedCreateResult;
+}> {
+	const [installResult, remoteResult] = await Promise.allSettled([
+		// Install dependencies
+		(async () => {
+			const install = Bun.spawn(["bun", "install"], {
+				cwd: targetDir,
+				stdout: "ignore",
+				stderr: "ignore",
+			});
+			await install.exited;
+			if (install.exitCode !== 0) {
+				throw new Error("Dependency installation failed");
+			}
+			return true;
+		})(),
+
+		// Create managed project remote (no reporter to avoid spinner conflicts)
+		createManagedProjectRemote(projectName, undefined, {
+			template: options.template || "hello",
+			usePrebuilt: options.usePrebuilt ?? true,
+		}),
+	]);
+
+	const installFailed = installResult.status === "rejected";
+	const remoteFailed = remoteResult.status === "rejected";
+
+	// Handle partial failures
+	if (installFailed && remoteResult.status === "fulfilled") {
+		// Install failed but remote succeeded - cleanup orphan cloud project
+		const remote = remoteResult.value;
+		try {
+			await deleteManagedProject(remote.projectId);
+			debug("Cleaned up orphan cloud project:", remote.projectId);
+		} catch (cleanupErr) {
+			debug("Failed to cleanup orphan cloud project:", cleanupErr);
+		}
+		throw new JackError(
+			JackErrorCode.BUILD_FAILED,
+			"Dependency installation failed",
+			"Run: bun install",
+		);
+	}
+
+	if (!installFailed && remoteResult.status === "rejected") {
+		// Remote failed but install succeeded - throw remote error
+		const error = remoteResult.reason;
+		throw error instanceof Error ? error : new Error(String(error));
+	}
+
+	if (installFailed && remoteFailed) {
+		// Both failed - prioritize install error (more actionable)
+		throw new JackError(
+			JackErrorCode.BUILD_FAILED,
+			"Dependency installation failed",
+			"Run: bun install",
+		);
+	}
+
+	// Both succeeded - TypeScript knows remoteResult.status === "fulfilled" here
+	if (remoteResult.status !== "fulfilled") {
+		// Should never happen, but satisfies TypeScript
+		throw new Error("Unexpected state: remote result not fulfilled");
+	}
+
+	return {
+		installSuccess: true,
+		remoteResult: remoteResult.value,
+	};
+}
 
 const DEFAULT_D1_LIMIT = 10;
 
@@ -596,29 +685,54 @@ export async function createProject(
 	reporter.stop();
 	reporter.success(`Created ${projectName}/`);
 
-	// Auto-install dependencies
-	reporter.start("Installing dependencies...");
+	// Parallel setup for managed mode: install + remote creation
+	let remoteResult: ManagedCreateResult | undefined;
 
-	const install = Bun.spawn(["bun", "install"], {
-		cwd: targetDir,
-		stdout: "ignore",
-		stderr: "ignore",
-	});
-	await install.exited;
+	if (deployMode === "managed") {
+		// Run install and remote creation in parallel
+		reporter.start("Setting up project...");
 
-	if (install.exitCode !== 0) {
+		try {
+			const result = await runParallelSetup(targetDir, projectName, {
+				template: resolvedTemplate || "hello",
+				usePrebuilt: true,
+			});
+			remoteResult = result.remoteResult;
+			reporter.stop();
+			reporter.success("Project setup complete");
+		} catch (err) {
+			reporter.stop();
+			if (err instanceof JackError) {
+				reporter.warn(err.suggestion ?? err.message);
+				throw err;
+			}
+			throw err;
+		}
+	} else {
+		// BYO mode: just install dependencies (unchanged from current)
+		reporter.start("Installing dependencies...");
+
+		const install = Bun.spawn(["bun", "install"], {
+			cwd: targetDir,
+			stdout: "ignore",
+			stderr: "ignore",
+		});
+		await install.exited;
+
+		if (install.exitCode !== 0) {
+			reporter.stop();
+			reporter.warn("Failed to install dependencies, run: bun install");
+			throw new JackError(
+				JackErrorCode.BUILD_FAILED,
+				"Dependency installation failed",
+				"Run: bun install",
+				{ exitCode: 0, reported: hasReporter },
+			);
+		}
+
 		reporter.stop();
-		reporter.warn("Failed to install dependencies, run: bun install");
-		throw new JackError(
-			JackErrorCode.BUILD_FAILED,
-			"Dependency installation failed",
-			"Run: bun install",
-			{ exitCode: 0, reported: hasReporter },
-		);
+		reporter.success("Dependencies installed");
 	}
-
-	reporter.stop();
-	reporter.success("Dependencies installed");
 
 	// Run pre-deploy hooks
 	if (template.hooks?.preDeploy?.length) {
@@ -685,11 +799,14 @@ export async function createProject(
 
 	// Deploy based on mode
 	if (deployMode === "managed") {
-		// Managed mode: create project and deploy via jack cloud
-		const remoteResult = await createManagedProjectRemote(projectName, reporter, {
-			template: resolvedTemplate || "hello",
-			usePrebuilt: true,
-		});
+		// Managed mode: remote was already created in parallel setup
+		if (!remoteResult) {
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				"Managed project was not created",
+				"This is an internal error - please report it",
+			);
+		}
 
 		// Register project as soon as remote is created
 		try {

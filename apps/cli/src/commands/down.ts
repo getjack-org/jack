@@ -74,7 +74,7 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		const resolved = await resolveProject(name);
 
 		// Check if found only on control plane (orphaned managed project)
-		if (resolved?.sources.controlPlane && !resolved.sources.registry) {
+		if (resolved?.sources.controlPlane && !resolved.sources.filesystem) {
 			console.error("");
 			info(`Found "${name}" on jack cloud, linking locally...`);
 		}
