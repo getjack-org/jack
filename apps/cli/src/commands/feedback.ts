@@ -9,7 +9,7 @@ import pkg from "../../package.json";
 import { getCredentials } from "../lib/auth/store.ts";
 import { getControlApiUrl } from "../lib/control-plane.ts";
 import { error, info, output, success } from "../lib/output.ts";
-import { getProject } from "../lib/registry.ts";
+import { getDeployMode, readProjectLink } from "../lib/project-link.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 import { getTelemetryConfig } from "../lib/telemetry.ts";
 
@@ -171,10 +171,9 @@ async function collectMetadata(attachPersonalInfo: boolean): Promise<FeedbackMet
 	if (attachPersonalInfo) {
 		try {
 			projectName = await getProjectNameFromDir(process.cwd());
-			if (projectName) {
-				const project = await getProject(projectName);
-				deployMode = project?.deploy_mode ?? null;
-			}
+			// Read deploy mode from .jack/project.json
+			const link = await readProjectLink(process.cwd());
+			deployMode = link?.deploy_mode ?? null;
 		} catch {
 			// Not in a project directory, that's fine
 		}

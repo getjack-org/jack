@@ -447,16 +447,15 @@ async function scanProjects(args: string[]): Promise<void> {
 
 	outputSpinner.start(`Scanning ${targetDir} for jack projects...`);
 
-	const { scanDirectoryForProjects, registerDiscoveredProjects } = await import(
-		"../lib/local-paths.ts"
-	);
+	const { scanAndRegisterProjects } = await import("../lib/paths-index.ts");
 
-	const discovered = await scanDirectoryForProjects(absoluteDir);
+	// scanAndRegisterProjects both discovers and registers projects
+	const discovered = await scanAndRegisterProjects(absoluteDir);
 	outputSpinner.stop();
 
 	if (discovered.length === 0) {
-		info("No jack projects found");
-		info("Projects must have a wrangler.toml or wrangler.jsonc file");
+		info("No linked jack projects found");
+		info("Projects must have a .jack/project.json file");
 		return;
 	}
 
@@ -467,16 +466,15 @@ async function scanProjects(args: string[]): Promise<void> {
 	for (let i = 0; i < discovered.length; i++) {
 		const proj = discovered[i];
 		if (!proj) continue;
+		// Extract project name from path
+		const projectName = proj.path.split("/").pop() || proj.projectId;
 		const displayPath = proj.path.startsWith(home) ? `~${proj.path.slice(home.length)}` : proj.path;
 		const isLast = i === discovered.length - 1;
 		const prefix = isLast ? "└──" : "├──";
 		console.error(
-			`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${colors.dim}${displayPath}${colors.reset}`,
+			`  ${colors.dim}${prefix}${colors.reset} ${projectName}  ${colors.dim}${displayPath}${colors.reset}`,
 		);
 	}
-
-	// Register all discovered projects
-	await registerDiscoveredProjects(discovered);
 
 	console.error("");
 	success(`Registered ${discovered.length} local path(s)`);

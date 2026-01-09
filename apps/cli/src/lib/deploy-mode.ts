@@ -4,7 +4,7 @@
 
 import { $ } from "bun";
 import { isLoggedIn } from "./auth/index.ts";
-import type { DeployMode } from "./registry.ts";
+import type { DeployMode } from "./project-link.ts";
 import { Events, track } from "./telemetry.ts";
 
 export interface ModeFlags {
