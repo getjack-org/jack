@@ -1,8 +1,20 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
+import {
+	type ProjectListItem,
+	STATUS_ICONS,
+	colors,
+	filterByStatus,
+	formatCloudSection,
+	formatErrorSection,
+	formatLocalSection,
+	groupProjects,
+	sortByUpdated,
+	toListItems,
+} from "../lib/project-list.ts";
 import {
 	cleanupStaleProjects,
 	getProjectStatus,
@@ -52,132 +64,153 @@ export default async function projects(subcommand?: string, args: string[] = [])
 }
 
 /**
+ * Extract a flag value from args (e.g., --status live -> "live")
+ */
+function extractFlagValue(args: string[], flag: string): string | null {
+	const idx = args.indexOf(flag);
+	if (idx !== -1 && idx + 1 < args.length) {
+		return args[idx + 1] ?? null;
+	}
+	return null;
+}
+
+/**
  * List all projects with status indicators
  */
-async function listProjects(_args: string[]): Promise<void> {
+async function listProjects(args: string[]): Promise<void> {
+	// Parse flags
+	const showAll = args.includes("--all") || args.includes("-a");
+	const statusFilter = extractFlagValue(args, "--status");
+	const jsonOutput = args.includes("--json");
+	const localOnly = args.includes("--local");
+	const cloudOnly = args.includes("--cloud");
+
 	// Fetch all projects from registry and control plane
 	outputSpinner.start("Checking project status...");
 	const projects: ResolvedProject[] = await listAllProjects();
 	outputSpinner.stop();
 
-	if (projects.length === 0) {
+	// Convert to list items
+	let items = toListItems(projects);
+
+	// Apply filters
+	if (statusFilter) items = filterByStatus(items, statusFilter);
+	if (localOnly) items = items.filter((i) => i.isLocal);
+	if (cloudOnly) items = items.filter((i) => i.isCloudOnly);
+
+	// Handle empty state
+	if (items.length === 0) {
+		if (jsonOutput) {
+			console.log("[]");
+			return;
+		}
 		info("No projects found");
-		info("Create a project with: jack new <name>");
+		if (statusFilter || localOnly || cloudOnly) {
+			info("Try removing filters to see all projects");
+		} else {
+			info("Create a project with: jack new <name>");
+		}
 		return;
 	}
 
-	// Separate local projects from cloud-only projects
-	const localProjects: ResolvedProject[] = [];
-	const cloudOnlyProjects: ResolvedProject[] = [];
-
-	for (const proj of projects) {
-		if (proj.localPath && proj.sources.filesystem) {
-			localProjects.push(proj);
-		} else {
-			cloudOnlyProjects.push(proj);
-		}
+	// JSON output to stdout (pipeable)
+	if (jsonOutput) {
+		console.log(JSON.stringify(items, null, 2));
+		return;
 	}
 
-	// Group local projects by parent directory
-	interface DirectoryGroup {
-		displayPath: string;
-		projects: ResolvedProject[];
+	// Flat table for --all mode
+	if (showAll) {
+		renderFlatTable(items);
+		return;
 	}
 
-	const groups = new Map<string, DirectoryGroup>();
-	const home = homedir();
+	// Default: grouped view
+	renderGroupedView(items);
+}
 
-	for (const proj of localProjects) {
-		if (!proj.localPath) continue;
-		const parent = dirname(proj.localPath);
-		if (!groups.has(parent)) {
-			// Replace home directory with ~ for display
-			const displayPath = parent.startsWith(home) ? `~${parent.slice(home.length)}` : parent;
-			groups.set(parent, { displayPath, projects: [] });
-		}
-		groups.get(parent)?.projects.push(proj);
-	}
+/**
+ * Render the grouped view (default)
+ */
+function renderGroupedView(items: ProjectListItem[]): void {
+	const groups = groupProjects(items);
+	const total = items.length;
 
-	// Display header
 	console.error("");
-	info("Your projects");
+	info(`${total} projects`);
+
+	// Section 1: Errors (always show all)
+	if (groups.errors.length > 0) {
+		console.error("");
+		console.error(formatErrorSection(groups.errors));
+	}
+
+	// Section 2: Local projects (grouped by parent dir)
+	if (groups.local.length > 0) {
+		console.error("");
+		console.error(
+			`  ${colors.dim}${STATUS_ICONS["local-only"]} Local (${groups.local.length})${colors.reset}`,
+		);
+		console.error(formatLocalSection(groups.local));
+	}
+
+	// Section 3: Cloud-only (show last N by updatedAt)
+	if (groups.cloudOnly.length > 0) {
+		const CLOUD_LIMIT = 5;
+		const sorted = sortByUpdated(groups.cloudOnly);
+
+		console.error("");
+		console.error(
+			formatCloudSection(sorted, { limit: CLOUD_LIMIT, total: groups.cloudOnly.length }),
+		);
+	}
+
+	// Footer hint
 	console.error("");
-
-	// Display local project groups
-	for (const [_parentPath, group] of groups) {
-		console.error(`  ${colors.dim}${group.displayPath}/${colors.reset}`);
-		const sortedProjects = group.projects.sort((a, b) => a.name.localeCompare(b.name));
-
-		for (let i = 0; i < sortedProjects.length; i++) {
-			const proj = sortedProjects[i];
-			if (!proj) continue;
-			const isLast = i === sortedProjects.length - 1;
-			const prefix = isLast ? "└──" : "├──";
-
-			const statusBadge = buildStatusBadge(proj);
-			console.error(`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${statusBadge}`);
-		}
-		console.error("");
-	}
-
-	// Display cloud-only projects
-	if (cloudOnlyProjects.length > 0) {
-		console.error(`  ${colors.dim}On jack cloud (no local files)${colors.reset}`);
-		const sortedCloudProjects = cloudOnlyProjects.sort((a, b) => a.name.localeCompare(b.name));
-
-		for (let i = 0; i < sortedCloudProjects.length; i++) {
-			const proj = sortedCloudProjects[i];
-			if (!proj) continue;
-			const isLast = i === sortedCloudProjects.length - 1;
-			const prefix = isLast ? "└──" : "├──";
-
-			const statusBadge = buildStatusBadge(proj);
-			console.error(`  ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${statusBadge}`);
-		}
-		console.error("");
-	}
-
-	// Summary
-	const liveCount = projects.filter((p) => p.status === "live").length;
-	const localOnlyCount = projects.filter((p) => p.status === "local-only").length;
-	const errorCount = projects.filter((p) => p.status === "error").length;
-
-	const parts: string[] = [];
-	if (liveCount > 0) parts.push(`${liveCount} live`);
-	if (localOnlyCount > 0) parts.push(`${localOnlyCount} local-only`);
-	if (errorCount > 0) parts.push(`${errorCount} error`);
-
-	const summary = parts.length > 0 ? ` (${parts.join(", ")})` : "";
-	info(`${projects.length} projects${summary}`);
+	info("jack ls --all for full list, --status error to filter");
 	console.error("");
 }
 
-// Color codes
-const colors = {
-	reset: "\x1b[0m",
-	dim: "\x1b[90m",
-	green: "\x1b[32m",
-	yellow: "\x1b[33m",
-	red: "\x1b[31m",
-	cyan: "\x1b[36m",
-};
-
 /**
- * Build a user-friendly status badge for a project
+ * Render flat table (for --all mode)
  */
-function buildStatusBadge(project: ResolvedProject): string {
-	switch (project.status) {
-		case "live":
-			return `${colors.green}[live]${colors.reset} ${colors.cyan}${project.url || ""}${colors.reset}`;
-		case "local-only":
-			return `${colors.dim}[local only]${colors.reset}`;
-		case "error":
-			return `${colors.red}[error]${colors.reset} ${project.errorMessage || "deployment failed"}`;
-		case "syncing":
-			return `${colors.yellow}[syncing]${colors.reset}`;
-		default:
-			return "";
+function renderFlatTable(items: ProjectListItem[]): void {
+	// Sort: errors first, then by name
+	const sorted = [...items].sort((a, b) => {
+		if (a.status === "error" && b.status !== "error") return -1;
+		if (a.status !== "error" && b.status === "error") return 1;
+		return a.name.localeCompare(b.name);
+	});
+
+	console.error("");
+	info(`${items.length} projects`);
+	console.error("");
+
+	// Header
+	console.error(`  ${colors.dim}${"NAME".padEnd(22)} ${"STATUS".padEnd(12)} URL${colors.reset}`);
+
+	// Rows
+	for (const item of sorted) {
+		const icon = STATUS_ICONS[item.status] || "?";
+		const statusColor =
+			item.status === "error"
+				? colors.red
+				: item.status === "live"
+					? colors.green
+					: item.status === "syncing"
+						? colors.yellow
+						: colors.dim;
+
+		const name = item.name.slice(0, 20).padEnd(22);
+		const status = item.status.padEnd(12);
+		const url = item.url ? item.url.replace("https://", "") : "\u2014"; // em-dash
+
+		console.error(
+			`  ${statusColor}${icon}${colors.reset} ${name} ${statusColor}${status}${colors.reset} ${url}`,
+		);
 	}
+
+	console.error("");
 }
 
 /**

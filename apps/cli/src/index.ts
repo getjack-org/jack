@@ -109,6 +109,18 @@ const cli = meow(
 				type: "boolean",
 				default: false,
 			},
+			all: {
+				type: "boolean",
+				shortFlag: "a",
+				default: false,
+			},
+			status: {
+				type: "string",
+			},
+			json: {
+				type: "boolean",
+				default: false,
+			},
 			project: {
 				type: "string",
 				shortFlag: "p",
@@ -283,6 +295,9 @@ try {
 			if (cli.flags.local) lsArgs.push("--local");
 			if (cli.flags.deployed) lsArgs.push("--deployed");
 			if (cli.flags.cloud) lsArgs.push("--cloud");
+			if (cli.flags.all) lsArgs.push("--all");
+			if (cli.flags.json) lsArgs.push("--json");
+			if (cli.flags.status) lsArgs.push("--status", cli.flags.status);
 			await withTelemetry("projects", projects)("list", lsArgs);
 			break;
 		}

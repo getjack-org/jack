@@ -908,7 +908,6 @@ export async function createProject(
 		} catch (err) {
 			debug("Failed to link BYO project:", err);
 		}
-
 	}
 
 	// Run post-deploy hooks (for both modes)
