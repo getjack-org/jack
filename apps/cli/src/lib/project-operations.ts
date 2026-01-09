@@ -41,7 +41,7 @@ import {
 } from "./managed-deploy.ts";
 import { generateProjectName } from "./names.ts";
 import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
-import type { DeployMode, TemplateOrigin } from "./registry.ts";
+import type { DeployMode, TemplateMetadata as TemplateOrigin } from "./project-link.ts";
 import {
 	getAllProjects,
 	getProject,

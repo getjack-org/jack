@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parseJsonc } from "../lib/jsonc.ts";
-import type { TemplateOrigin } from "../lib/registry.ts";
+import type { TemplateMetadata as TemplateOrigin } from "../lib/project-link.ts";
 import type { Template } from "./types";
 
 // Resolve templates directory relative to this file (src/templates -> templates)
@@ -28,6 +28,7 @@ async function readTemplateFiles(dir: string, base = ""): Promise<Record<string,
 	// Skip these directories/files (but keep bun.lock for faster installs)
 	const SKIP = [
 		".jack.json",
+		".jack", // Skip .jack directory (template.json is for origin tracking, not project files)
 		"node_modules",
 		".git",
 		"package-lock.json",
