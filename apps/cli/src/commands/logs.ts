@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { output } from "../lib/output.ts";
-import { getProject } from "../lib/registry.ts";
-import { getProjectNameFromDir } from "../lib/storage/index.ts";
+import { getDeployMode } from "../lib/project-link.ts";
 
 // Lines containing these strings will be filtered out
 const FILTERED_PATTERNS = ["⛅️ wrangler"];
@@ -19,22 +18,13 @@ export default async function logs(): Promise<void> {
 		process.exit(1);
 	}
 
-	// Check if this is a managed project
-	let projectName: string | null = null;
-	try {
-		projectName = await getProjectNameFromDir(process.cwd());
-	} catch {
-		// Continue without project name - will fall through to wrangler tail
-	}
-
-	if (projectName) {
-		const project = await getProject(projectName);
-		if (project?.deploy_mode === "managed") {
-			output.warn("Real-time logs not yet available for managed projects");
-			output.info("Logs are being collected - web UI coming soon");
-			output.info("Track progress: https://github.com/getjack-org/jack/issues/2");
-			return;
-		}
+	// Check if this is a managed project (read from .jack/project.json)
+	const deployMode = await getDeployMode(process.cwd());
+	if (deployMode === "managed") {
+		output.warn("Real-time logs not yet available for managed projects");
+		output.info("Logs are being collected - web UI coming soon");
+		output.info("Track progress: https://github.com/getjack-org/jack/issues/2");
+		return;
 	}
 
 	// BYOC project - use wrangler tail

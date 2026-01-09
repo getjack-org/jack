@@ -35,6 +35,10 @@ const cli = meow(
     logout              Sign out
     whoami              Show current user
 
+  Project Management
+    link [name]         Link directory to a project
+    unlink              Remove project link
+
   Advanced
     agents              Manage AI agent configs
     secrets             Manage project secrets
@@ -305,6 +309,16 @@ try {
 		case "feedback": {
 			const { default: feedback } = await import("./commands/feedback.ts");
 			await withTelemetry("feedback", feedback)();
+			break;
+		}
+		case "link": {
+			const { default: link } = await import("./commands/link.ts");
+			await withTelemetry("link", link)(args[0], { byo: cli.flags.byo });
+			break;
+		}
+		case "unlink": {
+			const { default: unlink } = await import("./commands/unlink.ts");
+			await withTelemetry("unlink", unlink)();
 			break;
 		}
 		default:

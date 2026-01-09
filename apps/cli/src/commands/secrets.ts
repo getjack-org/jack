@@ -11,7 +11,7 @@ import { $ } from "bun";
 import { getControlApiUrl } from "../lib/control-plane.ts";
 import { JackError, JackErrorCode } from "../lib/errors.ts";
 import { error, info, output, success, warn } from "../lib/output.ts";
-import { type Project, getProject } from "../lib/registry.ts";
+import { type LocalProjectLink, readProjectLink } from "../lib/project-link.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 
 interface SecretsOptions {
@@ -68,7 +68,7 @@ function showHelp(): void {
  */
 async function resolveProjectContext(options: SecretsOptions): Promise<{
 	projectName: string;
-	project: Project | null;
+	link: LocalProjectLink | null;
 	isManaged: boolean;
 	projectId: string | null;
 }> {
@@ -86,11 +86,12 @@ async function resolveProjectContext(options: SecretsOptions): Promise<{
 		}
 	}
 
-	const project = await getProject(projectName);
-	const isManaged = project?.deploy_mode === "managed";
-	const projectId = project?.remote?.project_id ?? null;
+	// Read deploy mode from .jack/project.json
+	const link = await readProjectLink(process.cwd());
+	const isManaged = link?.deploy_mode === "managed";
+	const projectId = link?.project_id ?? null;
 
-	return { projectName, project, isManaged, projectId };
+	return { projectName, link, isManaged, projectId };
 }
 
 /**

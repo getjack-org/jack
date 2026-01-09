@@ -33,22 +33,23 @@ import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parse
 import { JackError, JackErrorCode } from "./errors.ts";
 import { type HookOutput, runHook } from "./hooks.ts";
 import { loadTemplateKeywords, matchTemplateByIntent } from "./intent.ts";
-import { registerLocalPath } from "./local-paths.ts";
 import {
 	type ManagedCreateResult,
 	createManagedProjectRemote,
 	deployToManagedProject,
 } from "./managed-deploy.ts";
 import { generateProjectName } from "./names.ts";
-import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
-import type { DeployMode, TemplateMetadata as TemplateOrigin } from "./project-link.ts";
+import { getAllPaths, registerPath, unregisterPath } from "./paths-index.ts";
 import {
-	getAllProjects,
-	getProject,
-	registerProject,
-	removeProject,
-	updateProject,
-} from "./registry.ts";
+	type DeployMode,
+	type TemplateMetadata as TemplateOrigin,
+	generateByoProjectId,
+	linkProject,
+	readProjectLink,
+	unlinkProject,
+	writeTemplateMetadata,
+} from "./project-link.ts";
+import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
 import { applySchema, getD1Bindings, getD1DatabaseName, hasD1Config } from "./schema.ts";
 import { getSavedSecrets, saveSecrets } from "./secrets.ts";
 import { getProjectNameFromDir, getRemoteManifest, syncToCloud } from "./storage/index.ts";
@@ -380,24 +381,9 @@ export async function createProject(
 					const choice = await promptSelect(["Link existing project", "Choose different name"]);
 
 					if (choice === 0) {
-						// User chose to link - cache in registry and proceed
-						await registerProject(projectName, {
-							workerUrl: existingProject.url || null,
-							createdAt: existingProject.createdAt,
-							lastDeployed: existingProject.updatedAt || null,
-							status: existingProject.status === "live" ? "live" : "build_failed",
-							deploy_mode: "managed",
-							remote: existingProject.remote
-								? {
-										project_id: existingProject.remote.projectId,
-										project_slug: existingProject.slug,
-										org_id: existingProject.remote.orgId,
-										runjack_url:
-											existingProject.url || `https://${existingProject.slug}.runjack.xyz`,
-									}
-								: undefined,
-						});
-						reporter.success(`Linked to existing project: ${existingProject.url || projectName}`);
+						// User chose to link - proceed with project creation
+						// The project will be linked locally when files are created
+						reporter.success(`Linking to existing project: ${existingProject.url || projectName}`);
 						// Continue with project creation - user wants to link
 					} else {
 						// User chose different name
@@ -808,24 +794,13 @@ export async function createProject(
 			);
 		}
 
-		// Register project as soon as remote is created
+		// Link project locally and register path
 		try {
-			await registerProject(projectName, {
-				workerUrl: remoteResult.runjackUrl,
-				createdAt: new Date().toISOString(),
-				lastDeployed: remoteResult.status === "live" ? new Date().toISOString() : null,
-				status: remoteResult.status === "live" ? "live" : "created",
-				template: templateOrigin,
-				deploy_mode: "managed",
-				remote: {
-					project_id: remoteResult.projectId,
-					project_slug: remoteResult.projectSlug,
-					org_id: remoteResult.orgId,
-					runjack_url: remoteResult.runjackUrl,
-				},
-			});
+			await linkProject(targetDir, remoteResult.projectId, "managed");
+			await writeTemplateMetadata(targetDir, templateOrigin);
+			await registerPath(remoteResult.projectId, targetDir);
 		} catch (err) {
-			debug("Failed to register managed project:", err);
+			debug("Failed to link managed project:", err);
 		}
 
 		// Check if prebuilt deployment succeeded
@@ -842,32 +817,9 @@ export async function createProject(
 				reporter.info("Pre-built not available, building fresh...");
 			}
 
-			try {
-				await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
-			} catch (err) {
-				try {
-					await updateProject(projectName, {
-						status: "build_failed",
-						workerUrl: remoteResult.runjackUrl,
-					});
-				} catch (updateErr) {
-					debug("Failed to update managed project status:", updateErr);
-				}
-				throw err;
-			}
+			await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
 			workerUrl = remoteResult.runjackUrl;
 			reporter.success(`Created: ${workerUrl}`);
-
-			// Update project status to live after successful fresh build
-			try {
-				await updateProject(projectName, {
-					lastDeployed: new Date().toISOString(),
-					status: "live",
-				});
-			} catch (err) {
-				// Log but don't fail - registry is convenience, not critical path
-				debug("Failed to update managed project status:", err);
-			}
 		}
 	} else {
 		// BYO mode: deploy via wrangler
@@ -945,24 +897,18 @@ export async function createProject(
 			reporter.success("Deployed");
 		}
 
-		// Register project with BYO mode
-		try {
-			const accountId = await getAccountId();
+		// Generate BYO project ID and link locally
+		const byoProjectId = generateByoProjectId();
 
-			await registerProject(projectName, {
-				workerUrl,
-				createdAt: new Date().toISOString(),
-				lastDeployed: workerUrl ? new Date().toISOString() : null,
-				cloudflare: {
-					accountId,
-					workerId: projectName,
-				},
-				template: templateOrigin,
-				deploy_mode: "byo",
-			});
-		} catch {
-			// Don't fail the creation if registry update fails
+		// Link project locally and register path
+		try {
+			await linkProject(targetDir, byoProjectId, "byo");
+			await writeTemplateMetadata(targetDir, templateOrigin);
+			await registerPath(byoProjectId, targetDir);
+		} catch (err) {
+			debug("Failed to link BYO project:", err);
 		}
+
 	}
 
 	// Run post-deploy hooks (for both modes)
@@ -978,13 +924,6 @@ export async function createProject(
 			},
 			{ interactive, output: reporter },
 		);
-	}
-
-	// Auto-register local path for project discovery
-	try {
-		await registerLocalPath(projectName, targetDir);
-	} catch {
-		// Silent fail - registration is best-effort
 	}
 
 	return {
@@ -1043,8 +982,8 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	// Get project name from directory
 	const projectName = await getProjectNameFromDir(projectPath);
 
-	// Get project from registry to check stored mode
-	const project = await getProject(projectName);
+	// Read local project link for stored mode and project ID
+	const link = await readProjectLink(projectPath);
 
 	// Determine effective mode: explicit flag > stored mode > default BYO
 	let deployMode: DeployMode;
@@ -1053,7 +992,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	} else if (options.byo) {
 		deployMode = "byo";
 	} else {
-		deployMode = project?.deploy_mode ?? "byo";
+		deployMode = link?.deploy_mode ?? "byo";
 	}
 
 	// Validate mode availability
@@ -1068,7 +1007,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	// Deploy based on mode
 	if (deployMode === "managed") {
 		// Managed mode: deploy via jack cloud
-		if (!project?.remote?.project_id) {
+		if (!link?.project_id || link.deploy_mode !== "managed") {
 			throw new JackError(
 				JackErrorCode.VALIDATION_ERROR,
 				"Project not linked to jack cloud",
@@ -1077,14 +1016,10 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 
 		// deployToManagedProject now handles both template and code deploy
-		const result = await deployToManagedProject(project.remote.project_id, projectPath, reporter);
+		await deployToManagedProject(link.project_id, projectPath, reporter);
 
-		workerUrl = project.remote.runjack_url;
-
-		// Update lastDeployed in registry (will be persisted below)
-		if (project) {
-			project.lastDeployed = new Date().toISOString();
-		}
+		// Get the URL from the resolver or construct it
+		workerUrl = `https://${projectName}.runjack.xyz`;
 	} else {
 		// BYO mode: deploy via wrangler
 
@@ -1138,16 +1073,6 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 	}
 
-	// Update registry
-	try {
-		await registerProject(projectName, {
-			workerUrl,
-			lastDeployed: new Date().toISOString(),
-		});
-	} catch {
-		// Don't fail the deploy if registry update fails
-	}
-
 	if (includeSecrets && interactive) {
 		const detected = await detectSecrets(projectPath);
 		const newSecrets = await filterNewSecrets(detected);
@@ -1180,9 +1105,24 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 	}
 
-	// Auto-register local path for project discovery
+	// Ensure project is linked locally for discovery
 	try {
-		await registerLocalPath(projectName, projectPath);
+		const existingLink = await readProjectLink(projectPath);
+		if (!existingLink) {
+			// Not linked yet - create link
+			if (deployMode === "managed" && project?.remote?.project_id) {
+				await linkProject(projectPath, project.remote.project_id, "managed");
+				await registerPath(project.remote.project_id, projectPath);
+			} else {
+				// BYO mode - generate new ID
+				const byoProjectId = generateByoProjectId();
+				await linkProject(projectPath, byoProjectId, "byo");
+				await registerPath(byoProjectId, projectPath);
+			}
+		} else {
+			// Already linked - just ensure path is registered
+			await registerPath(existingLink.project_id, projectPath);
+		}
 	} catch {
 		// Silent fail - registration is best-effort
 	}
@@ -1225,11 +1165,8 @@ export async function getProjectStatus(
 		}
 	}
 
-	const project = await getProject(projectName);
-
-	if (!project) {
-		return null;
-	}
+	// Read local project link
+	const link = await readProjectLink(resolvedPath);
 
 	// Check if local project exists at the resolved path
 	const hasWranglerConfig =
@@ -1238,6 +1175,11 @@ export async function getProjectStatus(
 		existsSync(join(resolvedPath, "wrangler.json"));
 	const localExists = hasWranglerConfig;
 	const localPath = localExists ? resolvedPath : null;
+
+	// If no link and no local project, return null
+	if (!link && !localExists) {
+		return null;
+	}
 
 	// Check actual deployment status
 	const [workerExists, manifest] = await Promise.all([
@@ -1248,13 +1190,19 @@ export async function getProjectStatus(
 	const backupFiles = manifest ? manifest.files.length : null;
 	const backupLastSync = manifest ? manifest.lastSync : null;
 
+	// Determine URL based on mode
+	let workerUrl: string | null = null;
+	if (link?.deploy_mode === "managed") {
+		workerUrl = `https://${projectName}.runjack.xyz`;
+	}
+
 	// Get database name on-demand
 	let dbName: string | null = null;
-	if (project.deploy_mode === "managed" && project.remote?.project_id) {
+	if (link?.deploy_mode === "managed") {
 		// For managed projects, fetch from control plane
 		try {
 			const { fetchProjectResources } = await import("./control-plane.ts");
-			const resources = await fetchProjectResources(project.remote.project_id);
+			const resources = await fetchProjectResources(link.project_id);
 			const d1 = resources.find((r) => r.resource_type === "d1");
 			dbName = d1?.resource_name || null;
 		} catch {
@@ -1274,16 +1222,16 @@ export async function getProjectStatus(
 	return {
 		name: projectName,
 		localPath,
-		workerUrl: project.workerUrl,
-		lastDeployed: project.lastDeployed,
-		createdAt: project.createdAt,
-		accountId: project.cloudflare?.accountId ?? null,
-		workerId: project.cloudflare?.workerId ?? null,
+		workerUrl,
+		lastDeployed: link?.linked_at ?? null,
+		createdAt: link?.linked_at ?? null,
+		accountId: null, // No longer stored in registry
+		workerId: projectName,
 		dbName,
-		deployed: workerExists || !!project.workerUrl,
+		deployed: workerExists || !!workerUrl,
 		local: localExists,
 		backedUp,
-		missing: false, // No longer tracking local paths in registry
+		missing: false,
 		backupFiles,
 		backupLastSync,
 	};
@@ -1294,44 +1242,77 @@ export async function getProjectStatus(
 // ============================================================================
 
 /**
- * Scan registry for stale projects.
- * Checks for projects with worker URLs that no longer have deployed workers.
+ * Scan for stale project paths.
+ * Checks for paths in the index that no longer exist on disk or don't have valid links.
  * Returns total project count and stale entries with reasons.
  */
 export async function scanStaleProjects(): Promise<StaleProjectScan> {
-	const projects = await getAllProjects();
-	const projectNames = Object.keys(projects);
+	const allPaths = await getAllPaths();
+	const projectIds = Object.keys(allPaths);
 	const stale: StaleProject[] = [];
+	let totalPaths = 0;
 
-	for (const name of projectNames) {
-		const project = projects[name];
-		if (!project) continue;
+	for (const projectId of projectIds) {
+		const paths = allPaths[projectId] || [];
+		totalPaths += paths.length;
 
-		// Check if worker URL is set but worker doesn't exist
-		if (project.workerUrl) {
-			const workerExists = await checkWorkerExists(name);
-			if (!workerExists) {
+		for (const projectPath of paths) {
+			// Check if path exists and has valid link
+			const hasWranglerConfig =
+				existsSync(join(projectPath, "wrangler.jsonc")) ||
+				existsSync(join(projectPath, "wrangler.toml")) ||
+				existsSync(join(projectPath, "wrangler.json"));
+
+			if (!hasWranglerConfig) {
+				// Try to get project name from the path
+				let name = projectPath.split("/").pop() || projectId;
+				try {
+					name = await getProjectNameFromDir(projectPath);
+				} catch {
+					// Use path basename as fallback
+				}
+
 				stale.push({
 					name,
 					reason: "worker not deployed",
-					workerUrl: project.workerUrl,
+					workerUrl: null,
 				});
 			}
 		}
 	}
 
-	return { total: projectNames.length, stale };
+	return { total: totalPaths, stale };
 }
 
 /**
- * Remove stale registry entries by name
+ * Remove stale project entries by path
+ * Unlinks and unregisters projects.
  * Returns the number of entries removed.
  */
 export async function cleanupStaleProjects(names: string[]): Promise<number> {
 	let removed = 0;
+
+	// Get all paths to find matching projects
+	const allPaths = await getAllPaths();
+
 	for (const name of names) {
-		await removeProject(name);
-		removed += 1;
+		// Find project ID by checking each path
+		for (const [projectId, paths] of Object.entries(allPaths)) {
+			for (const projectPath of paths || []) {
+				const pathName = projectPath.split("/").pop();
+				if (pathName === name) {
+					// Unlink and unregister
+					try {
+						await unlinkProject(projectPath);
+					} catch {
+						// Path may not exist
+					}
+					await unregisterPath(projectId, projectPath);
+					removed += 1;
+				}
+			}
+		}
 	}
+
 	return removed;
 }
