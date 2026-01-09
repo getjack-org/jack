@@ -4,12 +4,12 @@
  * Users see "projects". We handle the plumbing.
  *
  * Resolution strategy:
- * 1. Check local registry (fast cache)
- * 2. Check control plane (if logged in)
- * 3. Update registry cache with remote data
+ * 1. Check .jack/project.json (local link)
+ * 2. If managed: fetch from control plane (authoritative)
+ * 3. If BYO: use local link info only
  *
  * Control plane is authoritative for managed projects.
- * Registry is a cache that can be rebuilt.
+ * .jack/project.json is the local link (not a cache).
  */
 
 import { isLoggedIn } from "./auth/index.ts";
@@ -19,14 +19,15 @@ import {
 	findProjectBySlug,
 	listManagedProjects,
 } from "./control-plane.ts";
-import { getAllLocalPaths } from "./local-paths.ts";
+import { getAllPaths, unregisterPath } from "./paths-index.ts";
 import {
-	type Project as RegistryProject,
-	getAllProjects,
-	getProject,
-	registerProject,
-	removeProject as removeFromRegistry,
-} from "./registry.ts";
+	type DeployMode,
+	type LocalProjectLink,
+	getDeployMode,
+	getProjectId,
+	readProjectLink,
+	unlinkProject,
+} from "./project-link.ts";
 import {
 	type ResolvedResources,
 	convertControlPlaneResources,
@@ -52,7 +53,6 @@ export interface ResolvedProject {
 
 	// Where we found it (internal, not shown to user)
 	sources: {
-		registry: boolean;
 		controlPlane: boolean;
 		filesystem: boolean;
 	};
@@ -64,6 +64,9 @@ export interface ResolvedProject {
 		orgId: string;
 	};
 
+	// Deploy mode
+	deployMode?: DeployMode;
+
 	// Metadata
 	createdAt: string;
 	updatedAt?: string;
@@ -73,39 +76,28 @@ export interface ResolvedProject {
 }
 
 /**
- * Convert registry project to resolved project
+ * Convert a local project link to a resolved project
  */
-function fromRegistryProject(name: string, project: RegistryProject): ResolvedProject {
-	// Determine status from registry data
-	let status: ProjectStatus = "local-only";
-	if (project.status === "live") {
-		status = "live";
-	} else if (project.status === "build_failed") {
-		status = "error";
-	} else if (project.lastDeployed || project.remote) {
-		// If we have a deployment or remote metadata, assume it's live
-		status = "live";
-	}
+function fromLocalLink(link: LocalProjectLink, localPath: string): ResolvedProject {
+	const isByo = link.deploy_mode === "byo";
 
 	return {
-		name,
-		slug: project.remote?.project_slug || name,
-		status,
-		url: project.workerUrl || project.remote?.runjack_url || undefined,
+		name: localPath.split("/").pop() || "unknown",
+		slug: localPath.split("/").pop() || "unknown",
+		status: isByo ? "local-only" : "syncing", // BYO is local-only, managed needs control plane check
 		sources: {
-			registry: true,
 			controlPlane: false,
-			filesystem: false, // localPath removed from registry - filesystem detection done elsewhere
+			filesystem: true,
 		},
-		localPath: undefined, // localPath removed from registry
-		remote: project.remote
-			? {
-					projectId: project.remote.project_id,
-					orgId: project.remote.org_id,
-				}
-			: undefined,
-		createdAt: project.createdAt,
-		updatedAt: project.lastDeployed || undefined,
+		localPath,
+		remote: isByo
+			? undefined
+			: {
+					projectId: link.project_id,
+					orgId: "", // Will be filled from control plane
+				},
+		deployMode: link.deploy_mode,
+		createdAt: link.linked_at,
 	};
 }
 
@@ -122,7 +114,6 @@ function fromManagedProject(managed: ManagedProject): ResolvedProject {
 		url: `https://${managed.slug}.runjack.xyz`,
 		errorMessage: managed.status === "error" ? "deployment failed" : undefined,
 		sources: {
-			registry: false,
 			controlPlane: true,
 			filesystem: false,
 		},
@@ -130,27 +121,30 @@ function fromManagedProject(managed: ManagedProject): ResolvedProject {
 			projectId: managed.id,
 			orgId: managed.org_id,
 		},
+		deployMode: "managed",
 		createdAt: managed.created_at,
 		updatedAt: managed.updated_at,
 	};
 }
 
 /**
- * Merge registry and managed project data
+ * Merge local and managed project data
  */
-function mergeProjects(registry: ResolvedProject, managed: ResolvedProject): ResolvedProject {
+function mergeProjects(local: ResolvedProject, managed: ResolvedProject): ResolvedProject {
 	return {
-		...registry,
+		...local,
+		name: managed.name, // Control plane name is authoritative
+		slug: managed.slug,
 		status: managed.status, // Control plane is authoritative for status
-		url: managed.url || registry.url,
+		url: managed.url || local.url,
 		errorMessage: managed.errorMessage,
 		sources: {
-			registry: true,
 			controlPlane: true,
-			filesystem: registry.sources.filesystem,
+			filesystem: local.sources.filesystem,
 		},
 		remote: managed.remote,
-		updatedAt: managed.updatedAt || registry.updatedAt,
+		deployMode: "managed",
+		updatedAt: managed.updatedAt || local.updatedAt,
 	};
 }
 
@@ -164,29 +158,6 @@ export interface ResolveProjectOptions {
 	projectPath?: string;
 	/** Allow fallback lookup by managed project name when slug lookup fails */
 	matchByName?: boolean;
-}
-
-interface RegistryIndex {
-	byRemoteId: Map<string, string>;
-	byRemoteSlug: Map<string, string>;
-}
-
-function buildRegistryIndexes(registryProjects: Record<string, RegistryProject>): RegistryIndex {
-	const byRemoteId = new Map<string, string>();
-	const byRemoteSlug = new Map<string, string>();
-
-	for (const [name, project] of Object.entries(registryProjects)) {
-		const remote = project.remote;
-		if (!remote) continue;
-		if (remote.project_id) {
-			byRemoteId.set(remote.project_id, name);
-		}
-		if (remote.project_slug) {
-			byRemoteSlug.set(remote.project_slug, name);
-		}
-	}
-
-	return { byRemoteId, byRemoteSlug };
 }
 
 /**
@@ -222,9 +193,9 @@ export async function resolveProjectResources(
 }
 
 /**
- * Resolve a project by name/slug
- * Checks: registry → control plane → filesystem
- * Caches result in registry
+ * Resolve a project by name/slug or from current directory
+ * Checks: .jack/project.json -> control plane
+ * No caching - fresh reads only
  */
 export async function resolveProject(
 	name: string,
@@ -232,46 +203,39 @@ export async function resolveProject(
 ): Promise<ResolvedProject | null> {
 	let resolved: ResolvedProject | null = null;
 	const matchByName = options?.matchByName !== false;
-	let registryName = name;
-	let registryProjects: Record<string, RegistryProject> | null = null;
-	let registryIndex: RegistryIndex | null = null;
+	const projectPath = options?.projectPath || process.cwd();
 
-	// Check registry first (fast)
-	let registryProject = await getProject(name);
-	if (!registryProject) {
-		registryProjects = await getAllProjects();
-		registryIndex = buildRegistryIndexes(registryProjects);
-		const slugMatchName = registryIndex.byRemoteSlug.get(name);
-		if (slugMatchName) {
-			registryProject = registryProjects[slugMatchName] ?? null;
-			registryName = slugMatchName;
-		}
-	}
-	if (registryProject) {
-		resolved = fromRegistryProject(registryName, registryProject);
+	// First, check if we're resolving from a local path with .jack/project.json
+	const link = await readProjectLink(projectPath);
 
-		// If it's a BYOC project, don't check control plane
-		if (registryProject.deploy_mode === "byo") {
+	if (link) {
+		// We have a local link - start with that
+		resolved = fromLocalLink(link, projectPath);
+
+		if (link.deploy_mode === "byo") {
+			// BYO project - use local link info only, no control plane
 			// resolved stays as-is
-		} else if (registryProject.deploy_mode === "managed" && (await isLoggedIn())) {
-			// If it's managed, try to get latest status from control plane
+		} else if (link.deploy_mode === "managed" && (await isLoggedIn())) {
+			// Managed project - fetch fresh data from control plane
 			try {
-				const managed = await findProjectBySlug(resolved.slug);
+				// Try to find by project ID first via listing
+				const managedProjects = await listManagedProjects();
+				const managed = managedProjects.find((p) => p.id === link.project_id);
+
 				if (managed) {
 					resolved = mergeProjects(resolved, fromManagedProject(managed));
-
-					// Update registry cache with latest status
-					await registerProject(registryName, {
-						...registryProject,
-						status: managed.status === "active" ? "live" : "build_failed",
-					});
+				} else {
+					// Project ID not found in control plane - might be deleted
+					resolved.status = "error";
+					resolved.errorMessage = "Project not found in jack cloud";
 				}
 			} catch {
-				// Control plane unavailable, use cached data
+				// Control plane unavailable, use local data with syncing status
+				resolved.status = "syncing";
 			}
 		}
 	} else if (await isLoggedIn()) {
-		// Not in registry, check control plane if logged in
+		// No local link - check control plane by slug/name if logged in
 		try {
 			let managed = await findProjectBySlug(name);
 			if (!managed && matchByName) {
@@ -279,43 +243,14 @@ export async function resolveProject(
 				managed = managedProjects.find((project) => project.name === name) ?? null;
 			}
 			if (managed) {
-				if (!registryProjects || !registryIndex) {
-					registryProjects = await getAllProjects();
-					registryIndex = buildRegistryIndexes(registryProjects);
-				}
+				resolved = fromManagedProject(managed);
 
-				const existingRegistryName =
-					registryIndex.byRemoteId.get(managed.id) ?? registryIndex.byRemoteSlug.get(managed.slug);
-
-				if (existingRegistryName && registryProjects[existingRegistryName]) {
-					const existingProject = registryProjects[existingRegistryName];
-					resolved = mergeProjects(
-						fromRegistryProject(existingRegistryName, existingProject),
-						fromManagedProject(managed),
-					);
-
-					// Update registry cache with latest status
-					await registerProject(existingRegistryName, {
-						...existingProject,
-						status: managed.status === "active" ? "live" : "build_failed",
-					});
-				} else {
-					resolved = fromManagedProject(managed);
-
-					// Cache in registry for future lookups
-					await registerProject(managed.slug, {
-						workerUrl: resolved.url || null,
-						createdAt: managed.created_at,
-						lastDeployed: managed.updated_at,
-						status: managed.status === "active" ? "live" : "build_failed",
-						deploy_mode: "managed",
-						remote: {
-							project_id: managed.id,
-							project_slug: managed.slug,
-							org_id: managed.org_id,
-							runjack_url: `https://${managed.slug}.runjack.xyz`,
-						},
-					});
+				// Check if we have a local path for this project
+				const allPaths = await getAllPaths();
+				const localPaths = allPaths[managed.id];
+				if (localPaths && localPaths.length > 0) {
+					resolved.localPath = localPaths[0];
+					resolved.sources.filesystem = true;
 				}
 			}
 		} catch {
@@ -323,9 +258,28 @@ export async function resolveProject(
 		}
 	}
 
+	// If still not found, check paths index for local projects
+	if (!resolved) {
+		const allPaths = await getAllPaths();
+		for (const [projectId, paths] of Object.entries(allPaths)) {
+			for (const localPath of paths) {
+				const localLink = await readProjectLink(localPath);
+				if (localLink) {
+					const dirName = localPath.split("/").pop() || "";
+					// Match by directory name or project_id
+					if (dirName === name || projectId === name) {
+						resolved = fromLocalLink(localLink, localPath);
+						break;
+					}
+				}
+			}
+			if (resolved) break;
+		}
+	}
+
 	// Optionally fetch resources
 	if (resolved && options?.includeResources) {
-		const resources = await resolveProjectResources(resolved, options.projectPath || process.cwd());
+		const resources = await resolveProjectResources(resolved, resolved.localPath || projectPath);
 		if (resources) {
 			resolved.resources = resources;
 		}
@@ -336,17 +290,24 @@ export async function resolveProject(
 
 /**
  * List ALL projects from all sources
- * Merges and dedupes automatically
+ * Merges and dedupes by project_id
  */
 export async function listAllProjects(): Promise<ResolvedProject[]> {
 	const projectMap = new Map<string, ResolvedProject>();
 
-	// Get all registry projects
-	const registryProjects = await getAllProjects();
-	const registryIndex = buildRegistryIndexes(registryProjects);
-	for (const [name, project] of Object.entries(registryProjects)) {
-		const key = project.remote?.project_slug ?? name;
-		projectMap.set(key, fromRegistryProject(name, project));
+	// Get all local projects from paths index
+	const allPaths = await getAllPaths();
+
+	for (const [projectId, paths] of Object.entries(allPaths)) {
+		// Read the first valid path's link
+		for (const localPath of paths) {
+			const link = await readProjectLink(localPath);
+			if (link) {
+				const resolved = fromLocalLink(link, localPath);
+				projectMap.set(projectId, resolved);
+				break; // Use first valid path
+			}
+		}
 	}
 
 	// Get all managed projects if logged in
@@ -358,61 +319,27 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 			const activeProjects = managedProjects.filter((p) => p.status !== "deleted");
 
 			for (const managed of activeProjects) {
-				const existing = projectMap.get(managed.slug);
+				const existing = projectMap.get(managed.id);
 
 				if (existing) {
-					// Merge with registry data
-					projectMap.set(managed.slug, mergeProjects(existing, fromManagedProject(managed)));
+					// Merge with local data - control plane is authoritative
+					projectMap.set(managed.id, mergeProjects(existing, fromManagedProject(managed)));
 				} else {
-					// New project not in registry
+					// New project not in local index
 					const resolved = fromManagedProject(managed);
-					projectMap.set(managed.slug, resolved);
 
-					// Cache in registry
-					const registryName =
-						registryIndex.byRemoteId.get(managed.id) ??
-						registryIndex.byRemoteSlug.get(managed.slug) ??
-						managed.slug;
-					await registerProject(registryName, {
-						workerUrl: resolved.url || null,
-						createdAt: managed.created_at,
-						lastDeployed: managed.updated_at,
-						status: managed.status === "active" ? "live" : "build_failed",
-						deploy_mode: "managed",
-						remote: {
-							project_id: managed.id,
-							project_slug: managed.slug,
-							org_id: managed.org_id,
-							runjack_url: `https://${managed.slug}.runjack.xyz`,
-						},
-					});
+					// Check if we have a local path for this project
+					const localPaths = allPaths[managed.id];
+					if (localPaths && localPaths.length > 0) {
+						resolved.localPath = localPaths[0];
+						resolved.sources.filesystem = true;
+					}
+
+					projectMap.set(managed.id, resolved);
 				}
 			}
 		} catch {
-			// Control plane unavailable, use registry-only data
-		}
-	}
-
-	// Enrich with local paths
-	const localPaths = await getAllLocalPaths();
-
-	for (const [name, paths] of Object.entries(localPaths)) {
-		const existing = projectMap.get(name);
-
-		if (existing) {
-			// Update existing project with local info
-			existing.localPath = paths[0]; // Primary path
-			existing.sources.filesystem = true;
-		} else {
-			// Project exists locally but not in registry/cloud
-			projectMap.set(name, {
-				name,
-				slug: name,
-				status: "local-only",
-				sources: { registry: false, controlPlane: false, filesystem: true },
-				localPath: paths[0],
-				createdAt: new Date().toISOString(),
-			});
+			// Control plane unavailable, use local-only data
 		}
 	}
 
@@ -436,20 +363,27 @@ export async function checkAvailability(name: string): Promise<{
 
 /**
  * Remove a project from everywhere
- * Handles: registry cleanup, control plane deletion, worker teardown
+ * Handles: .jack/ cleanup, paths index, control plane deletion
  */
-export async function removeProject(name: string): Promise<{
+export async function removeProject(
+	name: string,
+	projectPath?: string,
+): Promise<{
 	removed: string[];
 	errors: string[];
 }> {
 	const removed: string[] = [];
 	const errors: string[] = [];
+	const localPath = projectPath || process.cwd();
 
 	// Resolve project to find all locations
-	const project = await resolveProject(name);
+	const project = await resolveProject(name, { projectPath: localPath });
 	if (!project) {
 		return { removed, errors: [`Project "${name}" not found`] };
 	}
+
+	// Get project ID for paths index cleanup
+	const projectId = await getProjectId(localPath);
 
 	// Remove from control plane if managed
 	if (project.remote?.projectId) {
@@ -462,13 +396,23 @@ export async function removeProject(name: string): Promise<{
 		}
 	}
 
-	// Remove from registry
-	if (project.sources.registry) {
+	// Remove local .jack/ directory
+	if (project.sources.filesystem && project.localPath) {
 		try {
-			await removeFromRegistry(project.name);
-			removed.push("local registry");
+			await unlinkProject(project.localPath);
+			removed.push("local link (.jack/)");
 		} catch (error) {
-			errors.push(`Failed to remove from registry: ${error}`);
+			errors.push(`Failed to remove local link: ${error}`);
+		}
+	}
+
+	// Remove from paths index
+	if (projectId) {
+		try {
+			await unregisterPath(projectId, localPath);
+			removed.push("paths index");
+		} catch (error) {
+			errors.push(`Failed to remove from paths index: ${error}`);
 		}
 	}
 

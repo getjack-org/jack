@@ -368,8 +368,8 @@ async function removeProjectEntry(args: string[]): Promise<void> {
 
 	// Show where we'll remove from
 	const locations: string[] = [];
-	if (project.sources.registry) {
-		locations.push("local registry");
+	if (project.sources.filesystem) {
+		locations.push("local project");
 	}
 	if (project.sources.controlPlane) {
 		locations.push("jack cloud");
