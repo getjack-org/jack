@@ -4,7 +4,7 @@ import pkg from "../package.json";
 import { enableDebug } from "./lib/debug.ts";
 import { isJackError } from "./lib/errors.ts";
 import { info, error as printError } from "./lib/output.ts";
-import { identify, shutdown, withTelemetry } from "./lib/telemetry.ts";
+import { getEnvironmentProps, identify, shutdown, withTelemetry } from "./lib/telemetry.ts";
 
 const cli = meow(
 	`
@@ -164,6 +164,7 @@ identify({
 	arch: process.arch,
 	node_version: process.version,
 	is_ci: !!process.env.CI,
+	...getEnvironmentProps(),
 });
 
 try {
