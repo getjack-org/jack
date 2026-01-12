@@ -28,7 +28,7 @@ export interface ProjectListItem {
 	isLocal: boolean;
 	isCloudOnly: boolean;
 	errorMessage?: string;
-	tags?: string[]; // future
+	tags?: string[];
 }
 
 /**
@@ -84,6 +84,7 @@ export function toListItems(projects: ResolvedProject[]): ProjectListItem[] {
 		isLocal: !!proj.localPath && proj.sources.filesystem,
 		isCloudOnly: !proj.localPath && proj.sources.controlPlane,
 		errorMessage: proj.errorMessage,
+		tags: proj.tags,
 	}));
 }
 
@@ -138,11 +139,17 @@ export function filterByStatus(items: ProjectListItem[], status: string): Projec
 }
 
 /**
- * Filter items by tag (future)
+ * Filter items by tag
+ * When multiple tags provided, uses AND logic (project must have ALL tags)
  */
-export function filterByTag(items: ProjectListItem[], _tag: string): ProjectListItem[] {
-	// Tags not yet implemented
-	return items;
+export function filterByTag(items: ProjectListItem[], tags: string[]): ProjectListItem[] {
+	if (tags.length === 0) return items;
+
+	return items.filter((item) => {
+		const projectTags = item.tags ?? [];
+		// AND logic: project must have ALL specified tags
+		return tags.every((tag) => projectTags.includes(tag));
+	});
 }
 
 // ============================================================================
@@ -191,6 +198,27 @@ export function truncatePath(path: string, maxLen: number): string {
 // Formatters
 // ============================================================================
 
+/**
+ * Format tags for inline display after project name
+ * - Returns empty string if no tags
+ * - Shows up to 3 tags: [api, prod, my-saas]
+ * - Truncates with +N if more: [api, prod, +2]
+ * - Uses dim color for brackets
+ */
+export function formatTagsInline(tags: string[] | undefined): string {
+	if (!tags || tags.length === 0) return "";
+
+	const maxTags = 3;
+	if (tags.length <= maxTags) {
+		return `${colors.dim}[${colors.reset}${tags.join(", ")}${colors.dim}]${colors.reset}`;
+	}
+
+	// Show first 2 tags + count of remaining
+	const shown = tags.slice(0, 2);
+	const remaining = tags.length - 2;
+	return `${colors.dim}[${colors.reset}${shown.join(", ")}, ${colors.dim}+${remaining}]${colors.reset}`;
+}
+
 export interface FormatLineOptions {
 	indent?: number;
 	showUrl?: boolean;
@@ -214,6 +242,7 @@ export function formatProjectLine(item: ProjectListItem, options: FormatLineOpti
 					: colors.dim;
 
 	const name = item.name.slice(0, 20).padEnd(20);
+	const tags = formatTagsInline(item.tags);
 	const status = item.status.padEnd(12);
 
 	let url = "";
@@ -223,7 +252,7 @@ export function formatProjectLine(item: ProjectListItem, options: FormatLineOpti
 		url = `${colors.dim}${item.errorMessage}${colors.reset}`;
 	}
 
-	return `${padding}${statusColor}${icon}${colors.reset} ${name} ${statusColor}${status}${colors.reset} ${url}`;
+	return `${padding}${statusColor}${icon}${colors.reset} ${name}${tags ? ` ${tags}` : ""} ${statusColor}${status}${colors.reset} ${url}`;
 }
 
 /**
@@ -294,9 +323,10 @@ export function formatLocalSection(items: ProjectListItem[]): string {
 							: colors.dim;
 
 			const url = proj.url ? proj.url.replace("https://", "") : "";
+			const tags = formatTagsInline(proj.tags);
 
 			lines.push(
-				`    ${colors.dim}${prefix}${colors.reset} ${proj.name}  ${statusColor}${proj.status}${colors.reset}${url ? `  ${url}` : ""}`,
+				`    ${colors.dim}${prefix}${colors.reset} ${proj.name}${tags ? ` ${tags}` : ""}  ${statusColor}${proj.status}${colors.reset}${url ? `  ${url}` : ""}`,
 			);
 		}
 	}

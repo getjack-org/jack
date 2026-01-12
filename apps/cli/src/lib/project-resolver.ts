@@ -73,6 +73,9 @@ export interface ResolvedProject {
 
 	// Resources (fetched on-demand)
 	resources?: ResolvedResources;
+
+	// Tags (from local project link)
+	tags?: string[];
 }
 
 /**
@@ -98,6 +101,7 @@ function fromLocalLink(link: LocalProjectLink, localPath: string): ResolvedProje
 				},
 		deployMode: link.deploy_mode,
 		createdAt: link.linked_at,
+		tags: link.tags,
 	};
 }
 
@@ -106,6 +110,16 @@ function fromLocalLink(link: LocalProjectLink, localPath: string): ResolvedProje
  */
 function fromManagedProject(managed: ManagedProject): ResolvedProject {
 	const status: ProjectStatus = managed.status === "active" ? "live" : "error";
+
+	// Parse tags from JSON string (e.g., '["backend", "api"]')
+	let tags: string[] | undefined;
+	if (managed.tags) {
+		try {
+			tags = JSON.parse(managed.tags);
+		} catch {
+			// Invalid JSON, ignore
+		}
+	}
 
 	return {
 		name: managed.name,
@@ -124,6 +138,7 @@ function fromManagedProject(managed: ManagedProject): ResolvedProject {
 		deployMode: "managed",
 		createdAt: managed.created_at,
 		updatedAt: managed.updated_at,
+		tags,
 	};
 }
 
@@ -145,6 +160,8 @@ function mergeProjects(local: ResolvedProject, managed: ResolvedProject): Resolv
 		remote: managed.remote,
 		deployMode: "managed",
 		updatedAt: managed.updatedAt || local.updatedAt,
+		// Local tags take priority; fall back to remote if local has none
+		tags: local.tags?.length ? local.tags : managed.tags,
 	};
 }
 

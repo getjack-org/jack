@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { select } from "@inquirer/prompts";
+import { fetchProjectTags } from "../lib/control-plane.ts";
 import { formatSize } from "../lib/format.ts";
 import { box, error, info, spinner, success } from "../lib/output.ts";
 import { registerPath } from "../lib/paths-index.ts";
-import { linkProject } from "../lib/project-link.ts";
+import { linkProject, updateProjectLink } from "../lib/project-link.ts";
 import { resolveProject } from "../lib/project-resolver.ts";
 import { cloneFromCloud, getRemoteManifest } from "../lib/storage/index.ts";
 
@@ -84,6 +85,17 @@ export default async function clone(projectName?: string, flags: CloneFlags = {}
 			// Managed project - link with control plane project ID
 			await linkProject(targetDir, project.remote.projectId, "managed");
 			await registerPath(project.remote.projectId, targetDir);
+
+			// Fetch and restore tags from control plane
+			try {
+				const remoteTags = await fetchProjectTags(project.remote.projectId);
+				if (remoteTags.length > 0) {
+					await updateProjectLink(targetDir, { tags: remoteTags });
+					info(`Restored ${remoteTags.length} tag(s)`);
+				}
+			} catch {
+				// Silent fail - tag restoration is non-critical
+			}
 		}
 	} catch {
 		// Not a control plane project or offline - continue without linking

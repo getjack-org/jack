@@ -520,6 +520,129 @@ api.patch("/projects/:projectId", async (c) => {
 	}
 });
 
+// Tag validation regex: lowercase alphanumeric with colons and hyphens, must start/end with alphanumeric
+const TAG_PATTERN = /^[a-z0-9][a-z0-9:-]*[a-z0-9]$|^[a-z0-9]$/;
+
+api.put("/projects/:projectId/tags", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Parse request body
+	const body = await c.req.json<{ tags: string[] }>();
+
+	// Validate tags is an array
+	if (!Array.isArray(body.tags)) {
+		return c.json({ error: "invalid_request", message: "tags must be an array" }, 400);
+	}
+
+	// Validate max 20 tags
+	if (body.tags.length > 20) {
+		return c.json({ error: "invalid_request", message: "Maximum 20 tags allowed" }, 400);
+	}
+
+	// Validate each tag
+	for (const tag of body.tags) {
+		if (typeof tag !== "string") {
+			return c.json({ error: "invalid_request", message: "Each tag must be a string" }, 400);
+		}
+		if (tag.length > 50) {
+			return c.json(
+				{
+					error: "invalid_request",
+					message: `Tag '${tag}' exceeds maximum length of 50 characters`,
+				},
+				400,
+			);
+		}
+		if (!TAG_PATTERN.test(tag)) {
+			return c.json(
+				{
+					error: "invalid_request",
+					message: `Tag '${tag}' is invalid. Tags must be lowercase alphanumeric with colons and hyphens, starting and ending with alphanumeric characters`,
+				},
+				400,
+			);
+		}
+	}
+
+	// Get project and verify it exists
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Deduplicate and sort tags
+	const uniqueTags = [...new Set(body.tags)].sort();
+	const tagsJson = JSON.stringify(uniqueTags);
+
+	try {
+		await c.env.DB.prepare(
+			"UPDATE projects SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		)
+			.bind(tagsJson, projectId)
+			.run();
+
+		return c.json({ success: true, tags: uniqueTags });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to update tags";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+api.get("/projects/:projectId/tags", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify it exists
+	const project = await c.env.DB.prepare(
+		"SELECT id, org_id, tags FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; tags: string | null }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Parse tags from JSON, default to empty array
+	let tags: string[] = [];
+	try {
+		tags = project.tags ? JSON.parse(project.tags) : [];
+	} catch {
+		// If parsing fails, return empty array
+		tags = [];
+	}
+
+	return c.json({ tags });
+});
+
 // Database export endpoint
 api.get("/projects/:projectId/database/export", async (c) => {
 	const auth = c.get("auth");

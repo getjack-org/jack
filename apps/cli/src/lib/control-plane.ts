@@ -165,6 +165,7 @@ export interface ManagedProject {
 	status: "active" | "error" | "deleted";
 	created_at: string;
 	updated_at: string;
+	tags?: string; // JSON string array from DB, e.g., '["backend", "api"]'
 }
 
 /**
@@ -293,4 +294,50 @@ export async function fetchProjectResources(projectId: string): Promise<ProjectR
 
 	const data = (await response.json()) as { resources: ProjectResource[] };
 	return data.resources;
+}
+
+/**
+ * Sync project tags to the control plane.
+ * Fire-and-forget: errors are logged but not thrown.
+ */
+export async function syncProjectTags(projectId: string, tags: string[]): Promise<void> {
+	const { authFetch } = await import("./auth/index.ts");
+	const { debug } = await import("./debug.ts");
+
+	try {
+		const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/tags`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ tags }),
+		});
+
+		if (!response.ok) {
+			// Log but don't throw - tag sync is non-critical
+			debug(`Tag sync failed: ${response.status}`);
+		}
+	} catch (error) {
+		// Log but don't throw - tag sync is non-critical
+		debug(`Tag sync failed: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+/**
+ * Fetch project tags from the control plane.
+ * Returns empty array on error.
+ */
+export async function fetchProjectTags(projectId: string): Promise<string[]> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	try {
+		const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/tags`);
+
+		if (!response.ok) {
+			return [];
+		}
+
+		const data = (await response.json()) as { tags: string[] };
+		return data.tags ?? [];
+	} catch {
+		return [];
+	}
 }

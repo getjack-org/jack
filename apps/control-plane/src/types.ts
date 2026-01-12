@@ -27,6 +27,7 @@ export interface Project {
 	status: ProjectStatus;
 	code_bucket_prefix: string;
 	content_bucket_enabled: number; // SQLite boolean (0 or 1)
+	tags: string; // JSON string array of tags
 	created_at: string;
 	updated_at: string;
 }
