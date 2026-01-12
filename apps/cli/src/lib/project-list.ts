@@ -21,7 +21,7 @@ import type { ResolvedProject } from "./project-resolver.ts";
  */
 export interface ProjectListItem {
 	name: string;
-	status: "live" | "error" | "local-only" | "syncing";
+	status: "live" | "error" | "local-only" | "syncing" | "auth-expired";
 	url: string | null;
 	localPath: string | null;
 	updatedAt: string | null;
@@ -65,6 +65,7 @@ export const STATUS_ICONS: Record<ProjectListItem["status"], string> = {
 	error: "\u2716", // ✖
 	"local-only": "\u25CC", // ◌
 	syncing: "\u25D0", // ◐
+	"auth-expired": "\u26A0", // ⚠
 };
 
 // ============================================================================
@@ -117,7 +118,7 @@ export function groupProjects(items: ProjectListItem[]): GroupedProjects {
 	const cloudOnly: ProjectListItem[] = [];
 
 	for (const item of items) {
-		if (item.status === "error") {
+		if (item.status === "error" || item.status === "auth-expired") {
 			errors.push(item);
 		} else if (item.isLocal) {
 			local.push(item);
@@ -233,7 +234,7 @@ export function formatProjectLine(item: ProjectListItem, options: FormatLineOpti
 
 	const icon = STATUS_ICONS[item.status];
 	const statusColor =
-		item.status === "error"
+		item.status === "error" || item.status === "auth-expired"
 			? colors.red
 			: item.status === "live"
 				? colors.green
@@ -248,7 +249,7 @@ export function formatProjectLine(item: ProjectListItem, options: FormatLineOpti
 	let url = "";
 	if (showUrl && item.url) {
 		url = item.url.replace("https://", "");
-	} else if (showUrl && item.status === "error" && item.errorMessage) {
+	} else if (showUrl && (item.status === "error" || item.status === "auth-expired") && item.errorMessage) {
 		url = `${colors.dim}${item.errorMessage}${colors.reset}`;
 	}
 
@@ -314,7 +315,7 @@ export function formatLocalSection(items: ProjectListItem[]): string {
 
 			const icon = STATUS_ICONS[proj.status];
 			const statusColor =
-				proj.status === "error"
+				proj.status === "error" || proj.status === "auth-expired"
 					? colors.red
 					: proj.status === "live"
 						? colors.green

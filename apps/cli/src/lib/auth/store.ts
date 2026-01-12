@@ -42,21 +42,33 @@ export async function deleteCredentials(): Promise<void> {
 	}
 }
 
-export async function isLoggedIn(): Promise<boolean> {
+export type AuthState = "logged-in" | "not-logged-in" | "session-expired";
+
+/**
+ * Get detailed auth state
+ * - "logged-in": valid token (or successfully refreshed)
+ * - "not-logged-in": no credentials stored
+ * - "session-expired": had credentials but refresh failed
+ */
+export async function getAuthState(): Promise<AuthState> {
 	const creds = await getCredentials();
-	if (!creds) return false;
+	if (!creds) return "not-logged-in";
 
 	// If token is not expired, we're logged in
-	if (!isTokenExpired(creds)) return true;
+	if (!isTokenExpired(creds)) return "logged-in";
 
 	// If expired, try to refresh (dynamic import to avoid circular dep)
 	try {
 		const { getValidAccessToken } = await import("./client.ts");
 		const token = await getValidAccessToken();
-		return token !== null;
+		return token !== null ? "logged-in" : "session-expired";
 	} catch {
-		return false;
+		return "session-expired";
 	}
+}
+
+export async function isLoggedIn(): Promise<boolean> {
+	return (await getAuthState()) === "logged-in";
 }
 
 export function isTokenExpired(creds: AuthCredentials): boolean {
