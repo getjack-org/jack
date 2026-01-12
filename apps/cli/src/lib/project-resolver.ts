@@ -12,7 +12,7 @@
  * .jack/project.json is the local link (not a cache).
  */
 
-import { isLoggedIn } from "./auth/index.ts";
+import { type AuthState, getAuthState, isLoggedIn } from "./auth/index.ts";
 import {
 	type ManagedProject,
 	fetchProjectResources,
@@ -37,7 +37,7 @@ import {
 /**
  * User-facing project status
  */
-export type ProjectStatus = "live" | "local-only" | "error" | "syncing";
+export type ProjectStatus = "live" | "local-only" | "error" | "syncing" | "auth-expired";
 
 /**
  * Unified project representation
@@ -232,24 +232,33 @@ export async function resolveProject(
 		if (link.deploy_mode === "byo") {
 			// BYO project - use local link info only, no control plane
 			// resolved stays as-is
-		} else if (link.deploy_mode === "managed" && (await isLoggedIn())) {
-			// Managed project - fetch fresh data from control plane
-			try {
-				// Try to find by project ID first via listing
-				const managedProjects = await listManagedProjects();
-				const managed = managedProjects.find((p) => p.id === link.project_id);
+		} else if (link.deploy_mode === "managed") {
+			// Managed project - check auth state and fetch from control plane
+			const authState = await getAuthState();
 
-				if (managed) {
-					resolved = mergeProjects(resolved, fromManagedProject(managed));
-				} else {
-					// Project ID not found in control plane - might be deleted
-					resolved.status = "error";
-					resolved.errorMessage = "Project not found in jack cloud";
+			if (authState === "logged-in") {
+				try {
+					// Try to find by project ID first via listing
+					const managedProjects = await listManagedProjects();
+					const managed = managedProjects.find((p) => p.id === link.project_id);
+
+					if (managed) {
+						resolved = mergeProjects(resolved, fromManagedProject(managed));
+					} else {
+						// Project ID not found in control plane - might be deleted
+						resolved.status = "error";
+						resolved.errorMessage = "Project not found in jack cloud";
+					}
+				} catch {
+					// Control plane unavailable, use local data with syncing status
+					resolved.status = "syncing";
 				}
-			} catch {
-				// Control plane unavailable, use local data with syncing status
-				resolved.status = "syncing";
+			} else if (authState === "session-expired") {
+				// Session expired - show clear status
+				resolved.status = "auth-expired";
+				resolved.errorMessage = "Session expired. Run: jack login";
 			}
+			// If not-logged-in, keep "syncing" status from fromLocalLink
 		}
 	} else if (await isLoggedIn()) {
 		// No local link - check control plane by slug/name if logged in
@@ -327,8 +336,10 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 		}
 	}
 
-	// Get all managed projects if logged in
-	if (await isLoggedIn()) {
+	// Get all managed projects based on auth state
+	const authState = await getAuthState();
+
+	if (authState === "logged-in") {
 		try {
 			const managedProjects = await listManagedProjects();
 
@@ -357,6 +368,14 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 			}
 		} catch {
 			// Control plane unavailable, use local-only data
+		}
+	} else if (authState === "session-expired") {
+		// Mark all managed projects as auth-expired
+		for (const [projectId, project] of projectMap) {
+			if (project.deployMode === "managed" && project.status === "syncing") {
+				project.status = "auth-expired";
+				project.errorMessage = "Session expired. Run: jack login";
+			}
 		}
 	}
 
