@@ -28,6 +28,7 @@ export interface LocalProjectLink {
 	project_id: string;
 	deploy_mode: DeployMode;
 	linked_at: string;
+	tags?: string[];
 }
 
 /**

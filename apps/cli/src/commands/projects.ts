@@ -8,6 +8,7 @@ import {
 	STATUS_ICONS,
 	colors,
 	filterByStatus,
+	filterByTag,
 	formatCloudSection,
 	formatErrorSection,
 	formatLocalSection,
@@ -75,12 +76,27 @@ function extractFlagValue(args: string[], flag: string): string | null {
 }
 
 /**
+ * Extract multiple flag values from args (e.g., --tag api --tag prod -> ["api", "prod"])
+ */
+function extractFlagValues(args: string[], flag: string): string[] {
+	const values: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === flag && i + 1 < args.length) {
+			const value = args[i + 1];
+			if (value) values.push(value);
+		}
+	}
+	return values;
+}
+
+/**
  * List all projects with status indicators
  */
 async function listProjects(args: string[]): Promise<void> {
 	// Parse flags
 	const showAll = args.includes("--all") || args.includes("-a");
 	const statusFilter = extractFlagValue(args, "--status");
+	const tagFilters = extractFlagValues(args, "--tag");
 	const jsonOutput = args.includes("--json");
 	const localOnly = args.includes("--local");
 	const cloudOnly = args.includes("--cloud");
@@ -97,6 +113,7 @@ async function listProjects(args: string[]): Promise<void> {
 	if (statusFilter) items = filterByStatus(items, statusFilter);
 	if (localOnly) items = items.filter((i) => i.isLocal);
 	if (cloudOnly) items = items.filter((i) => i.isCloudOnly);
+	if (tagFilters.length > 0) items = filterByTag(items, tagFilters);
 
 	// Handle empty state
 	if (items.length === 0) {
@@ -105,7 +122,7 @@ async function listProjects(args: string[]): Promise<void> {
 			return;
 		}
 		info("No projects found");
-		if (statusFilter || localOnly || cloudOnly) {
+		if (statusFilter || localOnly || cloudOnly || tagFilters.length > 0) {
 			info("Try removing filters to see all projects");
 		} else {
 			info("Create a project with: jack new <name>");

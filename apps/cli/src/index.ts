@@ -38,6 +38,7 @@ const cli = meow(
   Project Management
     link [name]         Link directory to a project
     unlink              Remove project link
+    tag                 Manage project tags
 
   Advanced
     agents              Manage AI agent configs
@@ -141,6 +142,10 @@ const cli = meow(
 				type: "boolean",
 				default: false,
 			},
+			tag: {
+				type: "string",
+				isMultiple: true,
+			},
 		},
 	},
 );
@@ -214,6 +219,11 @@ try {
 			await withTelemetry("agents", agents)(args[0], args.slice(1), {
 				project: cli.flags.project,
 			});
+			break;
+		}
+		case "tag": {
+			const { default: tag } = await import("./commands/tag.ts");
+			await withTelemetry("tag", tag)(args[0], args.slice(1));
 			break;
 		}
 		case "sync": {
@@ -298,6 +308,11 @@ try {
 			if (cli.flags.all) lsArgs.push("--all");
 			if (cli.flags.json) lsArgs.push("--json");
 			if (cli.flags.status) lsArgs.push("--status", cli.flags.status);
+			if (cli.flags.tag) {
+				for (const t of cli.flags.tag) {
+					lsArgs.push("--tag", t);
+				}
+			}
 			await withTelemetry("projects", projects)("list", lsArgs);
 			break;
 		}

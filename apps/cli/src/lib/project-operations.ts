@@ -1109,9 +1109,9 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		const existingLink = await readProjectLink(projectPath);
 		if (!existingLink) {
 			// Not linked yet - create link
-			if (deployMode === "managed" && project?.remote?.project_id) {
-				await linkProject(projectPath, project.remote.project_id, "managed");
-				await registerPath(project.remote.project_id, projectPath);
+			if (deployMode === "managed" && link?.project_id) {
+				await linkProject(projectPath, link.project_id, "managed");
+				await registerPath(link.project_id, projectPath);
 			} else {
 				// BYO mode - generate new ID
 				const byoProjectId = generateByoProjectId();
