@@ -6,12 +6,14 @@ import { error, info, item, output as outputSpinner, success, warn } from "../li
 import {
 	type ProjectListItem,
 	STATUS_ICONS,
+	buildTagColorMap,
 	colors,
 	filterByStatus,
 	filterByTag,
 	formatCloudSection,
 	formatErrorSection,
 	formatLocalSection,
+	formatTagsInline,
 	groupProjects,
 	sortByUpdated,
 	toListItems,
@@ -153,13 +155,16 @@ function renderGroupedView(items: ProjectListItem[]): void {
 	const groups = groupProjects(items);
 	const total = items.length;
 
+	// Build consistent tag color map across all projects
+	const tagColorMap = buildTagColorMap(items);
+
 	console.error("");
 	info(`${total} projects`);
 
 	// Section 1: Errors (always show all)
 	if (groups.errors.length > 0) {
 		console.error("");
-		console.error(formatErrorSection(groups.errors));
+		console.error(formatErrorSection(groups.errors, { tagColorMap }));
 	}
 
 	// Section 2: Local projects (grouped by parent dir)
@@ -168,7 +173,7 @@ function renderGroupedView(items: ProjectListItem[]): void {
 		console.error(
 			`  ${colors.dim}${STATUS_ICONS["local-only"]} Local (${groups.local.length})${colors.reset}`,
 		);
-		console.error(formatLocalSection(groups.local));
+		console.error(formatLocalSection(groups.local, { tagColorMap }));
 	}
 
 	// Section 3: Cloud-only (show last N by updatedAt)
@@ -178,7 +183,7 @@ function renderGroupedView(items: ProjectListItem[]): void {
 
 		console.error("");
 		console.error(
-			formatCloudSection(sorted, { limit: CLOUD_LIMIT, total: groups.cloudOnly.length }),
+			formatCloudSection(sorted, { limit: CLOUD_LIMIT, total: groups.cloudOnly.length, tagColorMap }),
 		);
 	}
 
@@ -199,6 +204,9 @@ function renderFlatTable(items: ProjectListItem[]): void {
 		return a.name.localeCompare(b.name);
 	});
 
+	// Build consistent tag color map
+	const tagColorMap = buildTagColorMap(items);
+
 	console.error("");
 	info(`${items.length} projects`);
 	console.error("");
@@ -210,7 +218,7 @@ function renderFlatTable(items: ProjectListItem[]): void {
 	for (const item of sorted) {
 		const icon = STATUS_ICONS[item.status] || "?";
 		const statusColor =
-			item.status === "error"
+			item.status === "error" || item.status === "auth-expired"
 				? colors.red
 				: item.status === "live"
 					? colors.green
@@ -219,11 +227,12 @@ function renderFlatTable(items: ProjectListItem[]): void {
 						: colors.dim;
 
 		const name = item.name.slice(0, 20).padEnd(22);
+		const tags = formatTagsInline(item.tags, tagColorMap);
 		const status = item.status.padEnd(12);
 		const url = item.url ? item.url.replace("https://", "") : "\u2014"; // em-dash
 
 		console.error(
-			`  ${statusColor}${icon}${colors.reset} ${name} ${statusColor}${status}${colors.reset} ${url}`,
+			`  ${statusColor}${icon}${colors.reset} ${name}${tags ? ` ${tags}` : ""} ${statusColor}${status}${colors.reset} ${url}`,
 		);
 	}
 

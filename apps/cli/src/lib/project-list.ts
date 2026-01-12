@@ -56,6 +56,55 @@ export const colors = {
 	bold: isColorEnabled ? "\x1b[1m" : "",
 };
 
+// Neon tag colors - colorblind-safe, work on light/dark themes
+const TAG_COLORS = isColorEnabled
+	? [
+			"\x1b[96m", // bright cyan
+			"\x1b[95m", // bright magenta
+			"\x1b[94m", // bright blue
+			"\x1b[92m", // bright green
+			"\x1b[93m", // bright yellow
+			"\x1b[97m", // bright white
+		]
+	: [];
+
+/**
+ * Hash a tag name to a consistent color index
+ */
+function hashTag(tag: string): number {
+	let hash = 0;
+	for (const char of tag) {
+		hash = (hash << 5) - hash + char.charCodeAt(0);
+		hash = hash & hash; // Convert to 32bit integer
+	}
+	return Math.abs(hash) % TAG_COLORS.length;
+}
+
+/**
+ * Build a color map for all unique tags across projects
+ * Ensures same tag always gets same color
+ */
+export function buildTagColorMap(items: ProjectListItem[]): Map<string, string> {
+	const colorMap = new Map<string, string>();
+	if (!isColorEnabled || TAG_COLORS.length === 0) return colorMap;
+
+	// Collect all unique tags
+	const allTags = new Set<string>();
+	for (const item of items) {
+		for (const tag of item.tags ?? []) {
+			allTags.add(tag);
+		}
+	}
+
+	// Assign consistent colors based on hash
+	for (const tag of allTags) {
+		const colorIndex = hashTag(tag);
+		colorMap.set(tag, TAG_COLORS[colorIndex] || "");
+	}
+
+	return colorMap;
+}
+
 // ============================================================================
 // Status Icons
 // ============================================================================
@@ -202,34 +251,43 @@ export function truncatePath(path: string, maxLen: number): string {
 /**
  * Format tags for inline display after project name
  * - Returns empty string if no tags
- * - Shows up to 3 tags: [api, prod, my-saas]
- * - Truncates with +N if more: [api, prod, +2]
- * - Uses dim color for brackets
+ * - Shows up to 3 tags as #tag with neon colors
+ * - Truncates with +N if more: #api #prod +2
+ * - Each tag gets consistent color across all projects
  */
-export function formatTagsInline(tags: string[] | undefined): string {
+export function formatTagsInline(
+	tags: string[] | undefined,
+	colorMap?: Map<string, string>,
+): string {
 	if (!tags || tags.length === 0) return "";
 
 	const maxTags = 3;
-	if (tags.length <= maxTags) {
-		return `${colors.dim}[${colors.reset}${tags.join(", ")}${colors.dim}]${colors.reset}`;
+	const tagsToShow = tags.length <= maxTags ? tags : tags.slice(0, 2);
+
+	const formatted = tagsToShow.map((tag) => {
+		const tagColor = colorMap?.get(tag) || colors.cyan;
+		return `${tagColor}#${tag}${colors.reset}`;
+	});
+
+	if (tags.length > maxTags) {
+		const remaining = tags.length - 2;
+		formatted.push(`${colors.dim}+${remaining}${colors.reset}`);
 	}
 
-	// Show first 2 tags + count of remaining
-	const shown = tags.slice(0, 2);
-	const remaining = tags.length - 2;
-	return `${colors.dim}[${colors.reset}${shown.join(", ")}, ${colors.dim}+${remaining}]${colors.reset}`;
+	return formatted.join(" ");
 }
 
 export interface FormatLineOptions {
 	indent?: number;
 	showUrl?: boolean;
+	tagColorMap?: Map<string, string>;
 }
 
 /**
  * Format a single project line
  */
 export function formatProjectLine(item: ProjectListItem, options: FormatLineOptions = {}): string {
-	const { indent = 4, showUrl = true } = options;
+	const { indent = 4, showUrl = true, tagColorMap } = options;
 	const padding = " ".repeat(indent);
 
 	const icon = STATUS_ICONS[item.status];
@@ -243,7 +301,7 @@ export function formatProjectLine(item: ProjectListItem, options: FormatLineOpti
 					: colors.dim;
 
 	const name = item.name.slice(0, 20).padEnd(20);
-	const tags = formatTagsInline(item.tags);
+	const tags = formatTagsInline(item.tags, tagColorMap);
 	const status = item.status.padEnd(12);
 
 	let url = "";
@@ -256,11 +314,19 @@ export function formatProjectLine(item: ProjectListItem, options: FormatLineOpti
 	return `${padding}${statusColor}${icon}${colors.reset} ${name}${tags ? ` ${tags}` : ""} ${statusColor}${status}${colors.reset} ${url}`;
 }
 
+export interface FormatErrorSectionOptions {
+	tagColorMap?: Map<string, string>;
+}
+
 /**
  * Format the "Needs attention" (errors) section
  */
-export function formatErrorSection(items: ProjectListItem[]): string {
+export function formatErrorSection(
+	items: ProjectListItem[],
+	options: FormatErrorSectionOptions = {},
+): string {
 	if (items.length === 0) return "";
+	const { tagColorMap } = options;
 
 	const lines: string[] = [];
 	lines.push(
@@ -268,17 +334,25 @@ export function formatErrorSection(items: ProjectListItem[]): string {
 	);
 
 	for (const item of items) {
-		lines.push(formatProjectLine(item, { indent: 4 }));
+		lines.push(formatProjectLine(item, { indent: 4, tagColorMap }));
 	}
 
 	return lines.join("\n");
 }
 
+export interface FormatLocalSectionOptions {
+	tagColorMap?: Map<string, string>;
+}
+
 /**
  * Format the "Local" section, grouped by parent directory
  */
-export function formatLocalSection(items: ProjectListItem[]): string {
+export function formatLocalSection(
+	items: ProjectListItem[],
+	options: FormatLocalSectionOptions = {},
+): string {
 	if (items.length === 0) return "";
+	const { tagColorMap } = options;
 
 	// Group by parent directory
 	interface DirGroup {
@@ -324,7 +398,7 @@ export function formatLocalSection(items: ProjectListItem[]): string {
 							: colors.dim;
 
 			const url = proj.url ? proj.url.replace("https://", "") : "";
-			const tags = formatTagsInline(proj.tags);
+			const tags = formatTagsInline(proj.tags, tagColorMap);
 
 			lines.push(
 				`    ${colors.dim}${prefix}${colors.reset} ${proj.name}${tags ? ` ${tags}` : ""}  ${statusColor}${proj.status}${colors.reset}${url ? `  ${url}` : ""}`,
@@ -338,6 +412,7 @@ export function formatLocalSection(items: ProjectListItem[]): string {
 export interface FormatCloudSectionOptions {
 	limit: number;
 	total: number;
+	tagColorMap?: Map<string, string>;
 }
 
 /**
@@ -349,7 +424,7 @@ export function formatCloudSection(
 ): string {
 	if (items.length === 0) return "";
 
-	const { limit, total } = options;
+	const { limit, total, tagColorMap } = options;
 	const showing = items.slice(0, limit);
 	const remaining = total - showing.length;
 
@@ -359,7 +434,7 @@ export function formatCloudSection(
 	);
 
 	for (const item of showing) {
-		lines.push(formatProjectLine(item, { indent: 4 }));
+		lines.push(formatProjectLine(item, { indent: 4, tagColorMap }));
 	}
 
 	if (remaining > 0) {
