@@ -18,6 +18,16 @@ jobs:
       id-token: write  # Required for npm provenance (OIDC auth)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history to check branches
+
+      - name: Verify tag is on main branch
+        run: |
+          if ! git branch -r --contains ${{ github.sha }} | grep -q 'origin/main'; then
+            echo "::error::Tags must be created from main branch, not feature branches"
+            echo "Merge your PR to main first, then tag from main."
+            exit 1
+          fi
 
       - name: Validate version matches tag
         run: |
