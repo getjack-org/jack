@@ -41,6 +41,7 @@ export interface ManifestData {
 				| "none";
 		};
 		vars?: Record<string, string>;
+		r2?: Array<{ binding: string; bucket_name: string }>;
 	};
 }
 
@@ -158,6 +159,14 @@ function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindi
 	// Extract vars
 	if (config.vars && Object.keys(config.vars).length > 0) {
 		bindings.vars = config.vars;
+	}
+
+	// Extract R2 bucket bindings (support multiple)
+	if (config.r2_buckets && config.r2_buckets.length > 0) {
+		bindings.r2 = config.r2_buckets.map((bucket) => ({
+			binding: bucket.binding,
+			bucket_name: bucket.bucket_name,
+		}));
 	}
 
 	// Return undefined if no bindings were extracted

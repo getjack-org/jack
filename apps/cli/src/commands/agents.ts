@@ -116,7 +116,7 @@ async function scanAndPrompt(): Promise<void> {
 	const newAgents = detectionResult.detected.filter(({ id }) => !existingAgents[id]);
 
 	if (newAgents.length === 0) {
-		success("No new agents found");
+		success("All agents up to date");
 		await listAgents();
 		return;
 	}
