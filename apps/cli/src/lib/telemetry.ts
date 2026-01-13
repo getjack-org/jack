@@ -69,7 +69,11 @@ function send(url: string, data: object): void {
 async function isEnabled(): Promise<boolean> {
 	if (enabledCache !== null) return enabledCache;
 
-	if (process.env.DO_NOT_TRACK === "1" || process.env.CI === "true" || process.env.JACK_TELEMETRY_DISABLED === "1") {
+	if (
+		process.env.DO_NOT_TRACK === "1" ||
+		process.env.CI === "true" ||
+		process.env.JACK_TELEMETRY_DISABLED === "1"
+	) {
 		enabledCache = false;
 		return false;
 	}
@@ -110,7 +114,10 @@ export interface UserProperties {
 }
 
 // Detect environment properties
-export function getEnvironmentProps(): Pick<UserProperties, "shell" | "terminal" | "terminal_width" | "is_tty" | "locale"> {
+export function getEnvironmentProps(): Pick<
+	UserProperties,
+	"shell" | "terminal" | "terminal_width" | "is_tty" | "locale"
+> {
 	return {
 		shell: process.env.SHELL?.split("/").pop(), // e.g., /bin/zsh -> zsh
 		terminal: process.env.TERM_PROGRAM, // e.g., iTerm.app, vscode, Apple_Terminal
@@ -180,10 +187,19 @@ export function withTelemetry<T extends (...args: any[]) => Promise<any>>(
 
 		try {
 			const result = await fn(...args);
-			track(Events.COMMAND_COMPLETED, { command: commandName, platform, duration_ms: Date.now() - start });
+			track(Events.COMMAND_COMPLETED, {
+				command: commandName,
+				platform,
+				duration_ms: Date.now() - start,
+			});
 			return result;
 		} catch (error) {
-			track(Events.COMMAND_FAILED, { command: commandName, platform, error_type: classifyError(error), duration_ms: Date.now() - start });
+			track(Events.COMMAND_FAILED, {
+				command: commandName,
+				platform,
+				error_type: classifyError(error),
+				duration_ms: Date.now() - start,
+			});
 			throw error;
 		}
 	}) as T;
