@@ -70,6 +70,12 @@ export interface UserProfile {
 	updated_at: string;
 }
 
+export interface PublishProjectResponse {
+	success: boolean;
+	published_as: string;
+	fork_command: string;
+}
+
 export interface CreateDeploymentRequest {
 	source: string;
 }
@@ -429,4 +435,58 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 	} catch {
 		return null;
 	}
+}
+
+export interface SourceSnapshotResponse {
+	success: boolean;
+	source_key: string;
+}
+
+/**
+ * Upload a source snapshot for a project.
+ * Used to enable project forking.
+ */
+export async function uploadSourceSnapshot(
+	projectId: string,
+	sourceZipPath: string,
+): Promise<SourceSnapshotResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const formData = new FormData();
+	const sourceFile = Bun.file(sourceZipPath);
+	formData.append("source", sourceFile);
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/source`, {
+		method: "POST",
+		body: formData,
+	});
+
+	if (!response.ok) {
+		const error = (await response.json().catch(() => ({ message: "Upload failed" }))) as {
+			message?: string;
+		};
+		throw new Error(error.message || `Source upload failed: ${response.status}`);
+	}
+
+	return response.json() as Promise<SourceSnapshotResponse>;
+}
+
+/**
+ * Publish a project to make it forkable by others.
+ */
+export async function publishProject(projectId: string): Promise<PublishProjectResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/publish`, {
+		method: "POST",
+	});
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to publish project: ${response.status}`);
+	}
+
+	return response.json() as Promise<PublishProjectResponse>;
 }

@@ -8,6 +8,48 @@ app.get("/health", (c) => {
 	return c.json({ status: "ok", service: "jack-dispatch" });
 });
 
+/**
+ * Parse hostname to extract username and slug.
+ *
+ * New format: {username}-{slug}.runjack.xyz
+ *   - Username is the first segment (before first hyphen)
+ *   - Slug is everything after the first hyphen
+ *   - Example: "alice-my-api" -> { username: "alice", slug: "my-api" }
+ *   - Example: "alice-my-cool-api" -> { username: "alice", slug: "my-cool-api" }
+ *
+ * Legacy format: {slug}.runjack.xyz
+ *   - Just the slug, no username
+ *   - Example: "my-api" -> { username: null, slug: "my-api" }
+ *
+ * Note: Usernames and slugs cannot start/end with hyphens (enforced by DB triggers),
+ * so the first hyphen reliably separates username from slug.
+ */
+function parseHostname(host: string): { username: string | null; slug: string } | null {
+	const match = host.match(/^([a-z0-9-]+)\.runjack\.xyz$/);
+	if (!match?.[1]) {
+		return null;
+	}
+
+	const subdomain = match[1];
+	const hyphenIndex = subdomain.indexOf("-");
+
+	if (hyphenIndex === -1) {
+		// No hyphen: legacy format with just slug
+		return { username: null, slug: subdomain };
+	}
+
+	// New format: username-slug
+	const username = subdomain.substring(0, hyphenIndex);
+	const slug = subdomain.substring(hyphenIndex + 1);
+
+	// Validate both parts are non-empty
+	if (!username || !slug) {
+		return null;
+	}
+
+	return { username, slug };
+}
+
 app.all("/*", async (c) => {
 	const env = c.env;
 	const host = c.req.header("host");
@@ -16,25 +58,51 @@ app.all("/*", async (c) => {
 		return c.json({ error: "Missing host header" }, 400);
 	}
 
-	// Parse project slug from host (format: {slug}.runjack.xyz)
-	const match = host.match(/^([a-z0-9-]+)\.runjack\.xyz$/);
-	if (!match?.[1]) {
-		return c.json({ error: "Invalid host format" }, 400);
+	// Parse hostname to extract username and slug
+	const parsed = parseHostname(host);
+	if (!parsed) {
+		return c.json(
+			{
+				error: "Invalid host format",
+				expected: "{username}-{slug}.runjack.xyz or {slug}.runjack.xyz",
+			},
+			400,
+		);
 	}
 
-	const slug = match[1];
+	const { username, slug } = parsed;
+	let config: ProjectConfig | null = null;
 
-	// Look up project config by slug
-	// First try direct slug lookup, then try as project ID for backwards compat
-	let config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${slug}`, "json");
+	// Look up project config - try multiple strategies
+	if (username) {
+		// Has hyphen: could be new format (username-slug) or legacy format with hyphens
+		// Try new format first: config:{username}:{slug}
+		config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${username}:${slug}`, "json");
 
-	if (!config) {
-		// Fallback: maybe it's stored by project ID
-		config = await env.PROJECTS_CACHE.get<ProjectConfig>(`project:${slug}`, "json");
+		if (!config) {
+			// Fallback to legacy format: treat entire subdomain as slug
+			const fullSubdomain = `${username}-${slug}`;
+			config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${fullSubdomain}`, "json");
+		}
+	} else {
+		// No hyphen: legacy format with simple slug
+		config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${slug}`, "json");
+
+		if (!config) {
+			// Fallback: maybe it's stored by project ID (for backwards compat)
+			config = await env.PROJECTS_CACHE.get<ProjectConfig>(`project:${slug}`, "json");
+		}
 	}
 
 	if (!config) {
-		return c.json({ error: "Project not found" }, 404);
+		const fullSubdomain = username ? `${username}-${slug}` : slug;
+		return c.json(
+			{
+				error: "Project not found",
+				subdomain: fullSubdomain,
+			},
+			404,
+		);
 	}
 
 	// Check project status

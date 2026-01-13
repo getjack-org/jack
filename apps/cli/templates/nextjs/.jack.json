@@ -1,28 +1,28 @@
 {
-  "name": "nextjs",
-  "description": "Next.js App (SSR on Cloudflare)",
-  "secrets": [],
-  "capabilities": [],
-  "intent": {
-    "keywords": ["next", "nextjs", "react", "ssr", "full-stack", "server components", "rsc"],
-    "examples": ["next.js app", "server-rendered react", "react ssr"]
-  },
-  "agentContext": {
-    "summary": "A Next.js app deployed with jack. Supports SSR, SSG, and React Server Components.",
-    "full_text": "## Project Structure\n\n- `app/` - Next.js App Router pages and layouts\n- `public/` - Static assets\n- `open-next.config.ts` - OpenNext configuration\n- `wrangler.jsonc` - Worker configuration\n\n## Commands\n\n- `bun run dev` - Local development\n- `jack ship` - Deploy to production\n- `bun run preview` - Preview production build locally\n\n## Conventions\n\n- Uses App Router (not Pages Router)\n- SSR and SSG work out of the box\n- Server Components supported\n\n## Resources\n\n- [OpenNext Docs](https://opennext.js.org/cloudflare)\n- [Next.js App Router](https://nextjs.org/docs/app)"
-  },
-  "hooks": {
-    "postDeploy": [
-      {
-        "action": "clipboard",
-        "text": "{{url}}",
-        "message": "Deploy URL copied to clipboard"
-      },
-      {
-        "action": "box",
-        "title": "Deployed: {{name}}",
-        "lines": ["URL: {{url}}", "", "Next.js app is live!"]
-      }
-    ]
-  }
+	"name": "nextjs",
+	"description": "Next.js App (SSR on Cloudflare)",
+	"secrets": [],
+	"capabilities": [],
+	"intent": {
+		"keywords": ["next", "nextjs", "react", "ssr", "full-stack", "server components", "rsc"],
+		"examples": ["next.js app", "server-rendered react", "react ssr"]
+	},
+	"agentContext": {
+		"summary": "A Next.js app deployed with jack. Supports SSR, SSG, and React Server Components.",
+		"full_text": "## Project Structure\n\n- `app/` - Next.js App Router pages and layouts\n- `public/` - Static assets\n- `open-next.config.ts` - OpenNext configuration\n- `wrangler.jsonc` - Worker configuration\n\n## Commands\n\n- `bun run dev` - Local development\n- `jack ship` - Deploy to production\n- `bun run preview` - Preview production build locally\n\n## Conventions\n\n- Uses App Router (not Pages Router)\n- SSR and SSG work out of the box\n- Server Components supported\n\n## Resources\n\n- [OpenNext Docs](https://opennext.js.org/cloudflare)\n- [Next.js App Router](https://nextjs.org/docs/app)"
+	},
+	"hooks": {
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "box",
+				"title": "Deployed: {{name}}",
+				"lines": ["URL: {{url}}", "", "Next.js app is live!"]
+			}
+		]
+	}
 }

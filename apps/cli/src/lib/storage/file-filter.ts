@@ -25,6 +25,7 @@ export const DEFAULT_INCLUDES: string[] = [
 	"*.mjs",
 	"*.cjs",
 	"*.json",
+	"*.jsonc",
 	"*.toml",
 	"*.md",
 	"*.css",

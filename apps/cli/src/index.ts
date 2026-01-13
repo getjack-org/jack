@@ -25,6 +25,7 @@ const cli = meow(
     down [name]         Undeploy from cloud
     ls                  List all projects
     info [name]         Show project details
+    publish             Make your project forkable by others
 
   Cloud & Sync
     clone <project>     Pull from cloud backup
@@ -262,6 +263,11 @@ try {
 		case "down": {
 			const { default: down } = await import("./commands/down.ts");
 			await withTelemetry("down", down)(args[0], { force: cli.flags.force });
+			break;
+		}
+		case "publish": {
+			const { default: publish } = await import("./commands/publish.ts");
+			await withTelemetry("publish", publish)();
 			break;
 		}
 		case "open": {

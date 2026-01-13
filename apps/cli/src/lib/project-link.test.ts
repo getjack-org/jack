@@ -336,15 +336,14 @@ describe("project-link", () => {
 			expect(template).toEqual({ type: "builtin", name: "miniapp" });
 		});
 
-		it("creates template.json for github template", async () => {
+		it("creates template.json for published template", async () => {
 			await writeTemplateMetadata(testDir, {
-				type: "github",
-				name: "user/repo",
-				ref: "main",
+				type: "published",
+				name: "alice/my-api",
 			});
 
 			const template = await readTemplateMetadata(testDir);
-			expect(template).toEqual({ type: "github", name: "user/repo", ref: "main" });
+			expect(template).toEqual({ type: "published", name: "alice/my-api" });
 		});
 
 		it("creates .jack directory if not exists", async () => {

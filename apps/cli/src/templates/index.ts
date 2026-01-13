@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { unzipSync } from "fflate";
+import { getControlApiUrl } from "../lib/control-plane.ts";
 import { parseJsonc } from "../lib/jsonc.ts";
 import type { TemplateMetadata as TemplateOrigin } from "../lib/project-link.ts";
 import type { Template } from "./types";
@@ -97,8 +99,118 @@ async function loadTemplate(name: string): Promise<Template> {
 	};
 }
 
+// Internal files that should be excluded from templates
+const INTERNAL_FILES = [".jack.json", ".jack/template.json"];
+
 /**
- * Resolve template by name or GitHub URL
+ * Extract zip buffer to file map, excluding internal files
+ */
+function extractZipToFiles(zipData: ArrayBuffer): Record<string, string> {
+	const files: Record<string, string> = {};
+	const unzipped = unzipSync(new Uint8Array(zipData));
+
+	for (const [path, content] of Object.entries(unzipped)) {
+		// Skip directories (they have zero-length content or end with /)
+		if (content.length === 0 || path.endsWith("/")) continue;
+
+		// Skip internal files
+		if (path && !INTERNAL_FILES.includes(path)) {
+			files[path] = new TextDecoder().decode(content);
+		}
+	}
+
+	return files;
+}
+
+/**
+ * Read metadata from extracted files (before they're filtered)
+ */
+function extractMetadataFromZip(zipData: ArrayBuffer): Record<string, unknown> {
+	const unzipped = unzipSync(new Uint8Array(zipData));
+
+	for (const [path, content] of Object.entries(unzipped)) {
+		// Skip directories
+		if (content.length === 0 || path.endsWith("/")) continue;
+
+		if (path === ".jack.json") {
+			return parseJsonc(new TextDecoder().decode(content));
+		}
+	}
+
+	return {};
+}
+
+/**
+ * Fetch a published template from jack cloud (public endpoint, no auth)
+ */
+async function fetchPublishedTemplate(username: string, slug: string): Promise<Template> {
+	const response = await fetch(
+		`${getControlApiUrl()}/v1/projects/${encodeURIComponent(username)}/${encodeURIComponent(slug)}/source`,
+	);
+
+	if (!response.ok) {
+		if (response.status === 404) {
+			throw new Error(
+				`Template not found: ${username}/${slug}\n\nMake sure the project exists and is published with: jack publish`,
+			);
+		}
+		throw new Error(`Failed to fetch template: ${response.status}`);
+	}
+
+	const zipData = await response.arrayBuffer();
+	const metadata = extractMetadataFromZip(zipData);
+	const files = extractZipToFiles(zipData);
+
+	return {
+		description: (metadata.description as string) || `Fork of ${username}/${slug}`,
+		secrets: (metadata.secrets as string[]) || [],
+		optionalSecrets: metadata.optionalSecrets as Template["optionalSecrets"],
+		capabilities: metadata.capabilities as Template["capabilities"],
+		requires: metadata.requires as Template["requires"],
+		hooks: metadata.hooks as Template["hooks"],
+		agentContext: metadata.agentContext as Template["agentContext"],
+		intent: metadata.intent as Template["intent"],
+		files,
+	};
+}
+
+/**
+ * Fetch user's own project as a template (authenticated)
+ */
+async function fetchUserTemplate(slug: string): Promise<Template | null> {
+	const { authFetch } = await import("../lib/auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/me/projects/${encodeURIComponent(slug)}/source`,
+	);
+
+	if (response.status === 404) {
+		return null; // Not found, will try other sources
+	}
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch your project: ${response.status}`);
+	}
+
+	const zipData = await response.arrayBuffer();
+	const metadata = extractMetadataFromZip(zipData);
+	const files = extractZipToFiles(zipData);
+
+	return {
+		description: (metadata.description as string) || `Your project: ${slug}`,
+		secrets: (metadata.secrets as string[]) || [],
+		optionalSecrets: metadata.optionalSecrets as Template["optionalSecrets"],
+		capabilities: metadata.capabilities as Template["capabilities"],
+		requires: metadata.requires as Template["requires"],
+		hooks: metadata.hooks as Template["hooks"],
+		agentContext: metadata.agentContext as Template["agentContext"],
+		intent: metadata.intent as Template["intent"],
+		files,
+	};
+}
+
+/**
+ * Resolve template by name
  */
 export async function resolveTemplate(template?: string): Promise<Template> {
 	// No template → hello (omakase default)
@@ -111,14 +223,26 @@ export async function resolveTemplate(template?: string): Promise<Template> {
 		return loadTemplate(template);
 	}
 
-	// GitHub: user/repo or full URL → fetch from network
+	// username/slug format - fetch from jack cloud
 	if (template.includes("/")) {
-		const { fetchFromGitHub } = await import("../lib/github");
-		return fetchFromGitHub(template);
+		const [username, slug] = template.split("/", 2);
+		return fetchPublishedTemplate(username, slug);
+	}
+
+	// Try as user's own project first
+	try {
+		const userTemplate = await fetchUserTemplate(template);
+		if (userTemplate) {
+			return userTemplate;
+		}
+	} catch (_err) {
+		// If auth fails or project not found, fall through to error
 	}
 
 	// Unknown template
-	throw new Error(`Unknown template: ${template}\n\nAvailable: ${BUILTIN_TEMPLATES.join(", ")}`);
+	throw new Error(
+		`Unknown template: ${template}\n\nAvailable built-in templates: ${BUILTIN_TEMPLATES.join(", ")}\nOr use username/slug format for published projects`,
+	);
 }
 
 /**
@@ -131,9 +255,15 @@ export async function resolveTemplateWithOrigin(
 	const templateName = templateOption || "hello";
 
 	// Determine origin type
-	const isGitHub = templateName.includes("/");
+	let originType: "builtin" | "user" | "published" = "builtin";
+	if (templateOption?.includes("/")) {
+		originType = "published";
+	} else if (templateOption && !BUILTIN_TEMPLATES.includes(templateOption)) {
+		originType = "user";
+	}
+
 	const origin: TemplateOrigin = {
-		type: isGitHub ? "github" : "builtin",
+		type: originType,
 		name: templateName,
 	};
 

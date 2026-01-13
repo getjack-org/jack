@@ -904,7 +904,12 @@ api.delete("/projects/:projectId", async (c) => {
 		"SELECT * FROM resources WHERE project_id = ? AND status != 'deleted'",
 	)
 		.bind(projectId)
-		.all<{ resource_type: string; resource_name: string; provider_id: string }>();
+		.all<{
+			resource_type: string;
+			resource_name: string;
+			provider_id: string;
+			binding_name: string | null;
+		}>();
 
 	const cfClient = new CloudflareClient(c.env);
 	const deletionResults: Array<{ resource: string; success: boolean; error?: string }> = [];
@@ -951,6 +956,24 @@ api.delete("/projects/:projectId", async (c) => {
 		} catch (error) {
 			deletionResults.push({
 				resource: `r2:${r2Res.resource_name}`,
+				success: false,
+				error: String(error),
+			});
+		}
+	}
+
+	// Delete KV namespaces (from wrangler.jsonc kv_namespaces)
+	const kvResources = resources.results?.filter((r) => r.resource_type === "kv") ?? [];
+	for (const kvRes of kvResources) {
+		try {
+			await cfClient.deleteKVNamespace(kvRes.provider_id);
+			deletionResults.push({
+				resource: `kv:${kvRes.binding_name || kvRes.resource_name}`,
+				success: true,
+			});
+		} catch (error) {
+			deletionResults.push({
+				resource: `kv:${kvRes.binding_name || kvRes.resource_name}`,
 				success: false,
 				error: String(error),
 			});
@@ -1597,6 +1620,212 @@ api.get("/projects/:projectId/source/file", async (c) => {
 		const message = error instanceof Error ? error.message : "Failed to read source";
 		return c.json({ error: "internal_error", message }, 500);
 	}
+});
+
+// Upload source snapshot after deploy
+api.post("/projects/:projectId/source", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND org_id = ? AND status != 'deleted'",
+	)
+		.bind(projectId, auth.orgId)
+		.first();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Accept multipart form with source.zip
+	const formData = await c.req.formData();
+	const sourceFile = formData.get("source") as File | null;
+
+	if (!sourceFile) {
+		return c.json({ error: "invalid_request", message: "source file required" }, 400);
+	}
+
+	// Store in R2: source/{projectId}/latest.zip
+	const sourceKey = `source/${projectId}/latest.zip`;
+	await c.env.CODE_BUCKET.put(sourceKey, await sourceFile.arrayBuffer());
+
+	// Update project record
+	await c.env.DB.prepare(
+		"UPDATE projects SET source_snapshot_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	)
+		.bind(sourceKey, projectId)
+		.run();
+
+	return c.json({ success: true, source_key: sourceKey });
+});
+
+// Download own project's source (authenticated)
+api.get("/me/projects/:slug/source", async (c) => {
+	const auth = c.get("auth");
+	const slug = c.req.param("slug");
+
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE org_id = ? AND slug = ? AND status != 'deleted'",
+	)
+		.bind(auth.orgId, slug)
+		.first<{ slug: string; source_snapshot_key: string | null }>();
+
+	if (!project || !project.source_snapshot_key) {
+		return c.json({ error: "not_found", message: "Project or source not found" }, 404);
+	}
+
+	const sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
+	if (!sourceObj) {
+		return c.json(
+			{ error: "source_not_available", message: "Source file not found in storage" },
+			404,
+		);
+	}
+
+	return new Response(sourceObj.body, {
+		headers: {
+			"Content-Type": "application/zip",
+			"Content-Disposition": `attachment; filename="${slug}-source.zip"`,
+		},
+	});
+});
+
+// Publish project for forking
+api.post("/projects/:projectId/publish", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND org_id = ? AND status != 'deleted'",
+	)
+		.bind(projectId, auth.orgId)
+		.first<{ slug: string; source_snapshot_key: string | null }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Check user has username set
+	const user = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
+		.bind(auth.userId)
+		.first<{ username: string | null }>();
+
+	if (!user?.username) {
+		return c.json(
+			{
+				error: "username_required",
+				message: "Set your username first during login",
+			},
+			400,
+		);
+	}
+
+	// Check project has source snapshot
+	if (!project.source_snapshot_key) {
+		return c.json(
+			{
+				error: "no_source",
+				message: "Deploy your project first with jack ship",
+			},
+			400,
+		);
+	}
+
+	// Update visibility and owner_username in DB
+	await c.env.DB.prepare(
+		`UPDATE projects
+     SET visibility = 'public', owner_username = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+	)
+		.bind(user.username, projectId)
+		.run();
+
+	// Update KV cache with new key format for dispatch worker routing
+	// Fetch full project config to cache
+	const fullProject = await c.env.DB.prepare(
+		`SELECT p.*, r.provider_id as d1_database_id
+		 FROM projects p
+		 LEFT JOIN resources r ON r.project_id = p.id AND r.resource_type = 'D1_DATABASE'
+		 WHERE p.id = ?`,
+	)
+		.bind(projectId)
+		.first<{
+			id: string;
+			org_id: string;
+			slug: string;
+			content_bucket_enabled: number | null;
+			status: string;
+			updated_at: string;
+			d1_database_id: string | null;
+		}>();
+
+	if (fullProject) {
+		// Derive worker name from project ID (same logic as provisioning)
+		const shortId = fullProject.id.replace("proj_", "").slice(0, 16);
+		const workerName = `jack-${shortId}`;
+		const contentBucketName = fullProject.content_bucket_enabled ? `jack-${shortId}-content` : null;
+
+		const projectConfig = {
+			project_id: fullProject.id,
+			org_id: fullProject.org_id,
+			owner_username: user.username,
+			slug: fullProject.slug,
+			worker_name: workerName,
+			d1_database_id: fullProject.d1_database_id || "",
+			content_bucket_name: contentBucketName,
+			status: fullProject.status,
+			updated_at: new Date().toISOString(),
+		};
+
+		// Write new key format: config:{username}:{slug}
+		await c.env.PROJECTS_CACHE.put(
+			`config:${user.username}:${fullProject.slug}`,
+			JSON.stringify(projectConfig),
+		);
+
+		// Also update the legacy key with owner_username
+		await c.env.PROJECTS_CACHE.put(`config:${fullProject.slug}`, JSON.stringify(projectConfig));
+	}
+
+	return c.json({
+		success: true,
+		published_as: `${user.username}/${project.slug}`,
+		fork_command: `jack new my-app -t ${user.username}/${project.slug}`,
+	});
+});
+
+// Public endpoint for downloading published project sources (no auth required)
+app.get("/v1/projects/:owner/:slug/source", async (c) => {
+	const owner = c.req.param("owner");
+	const slug = c.req.param("slug");
+
+	// Find project by owner username and slug, must be public
+	const project = await c.env.DB.prepare(
+		`SELECT p.* FROM projects p
+     WHERE p.owner_username = ? AND p.slug = ?
+       AND p.visibility = 'public'
+       AND p.status != 'deleted'`,
+	)
+		.bind(owner, slug)
+		.first<{ slug: string; source_snapshot_key: string | null }>();
+
+	if (!project || !project.source_snapshot_key) {
+		return c.json({ error: "not_found", message: "Published project not found" }, 404);
+	}
+
+	const sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
+	if (!sourceObj) {
+		return c.json({ error: "source_not_available", message: "Source file not found" }, 404);
+	}
+
+	return new Response(sourceObj.body, {
+		headers: {
+			"Content-Type": "application/zip",
+			"Content-Disposition": `attachment; filename="${slug}-source.zip"`,
+		},
+	});
 });
 
 app.route("/v1", api);

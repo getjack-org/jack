@@ -6,7 +6,8 @@
 
 import { validateBindings } from "./binding-validator.ts";
 import { buildProject, parseWranglerConfig } from "./build-helper.ts";
-import { createManagedProject, syncProjectTags } from "./control-plane.ts";
+import { createManagedProject, syncProjectTags, uploadSourceSnapshot } from "./control-plane.ts";
+import { debug } from "./debug.ts";
 import { uploadDeployment } from "./deploy-upload.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import type { OperationReporter } from "./project-operations.ts";
@@ -147,6 +148,13 @@ export async function deployCodeToManagedProject(
 				}
 			})
 			.catch(() => {});
+
+		// Upload source snapshot for forking (non-fatal, but must await before cleanup)
+		try {
+			await uploadSourceSnapshot(projectId, pkg.sourceZipPath);
+		} catch (err) {
+			debug("Source snapshot upload failed:", err instanceof Error ? err.message : String(err));
+		}
 
 		return {
 			deploymentId: result.id,
