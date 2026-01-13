@@ -13,6 +13,7 @@ export interface ProjectConfig {
 	project_id: string;
 	org_id: string;
 	slug: string;
+	owner_username?: string;
 	worker_name: string;
 	d1_database_id: string;
 	content_bucket_name: string | null;

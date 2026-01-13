@@ -1,3 +1,3 @@
 interface CloudflareEnv {
-  ASSETS: Fetcher;
+	ASSETS: Fetcher;
 }

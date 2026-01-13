@@ -35,9 +35,8 @@ export interface LocalProjectLink {
  * Template metadata stored in .jack/template.json
  */
 export interface TemplateMetadata {
-	type: "builtin" | "github";
-	name: string; // "miniapp", "api", or "user/repo" for github
-	ref?: string; // git ref for github templates
+	type: "builtin" | "user" | "published";
+	name: string; // "miniapp", "api", or "username/slug" for published
 }
 
 const JACK_DIR = ".jack";
