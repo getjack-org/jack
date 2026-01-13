@@ -40,8 +40,11 @@ export interface WranglerConfig {
 		binding: string;
 		bucket_name: string;
 	}>;
+	kv_namespaces?: Array<{
+		binding: string;
+		id?: string; // Optional - wrangler auto-provisions if missing
+	}>;
 	// Unsupported bindings (for validation)
-	kv_namespaces?: unknown;
 	durable_objects?: unknown;
 	queues?: unknown;
 	services?: unknown;
@@ -258,42 +261,50 @@ async function resolveEntrypoint(outDir: string, main?: string): Promise<string>
 }
 
 /**
- * Ensures R2 buckets exist for BYO deploy.
- * Creates buckets via wrangler if they don't exist.
- * @param projectPath - Absolute path to project directory
- * @returns Array of bucket names that were created or already existed
+ * Gets the installed wrangler version.
+ * @returns Version string (e.g., "4.55.0")
  */
-export async function ensureR2Buckets(projectPath: string): Promise<string[]> {
-	const config = await parseWranglerConfig(projectPath);
-
-	if (!config.r2_buckets || config.r2_buckets.length === 0) {
-		return [];
+export async function getWranglerVersion(): Promise<string> {
+	const result = await $`wrangler --version`.nothrow().quiet();
+	if (result.exitCode !== 0) {
+		throw new JackError(
+			JackErrorCode.VALIDATION_ERROR,
+			"wrangler not found",
+			"Install wrangler: npm install -g wrangler",
+		);
 	}
+	// Parse "wrangler 4.55.0" -> "4.55.0"
+	const match = result.stdout.toString().match(/(\d+\.\d+\.\d+)/);
+	return match?.[1] ?? "0.0.0";
+}
 
-	const results: string[] = [];
+const MIN_WRANGLER_VERSION = "4.45.0";
 
-	for (const bucket of config.r2_buckets) {
-		const bucketName = bucket.bucket_name;
+/**
+ * Checks if wrangler version meets minimum requirement for auto-provisioning.
+ * @throws JackError if version is too old
+ */
+export function checkWranglerVersion(version: string): void {
+	const parts = version.split(".").map(Number);
+	const minParts = MIN_WRANGLER_VERSION.split(".").map(Number);
 
-		// Try to create the bucket (wrangler handles "already exists" gracefully)
-		const result = await $`wrangler r2 bucket create ${bucketName}`
-			.cwd(projectPath)
-			.nothrow()
-			.quiet();
+	const major = parts[0] ?? 0;
+	const minor = parts[1] ?? 0;
+	const patch = parts[2] ?? 0;
+	const minMajor = minParts[0] ?? 0;
+	const minMinor = minParts[1] ?? 0;
+	const minPatch = minParts[2] ?? 0;
 
-		// Exit code 0 = created, non-zero with "already exists" = fine
-		const stderr = result.stderr.toString();
-		if (result.exitCode === 0 || stderr.includes("already exists")) {
-			results.push(bucketName);
-		} else {
-			throw new JackError(
-				JackErrorCode.RESOURCE_ERROR,
-				`Failed to create R2 bucket: ${bucketName}`,
-				"Check your Cloudflare account has R2 enabled",
-				{ stderr },
-			);
-		}
+	const isValid =
+		major > minMajor ||
+		(major === minMajor && minor > minMinor) ||
+		(major === minMajor && minor === minMinor && patch >= minPatch);
+
+	if (!isValid) {
+		throw new JackError(
+			JackErrorCode.VALIDATION_ERROR,
+			`wrangler ${MIN_WRANGLER_VERSION}+ required (found ${version})`,
+			"Run: npm install -g wrangler@latest",
+		);
 	}
-
-	return results;
 }

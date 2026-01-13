@@ -91,6 +91,12 @@ interface R2Bucket {
 	creation_date: string;
 }
 
+interface KVNamespace {
+	id: string;
+	title: string;
+	supports_url_encoding?: boolean;
+}
+
 // =====================================================
 // Workers Assets API Types & Utilities
 // =====================================================
@@ -571,6 +577,115 @@ export class CloudflareClient {
 				? data.errors.map((e) => e.message).join(", ")
 				: "Unknown Cloudflare API error";
 		throw new Error(`Cloudflare API error: ${errorMsg}`);
+	}
+
+	/**
+	 * Creates a new KV namespace
+	 * @returns The created namespace with id and title
+	 */
+	async createKVNamespace(title: string): Promise<KVNamespace> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/storage/kv/namespaces`;
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ title }),
+		});
+
+		const data = (await response.json()) as CloudflareResponse<KVNamespace>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Cloudflare API error: ${errorMsg}`);
+		}
+
+		return data.result;
+	}
+
+	/**
+	 * Lists all KV namespaces in the account
+	 */
+	async listKVNamespaces(): Promise<KVNamespace[]> {
+		const namespaces: KVNamespace[] = [];
+		let cursor: string | undefined;
+
+		do {
+			const params = new URLSearchParams();
+			if (cursor) {
+				params.set("cursor", cursor);
+			}
+			params.set("per_page", "100");
+
+			const url = `${this.baseUrl}/accounts/${this.accountId}/storage/kv/namespaces?${params}`;
+			const response = await fetch(url, {
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${this.apiToken}`,
+				},
+			});
+
+			const data = (await response.json()) as CloudflareResponse<KVNamespace[]> & {
+				result_info?: { cursor?: string };
+			};
+
+			if (!data.success) {
+				const errorMsg =
+					data.errors?.length > 0
+						? data.errors.map((e) => e.message).join(", ")
+						: "Unknown Cloudflare API error";
+				throw new Error(`Cloudflare API error: ${errorMsg}`);
+			}
+
+			namespaces.push(...(data.result || []));
+			cursor = data.result_info?.cursor;
+		} while (cursor);
+
+		return namespaces;
+	}
+
+	/**
+	 * Creates a KV namespace if it doesn't already exist (idempotent)
+	 */
+	async createKVNamespaceIfNotExists(
+		title: string,
+	): Promise<{ namespace: KVNamespace; created: boolean }> {
+		const existingNamespaces = await this.listKVNamespaces();
+		const existing = existingNamespaces.find((ns) => ns.title === title);
+
+		if (existing) {
+			return { namespace: existing, created: false };
+		}
+
+		const namespace = await this.createKVNamespace(title);
+		return { namespace, created: true };
+	}
+
+	/**
+	 * Deletes a KV namespace
+	 */
+	async deleteKVNamespace(namespaceId: string): Promise<void> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/storage/kv/namespaces/${namespaceId}`;
+		const response = await fetch(url, {
+			method: "DELETE",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+			},
+		});
+
+		const data = (await response.json()) as CloudflareResponse<unknown>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Cloudflare API error: ${errorMsg}`);
+		}
 	}
 
 	/**
