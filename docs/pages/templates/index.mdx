@@ -2,12 +2,14 @@
 
 jack comes with starter templates to get you building fast. Each template is batteries-included and deploys in seconds.
 
-## Available Templates
+## Builtin Templates
 
 | Template | Description | Features |
 |----------|-------------|----------|
+| `hello` | Default starter | Hono API, TypeScript |
+| [**api**](/templates/api) | API with examples | Hono router, CORS, multiple endpoints |
 | [**miniapp**](/templates/miniapp) | Farcaster Frame mini-app | React, Vite, D1 database, Neynar API |
-| [**api**](/templates/api) | Hono API endpoint | Hono router, CORS, TypeScript |
+| `nextjs` | Next.js on Cloudflare | SSR, OpenNext, edge runtime |
 
 ## Quick Start
 
@@ -16,8 +18,11 @@ jack comes with starter templates to get you building fast. Each template is bat
 jack new my-app
 
 # Direct - specify template
-jack new my-app -t miniapp
-jack new my-api -t api
+jack new my-app -t api
+jack new my-miniapp -t miniapp
+
+# Fork someone's published project
+jack new my-fork -t alice/her-project
 ```
 
 ## Template Philosophy
@@ -37,6 +42,37 @@ Templates follow the **omakase** principle: batteries-included, ready to use, no
 - Deployment tools (wrangler is installed globally by jack)
 - Unused optional features
 - Boilerplate you'll delete anyway
+
+## Publishing Your Project
+
+Any jack project can become a template for others to fork:
+
+```bash
+# Deploy your project first
+jack ship
+
+# Make it forkable
+jack publish
+```
+
+After publishing, others can fork with `jack new my-copy -t yourusername/your-project`.
+
+See [`jack publish`](/commands/publish) for details.
+
+## Forking Published Projects
+
+Fork any published project to get your own copy:
+
+```bash
+jack new my-version -t alice/cool-api
+```
+
+This:
+1. Downloads the source code
+2. Creates a new project under your account
+3. Deploys it to your own URL
+
+The forked project is completely independent—you own it and can modify it however you want.
 
 ## Creating Custom Templates
 
