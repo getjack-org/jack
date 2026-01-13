@@ -12,28 +12,31 @@
 
 ## **Ship before you forget why you started.**
 
-You're vibecoding. Ideas are flowing. You want to ship.
-
-But first: config files, deployment setup, secret management, debugging infrastructure errors...
-
-**30 minutes later, the spark is gone.**
-
 jack removes the friction between your idea and a live URL.
 
-<img src="/jack-demo.gif" alt="jack demo" style={{ margin: '2rem 0', borderRadius: '12px', width: '100%' }} />
-
-## Quick Start
+## Install
 
 ```bash
-# One command to create and deploy
-bunx @getjack/jack new my-app
-
-# Or install globally
 bun add -g @getjack/jack
+```
+
+Then create and deploy your first project:
+
+```bash
 jack new my-app
 ```
 
+Or try without installing: `bunx @getjack/jack new my-app`
+
 You'll need [Bun](https://bun.sh) and a Cloudflare account (free tier works).
+
+<div style={{ display: 'flex', gap: '1.5rem', margin: '1.5rem 0', fontSize: '1.1rem' }}>
+  <a href="https://www.npmjs.com/package/@getjack/jack">npm</a>
+  <a href="https://github.com/getjack-org/jack">GitHub</a>
+  <a href="https://discord.gg/fb64krv48R">Discord</a>
+</div>
+
+<img src="/jack-demo.gif" alt="jack demo" style={{ margin: '1rem 0 2rem', borderRadius: '12px', width: '100%' }} />
 
 ## Why jack?
 
@@ -52,7 +55,7 @@ You'll need [Bun](https://bun.sh) and a Cloudflare account (free tier works).
 | `jack ls` | Show all your projects |
 | `jack open` | Open project in browser |
 
-Ready to start? [Get started →](/getting-started)
+[Full command reference →](/commands)
 
 ---
 
