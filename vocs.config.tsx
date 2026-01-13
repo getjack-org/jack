@@ -27,6 +27,7 @@ export default defineConfig({
 		{ text: "Guide", link: "/getting-started" },
 		{ text: "Templates", link: "/templates" },
 		{ text: "Commands", link: "/commands" },
+		{ text: "npm", link: "https://www.npmjs.com/package/@getjack/jack" },
 	],
 	sidebar: [
 		{
