@@ -25,6 +25,7 @@ interface ManifestData {
 		d1?: { binding: string };
 		ai?: { binding: string };
 		r2?: Array<{ binding: string; bucket_name: string }>;
+		kv?: Array<{ binding: string }>;
 		assets?: {
 			binding: string;
 			directory: string;
@@ -39,25 +40,7 @@ interface ManifestData {
 	};
 }
 
-/**
- * Supported binding types for managed deploy
- */
-const SUPPORTED_BINDING_KEYS = ["d1", "ai", "r2", "assets", "vars"] as const;
-
-/**
- * Binding types that are NOT supported in managed deploy
- * These map to wrangler.jsonc top-level keys
- */
-const UNSUPPORTED_BINDING_KEYS = [
-	"kv_namespaces",
-	"durable_objects",
-	"queues",
-	"services",
-	"hyperdrive",
-	"vectorize",
-	"browser",
-	"mtls_certificates",
-] as const;
+const SUPPORTED_BINDING_KEYS = ["d1", "ai", "r2", "kv", "assets", "vars"] as const;
 
 export interface ManifestValidationResult {
 	valid: boolean;
@@ -135,6 +118,24 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
 							}
 							if (typeof r2.bucket_name !== "string") {
 								errors.push(`manifest.bindings.r2[${i}].bucket_name must be a string`);
+							}
+						}
+					}
+				}
+			}
+
+			// Validate KV binding structure
+			if (bindings.kv !== undefined) {
+				if (!Array.isArray(bindings.kv)) {
+					errors.push("manifest.bindings.kv must be an array");
+				} else {
+					for (let i = 0; i < bindings.kv.length; i++) {
+						const kv = bindings.kv[i] as Record<string, unknown>;
+						if (typeof kv !== "object" || kv === null) {
+							errors.push(`manifest.bindings.kv[${i}] must be an object`);
+						} else {
+							if (typeof kv.binding !== "string") {
+								errors.push(`manifest.bindings.kv[${i}].binding must be a string`);
 							}
 						}
 					}
@@ -520,6 +521,37 @@ export class DeploymentService {
 					type: "r2_bucket",
 					name: r2Intent.binding, // Use the user's binding name
 					bucket_name: bucketName,
+				});
+			}
+		}
+
+		if (intent.kv && Array.isArray(intent.kv)) {
+			const existingKVResources = await this.db
+				.prepare(
+					"SELECT binding_name, provider_id FROM resources WHERE project_id = ? AND resource_type = 'kv' AND status != 'deleted'",
+				)
+				.bind(projectId)
+				.all<{ binding_name: string; provider_id: string }>();
+
+			const existingByBinding = new Map(
+				(existingKVResources.results ?? []).map((r) => [r.binding_name, r.provider_id]),
+			);
+
+			for (const kvIntent of intent.kv) {
+				let namespaceId = existingByBinding.get(kvIntent.binding);
+
+				if (!namespaceId) {
+					const kvResource = await this.provisioningService.provisionKVBinding(
+						projectId,
+						kvIntent.binding,
+					);
+					namespaceId = kvResource.provider_id;
+				}
+
+				bindings.push({
+					type: "kv_namespace",
+					name: kvIntent.binding,
+					namespace_id: namespaceId,
 				});
 			}
 		}

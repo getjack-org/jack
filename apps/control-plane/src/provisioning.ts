@@ -378,11 +378,11 @@ export class ProvisioningService {
 
 	/**
 	 * Register a resource with a specific binding name.
-	 * Used for user-defined bindings (e.g., R2 buckets from wrangler.jsonc).
+	 * Used for user-defined bindings (e.g., R2 buckets and KV namespaces from wrangler.jsonc).
 	 */
 	async registerResourceWithBinding(
 		projectId: string,
-		type: "r2",
+		type: "r2" | "kv",
 		bindingName: string,
 		resourceName: string,
 		providerId: string,
@@ -411,27 +411,58 @@ export class ProvisioningService {
 
 	/**
 	 * Provision an R2 bucket for a specific binding.
-	 * Uses project-prefixed naming for uniqueness.
 	 */
 	async provisionR2Binding(
 		projectId: string,
 		bindingName: string,
 		bucketNameHint: string,
 	): Promise<Resource> {
+		this.validateBindingName(bindingName);
+
 		const resourceNames = this.getResourceNames(projectId);
-		// Create unique bucket name: jack-{shortId}-{sanitized-hint}
 		const bucketName = `${resourceNames.worker}-${this.sanitizeBucketName(bucketNameHint)}`;
 
-		// Create bucket (idempotent)
 		await this.cfClient.createR2BucketIfNotExists(bucketName);
 
-		// Register resource with binding name
 		return await this.registerResourceWithBinding(
 			projectId,
 			"r2",
 			bindingName,
 			bucketName,
-			bucketName, // provider_id is the bucket name
+			bucketName,
+		);
+	}
+
+	/**
+	 * Validates that a binding name is a valid JavaScript identifier.
+	 */
+	private validateBindingName(bindingName: string): void {
+		const validIdentifier = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+		if (!validIdentifier.test(bindingName)) {
+			throw new Error(
+				`Invalid binding name "${bindingName}". ` +
+					"Binding names must be valid JavaScript identifiers (e.g., CACHE, MY_KV, userSession).",
+			);
+		}
+	}
+
+	/**
+	 * Provision a KV namespace for a specific binding.
+	 */
+	async provisionKVBinding(projectId: string, bindingName: string): Promise<Resource> {
+		this.validateBindingName(bindingName);
+
+		const resourceNames = this.getResourceNames(projectId);
+		const title = `${resourceNames.worker}-${bindingName.toLowerCase()}`;
+
+		const { namespace } = await this.cfClient.createKVNamespaceIfNotExists(title);
+
+		return await this.registerResourceWithBinding(
+			projectId,
+			"kv",
+			bindingName,
+			title,
+			namespace.id,
 		);
 	}
 

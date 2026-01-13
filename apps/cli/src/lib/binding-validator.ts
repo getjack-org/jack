@@ -12,14 +12,20 @@ import type { WranglerConfig } from "./build-helper.ts";
 /**
  * Bindings supported by jack cloud managed deployments.
  */
-export const SUPPORTED_BINDINGS = ["d1_databases", "ai", "assets", "vars", "r2_buckets"] as const;
+export const SUPPORTED_BINDINGS = [
+	"d1_databases",
+	"ai",
+	"assets",
+	"vars",
+	"r2_buckets",
+	"kv_namespaces",
+] as const;
 
 /**
  * Bindings not yet supported by jack cloud.
  * These will cause validation errors if present in wrangler config.
  */
 export const UNSUPPORTED_BINDINGS = [
-	"kv_namespaces",
 	"durable_objects",
 	"queues",
 	"services",
@@ -33,7 +39,6 @@ export const UNSUPPORTED_BINDINGS = [
  * Human-readable names for unsupported bindings.
  */
 const BINDING_DISPLAY_NAMES: Record<string, string> = {
-	kv_namespaces: "KV Namespaces",
 	durable_objects: "Durable Objects",
 	queues: "Queues",
 	services: "Service Bindings",
@@ -67,7 +72,7 @@ export function validateBindings(
 		if (value !== undefined && value !== null) {
 			const displayName = BINDING_DISPLAY_NAMES[binding] || binding;
 			errors.push(
-				`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, R2, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
+				`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, R2, KV, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
 			);
 		}
 	}

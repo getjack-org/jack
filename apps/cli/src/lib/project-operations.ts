@@ -23,7 +23,15 @@ import {
 	runAgentOneShot,
 	validateAgentPaths,
 } from "./agents.ts";
-import { ensureR2Buckets, needsOpenNextBuild, needsViteBuild, runOpenNextBuild, runViteBuild } from "./build-helper.ts";
+import {
+	checkWranglerVersion,
+	getWranglerVersion,
+	needsOpenNextBuild,
+	needsViteBuild,
+	parseWranglerConfig,
+	runOpenNextBuild,
+	runViteBuild,
+} from "./build-helper.ts";
 import { checkWorkerExists, getAccountId, listD1Databases } from "./cloudflare-api.ts";
 import { getSyncConfig } from "./config.ts";
 import { deleteManagedProject } from "./control-plane.ts";
@@ -674,7 +682,7 @@ export async function createProject(
 		try {
 			const result = await runParallelSetup(targetDir, projectName, {
 				template: resolvedTemplate || "hello",
-				usePrebuilt: true,
+				usePrebuilt: templateOrigin.type === "builtin", // Only builtin templates have prebuilt bundles
 			});
 			remoteResult = result.remoteResult;
 			reporter.stop();
@@ -1047,15 +1055,22 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 			}
 		}
 
-		// Ensure R2 buckets exist before deploying (omakase - auto-provision)
-		try {
-			const buckets = await ensureR2Buckets(projectPath);
-			if (buckets.length > 0) {
-				reporter.info(`R2 buckets ready: ${buckets.join(", ")}`);
+		// Check wrangler version for auto-provisioning (KV/R2/D1 without IDs)
+		const config = await parseWranglerConfig(projectPath);
+		const needsAutoProvision =
+			config.kv_namespaces?.some((kv) => !kv.id) ||
+			config.r2_buckets?.some((r2) => r2.bucket_name?.startsWith("jack-template-")) ||
+			config.d1_databases?.some((d1) => !d1.database_id);
+
+		if (needsAutoProvision) {
+			try {
+				const wranglerVersion = await getWranglerVersion();
+				checkWranglerVersion(wranglerVersion);
+			} catch (err) {
+				if (err instanceof JackError) {
+					throw err;
+				}
 			}
-		} catch (err) {
-			// Non-fatal: let wrangler deploy fail with a clearer error if bucket is missing
-			debug("R2 preflight failed:", err);
 		}
 
 		const spin = reporter.spinner("Deploying...");
