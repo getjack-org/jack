@@ -49,6 +49,27 @@ export interface SlugAvailabilityResponse {
 	error?: string;
 }
 
+export interface UsernameAvailabilityResponse {
+	available: boolean;
+	username: string;
+	error?: string;
+}
+
+export interface SetUsernameResponse {
+	success: boolean;
+	username: string;
+}
+
+export interface UserProfile {
+	id: string;
+	email: string;
+	first_name: string | null;
+	last_name: string | null;
+	username: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 export interface CreateDeploymentRequest {
 	source: string;
 }
@@ -339,5 +360,73 @@ export async function fetchProjectTags(projectId: string): Promise<string[]> {
 		return data.tags ?? [];
 	} catch {
 		return [];
+	}
+}
+
+/**
+ * Check if a username is available on jack cloud.
+ * Does not require authentication.
+ */
+export async function checkUsernameAvailable(
+	username: string,
+): Promise<UsernameAvailabilityResponse> {
+	const response = await fetch(
+		`${getControlApiUrl()}/v1/usernames/${encodeURIComponent(username)}/available`,
+	);
+
+	if (!response.ok) {
+		throw new Error(`Failed to check username availability: ${response.status}`);
+	}
+
+	return response.json() as Promise<UsernameAvailabilityResponse>;
+}
+
+/**
+ * Set the current user's username.
+ * Can only be called once per user.
+ */
+export async function setUsername(username: string): Promise<SetUsernameResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/me/username`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ username }),
+	});
+
+	if (response.status === 409) {
+		const err = (await response.json().catch(() => ({ message: "Username taken" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || "Username is already taken");
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to set username: ${response.status}`);
+	}
+
+	return response.json() as Promise<SetUsernameResponse>;
+}
+
+/**
+ * Get the current user's profile including username.
+ */
+export async function getCurrentUserProfile(): Promise<UserProfile | null> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	try {
+		const response = await authFetch(`${getControlApiUrl()}/v1/me`);
+
+		if (!response.ok) {
+			return null;
+		}
+
+		const data = (await response.json()) as { user: UserProfile };
+		return data.user;
+	} catch {
+		return null;
 	}
 }

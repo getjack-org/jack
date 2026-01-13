@@ -183,7 +183,11 @@ function renderGroupedView(items: ProjectListItem[]): void {
 
 		console.error("");
 		console.error(
-			formatCloudSection(sorted, { limit: CLOUD_LIMIT, total: groups.cloudOnly.length, tagColorMap }),
+			formatCloudSection(sorted, {
+				limit: CLOUD_LIMIT,
+				total: groups.cloudOnly.length,
+				tagColorMap,
+			}),
 		);
 	}
 

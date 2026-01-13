@@ -307,7 +307,11 @@ export function formatProjectLine(item: ProjectListItem, options: FormatLineOpti
 	let url = "";
 	if (showUrl && item.url) {
 		url = item.url.replace("https://", "");
-	} else if (showUrl && (item.status === "error" || item.status === "auth-expired") && item.errorMessage) {
+	} else if (
+		showUrl &&
+		(item.status === "error" || item.status === "auth-expired") &&
+		item.errorMessage
+	) {
 		url = `${colors.dim}${item.errorMessage}${colors.reset}`;
 	}
 

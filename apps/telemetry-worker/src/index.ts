@@ -17,7 +17,7 @@ app.get("/health", (c) => c.json({ status: "ok", service: "jack-telemetry" }));
 async function checkRateLimit(kv: KVNamespace, ip: string): Promise<boolean> {
 	const key = `rl:${ip}`;
 	const current = await kv.get(key);
-	const count = current ? parseInt(current, 10) : 0;
+	const count = current ? Number.parseInt(current, 10) : 0;
 
 	if (count >= RATE_LIMIT_MAX) return false;
 
