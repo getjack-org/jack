@@ -22,6 +22,7 @@
 		{ "path": "./apps/auth-worker" },
 		{ "path": "./apps/control-plane" },
 		{ "path": "./apps/dispatch-worker" },
+		{ "path": "./apps/telemetry-worker" },
 		{ "path": "./packages/auth" }
 	]
 }

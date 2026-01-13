@@ -10,13 +10,16 @@ export type Bindings = {
 	FEEDBACK_LIMITER: {
 		limit: (options: { key: string }) => Promise<{ success: boolean }>;
 	};
+	USERNAME_CHECK_LIMITER: {
+		limit: (options: { key: string }) => Promise<{ success: boolean }>;
+	};
 };
 
 // Project status enum
 export type ProjectStatus = "provisioning" | "active" | "error" | "deleted";
 
 // Resource types
-export type ResourceType = "worker" | "d1" | "r2_content";
+export type ResourceType = "worker" | "d1" | "r2_content" | "r2";
 
 // Project interface matching DB schema
 export interface Project {
@@ -27,6 +30,7 @@ export interface Project {
 	status: ProjectStatus;
 	code_bucket_prefix: string;
 	content_bucket_enabled: number; // SQLite boolean (0 or 1)
+	tags: string; // JSON string array of tags
 	created_at: string;
 	updated_at: string;
 }
@@ -38,6 +42,7 @@ export interface Resource {
 	resource_type: ResourceType;
 	resource_name: string;
 	provider_id: string;
+	binding_name: string | null; // The binding name used in wrangler.jsonc (e.g., "NEXT_INC_CACHE_R2_BUCKET")
 	status: ProjectStatus;
 	metadata: string | null; // JSON string
 	created_at: string;

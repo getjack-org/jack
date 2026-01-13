@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "jack",
@@ -11,17 +12,6 @@
       "devDependencies": {
         "@biomejs/biome": "^1.9.0",
         "bun-types": "latest",
-        "typescript": "^5.0.0",
-      },
-    },
-    "apps/api-worker": {
-      "name": "@getjack/api-worker",
-      "dependencies": {
-        "@getjack/auth": "workspace:*",
-        "hono": "^4.6.0",
-      },
-      "devDependencies": {
-        "@cloudflare/workers-types": "^4.20241205.0",
         "typescript": "^5.0.0",
       },
     },
@@ -37,7 +27,7 @@
     },
     "apps/cli": {
       "name": "@getjack/jack",
-      "version": "0.1.2",
+      "version": "0.1.4",
       "bin": {
         "jack": "./src/index.ts",
       },
@@ -47,7 +37,6 @@
         "archiver": "^7.0.1",
         "human-id": "^4.1.3",
         "meow": "^14.0.0",
-        "posthog-node": "^5.17.4",
         "yocto-spinner": "^1.0.0",
         "zod": "^4.2.1",
       },
@@ -77,6 +66,17 @@
         "@cloudflare/workers-types": "^4.20241205.0",
         "typescript": "^5.0.0",
         "wrangler": "^4.0.0",
+      },
+    },
+    "apps/telemetry-worker": {
+      "name": "@getjack/telemetry-worker",
+      "dependencies": {
+        "hono": "^4.6.0",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^4.20241205.0",
+        "typescript": "^5.0.0",
+        "wrangler": "^4.14.4",
       },
     },
     "packages/auth": {
@@ -259,8 +259,6 @@
 
     "@fortawesome/fontawesome-free": ["@fortawesome/fontawesome-free@6.7.2", "", {}, "sha512-JUOtgFW6k9u4Y+xeIaEiLr3+cjoUPiAuLXoyKOJSia6Duzb7pq+A76P9ZdPDoAoxHdHzq6gE9/jKBGXlZT8FbA=="],
 
-    "@getjack/api-worker": ["@getjack/api-worker@workspace:apps/api-worker"],
-
     "@getjack/auth": ["@getjack/auth@workspace:packages/auth"],
 
     "@getjack/auth-worker": ["@getjack/auth-worker@workspace:apps/auth-worker"],
@@ -270,6 +268,8 @@
     "@getjack/dispatch-worker": ["@getjack/dispatch-worker@workspace:apps/dispatch-worker"],
 
     "@getjack/jack": ["@getjack/jack@workspace:apps/cli"],
+
+    "@getjack/telemetry-worker": ["@getjack/telemetry-worker@workspace:apps/telemetry-worker"],
 
     "@hono/node-server": ["@hono/node-server@1.19.7", "", { "peerDependencies": { "hono": "^4" } }, "sha512-vUcD0uauS7EU2caukW8z5lJKtoGMokxNbJtBiwHgpqxEXokaHCBkQUmCHhjFB1VUTWdqj25QoMkMKzgjq+uhrw=="],
 
@@ -378,8 +378,6 @@
     "@poppinss/dumper": ["@poppinss/dumper@0.6.5", "", { "dependencies": { "@poppinss/colors": "^4.1.5", "@sindresorhus/is": "^7.0.2", "supports-color": "^10.0.0" } }, "sha512-NBdYIb90J7LfOI32dOewKI1r7wnkiH6m920puQ3qHUeZkxNkQiFnXVWoE6YtFSv6QOiPPf7ys6i+HWWecDz7sw=="],
 
     "@poppinss/exception": ["@poppinss/exception@1.2.3", "", {}, "sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw=="],
-
-    "@posthog/core": ["@posthog/core@1.8.1", "", { "dependencies": { "cross-spawn": "^7.0.6" } }, "sha512-jfzBtQIk9auRi/biO+G/gumK5KxqsD5wOr7XpYMROE/I3pazjP4zIziinp21iQuIQJMXrDvwt9Af3njgOGwtew=="],
 
     "@radix-ui/colors": ["@radix-ui/colors@3.0.0", "", {}, "sha512-FUOsGBkHrYJwCSEtWRCIfQbZG7q1e6DgxCIOe1SUQzDe/7rXXeA47s8yCn6fuTNQAj1Zq4oTFi9Yjp3wzElcxg=="],
 
@@ -1510,8 +1508,6 @@
     "postcss": ["postcss@8.5.6", "", { "dependencies": { "nanoid": "^3.3.11", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg=="],
 
     "postcss-value-parser": ["postcss-value-parser@4.2.0", "", {}, "sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ=="],
-
-    "posthog-node": ["posthog-node@5.17.4", "", { "dependencies": { "@posthog/core": "1.8.1" } }, "sha512-hrd+Do/DMt40By12ESIDUfD81V9OASjq9XHjycZrGiD8cX/ZwCIVSJLUb7nQmvSCWcKII+u+nnPVuc4LjTDl9g=="],
 
     "process": ["process@0.11.10", "", {}, "sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A=="],
 

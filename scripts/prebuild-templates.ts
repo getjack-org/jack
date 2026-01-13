@@ -19,7 +19,7 @@ import {
 } from "../apps/cli/src/lib/build-helper.ts";
 import { packageForDeploy } from "../apps/cli/src/lib/zip-packager.ts";
 
-const TEMPLATES = ["miniapp", "api", "hello"] as const;
+const TEMPLATES = ["miniapp", "api", "hello", "nextjs"] as const;
 const R2_BUCKET = "jack-code-internal";
 
 interface TemplateMeta {

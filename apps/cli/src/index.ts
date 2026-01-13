@@ -4,7 +4,7 @@ import pkg from "../package.json";
 import { enableDebug } from "./lib/debug.ts";
 import { isJackError } from "./lib/errors.ts";
 import { info, error as printError } from "./lib/output.ts";
-import { identify, shutdown, withTelemetry } from "./lib/telemetry.ts";
+import { getEnvironmentProps, identify, shutdown, withTelemetry } from "./lib/telemetry.ts";
 
 const cli = meow(
 	`
@@ -34,6 +34,11 @@ const cli = meow(
     login               Sign in
     logout              Sign out
     whoami              Show current user
+
+  Project Management
+    link [name]         Link directory to a project
+    unlink              Remove project link
+    tag                 Manage project tags
 
   Advanced
     agents              Manage AI agent configs
@@ -105,6 +110,18 @@ const cli = meow(
 				type: "boolean",
 				default: false,
 			},
+			all: {
+				type: "boolean",
+				shortFlag: "a",
+				default: false,
+			},
+			status: {
+				type: "string",
+			},
+			json: {
+				type: "boolean",
+				default: false,
+			},
 			project: {
 				type: "string",
 				shortFlag: "p",
@@ -125,6 +142,10 @@ const cli = meow(
 				type: "boolean",
 				default: false,
 			},
+			tag: {
+				type: "string",
+				isMultiple: true,
+			},
 		},
 	},
 );
@@ -143,6 +164,7 @@ identify({
 	arch: process.arch,
 	node_version: process.version,
 	is_ci: !!process.env.CI,
+	...getEnvironmentProps(),
 });
 
 try {
@@ -198,6 +220,11 @@ try {
 			await withTelemetry("agents", agents)(args[0], args.slice(1), {
 				project: cli.flags.project,
 			});
+			break;
+		}
+		case "tag": {
+			const { default: tag } = await import("./commands/tag.ts");
+			await withTelemetry("tag", tag)(args[0], args.slice(1));
 			break;
 		}
 		case "sync": {
@@ -279,6 +306,14 @@ try {
 			if (cli.flags.local) lsArgs.push("--local");
 			if (cli.flags.deployed) lsArgs.push("--deployed");
 			if (cli.flags.cloud) lsArgs.push("--cloud");
+			if (cli.flags.all) lsArgs.push("--all");
+			if (cli.flags.json) lsArgs.push("--json");
+			if (cli.flags.status) lsArgs.push("--status", cli.flags.status);
+			if (cli.flags.tag) {
+				for (const t of cli.flags.tag) {
+					lsArgs.push("--tag", t);
+				}
+			}
 			await withTelemetry("projects", projects)("list", lsArgs);
 			break;
 		}
@@ -305,6 +340,16 @@ try {
 		case "feedback": {
 			const { default: feedback } = await import("./commands/feedback.ts");
 			await withTelemetry("feedback", feedback)();
+			break;
+		}
+		case "link": {
+			const { default: link } = await import("./commands/link.ts");
+			await withTelemetry("link", link)(args[0], { byo: cli.flags.byo });
+			break;
+		}
+		case "unlink": {
+			const { default: unlink } = await import("./commands/unlink.ts");
+			await withTelemetry("unlink", unlink)();
 			break;
 		}
 		default:

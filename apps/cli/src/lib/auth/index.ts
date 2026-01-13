@@ -9,10 +9,12 @@ export {
 export { requireAuth, requireAuthOrLogin, getCurrentUser } from "./guard.ts";
 export {
 	deleteCredentials,
+	getAuthState,
 	getCredentials,
 	isLoggedIn,
 	isTokenExpired,
 	saveCredentials,
 	type AuthCredentials,
+	type AuthState,
 	type AuthUser,
 } from "./store.ts";

@@ -40,12 +40,34 @@ export interface CreateProjectResponse {
 	status?: "live" | "created";
 	url?: string;
 	prebuilt_failed?: boolean;
+	prebuilt_error?: string;
 }
 
 export interface SlugAvailabilityResponse {
 	available: boolean;
 	slug: string;
 	error?: string;
+}
+
+export interface UsernameAvailabilityResponse {
+	available: boolean;
+	username: string;
+	error?: string;
+}
+
+export interface SetUsernameResponse {
+	success: boolean;
+	username: string;
+}
+
+export interface UserProfile {
+	id: string;
+	email: string;
+	first_name: string | null;
+	last_name: string | null;
+	username: string | null;
+	created_at: string;
+	updated_at: string;
 }
 
 export interface CreateDeploymentRequest {
@@ -164,6 +186,7 @@ export interface ManagedProject {
 	status: "active" | "error" | "deleted";
 	created_at: string;
 	updated_at: string;
+	tags?: string; // JSON string array from DB, e.g., '["backend", "api"]'
 }
 
 /**
@@ -292,4 +315,118 @@ export async function fetchProjectResources(projectId: string): Promise<ProjectR
 
 	const data = (await response.json()) as { resources: ProjectResource[] };
 	return data.resources;
+}
+
+/**
+ * Sync project tags to the control plane.
+ * Fire-and-forget: errors are logged but not thrown.
+ */
+export async function syncProjectTags(projectId: string, tags: string[]): Promise<void> {
+	const { authFetch } = await import("./auth/index.ts");
+	const { debug } = await import("./debug.ts");
+
+	try {
+		const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/tags`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ tags }),
+		});
+
+		if (!response.ok) {
+			// Log but don't throw - tag sync is non-critical
+			debug(`Tag sync failed: ${response.status}`);
+		}
+	} catch (error) {
+		// Log but don't throw - tag sync is non-critical
+		debug(`Tag sync failed: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+/**
+ * Fetch project tags from the control plane.
+ * Returns empty array on error.
+ */
+export async function fetchProjectTags(projectId: string): Promise<string[]> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	try {
+		const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/tags`);
+
+		if (!response.ok) {
+			return [];
+		}
+
+		const data = (await response.json()) as { tags: string[] };
+		return data.tags ?? [];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Check if a username is available on jack cloud.
+ * Does not require authentication.
+ */
+export async function checkUsernameAvailable(
+	username: string,
+): Promise<UsernameAvailabilityResponse> {
+	const response = await fetch(
+		`${getControlApiUrl()}/v1/usernames/${encodeURIComponent(username)}/available`,
+	);
+
+	if (!response.ok) {
+		throw new Error(`Failed to check username availability: ${response.status}`);
+	}
+
+	return response.json() as Promise<UsernameAvailabilityResponse>;
+}
+
+/**
+ * Set the current user's username.
+ * Can only be called once per user.
+ */
+export async function setUsername(username: string): Promise<SetUsernameResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/me/username`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ username }),
+	});
+
+	if (response.status === 409) {
+		const err = (await response.json().catch(() => ({ message: "Username taken" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || "Username is already taken");
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to set username: ${response.status}`);
+	}
+
+	return response.json() as Promise<SetUsernameResponse>;
+}
+
+/**
+ * Get the current user's profile including username.
+ */
+export async function getCurrentUserProfile(): Promise<UserProfile | null> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	try {
+		const response = await authFetch(`${getControlApiUrl()}/v1/me`);
+
+		if (!response.ok) {
+			return null;
+		}
+
+		const data = (await response.json()) as { user: UserProfile };
+		return data.user;
+	} catch {
+		return null;
+	}
 }

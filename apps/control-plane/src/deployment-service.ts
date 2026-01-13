@@ -7,6 +7,7 @@ import {
 	createAssetManifest,
 	getMimeType,
 } from "./cloudflare-api";
+import { ProvisioningService } from "./provisioning";
 import type { Bindings, Deployment, Project, Resource } from "./types";
 
 const DISPATCH_NAMESPACE = "jack-tenants";
@@ -23,6 +24,7 @@ interface ManifestData {
 	bindings?: {
 		d1?: { binding: string };
 		ai?: { binding: string };
+		r2?: Array<{ binding: string; bucket_name: string }>;
 		assets?: {
 			binding: string;
 			directory: string;
@@ -40,7 +42,7 @@ interface ManifestData {
 /**
  * Supported binding types for managed deploy
  */
-const SUPPORTED_BINDING_KEYS = ["d1", "ai", "assets", "vars"] as const;
+const SUPPORTED_BINDING_KEYS = ["d1", "ai", "r2", "assets", "vars"] as const;
 
 /**
  * Binding types that are NOT supported in managed deploy
@@ -51,7 +53,6 @@ const UNSUPPORTED_BINDING_KEYS = [
 	"durable_objects",
 	"queues",
 	"services",
-	"r2_buckets",
 	"hyperdrive",
 	"vectorize",
 	"browser",
@@ -116,6 +117,27 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
 				const ai = bindings.ai as Record<string, unknown>;
 				if (typeof ai !== "object" || typeof ai.binding !== "string") {
 					errors.push("manifest.bindings.ai.binding must be a string");
+				}
+			}
+
+			// Validate R2 binding structure
+			if (bindings.r2 !== undefined) {
+				if (!Array.isArray(bindings.r2)) {
+					errors.push("manifest.bindings.r2 must be an array");
+				} else {
+					for (let i = 0; i < bindings.r2.length; i++) {
+						const r2 = bindings.r2[i] as Record<string, unknown>;
+						if (typeof r2 !== "object" || r2 === null) {
+							errors.push(`manifest.bindings.r2[${i}] must be an object`);
+						} else {
+							if (typeof r2.binding !== "string") {
+								errors.push(`manifest.bindings.r2[${i}].binding must be a string`);
+							}
+							if (typeof r2.bucket_name !== "string") {
+								errors.push(`manifest.bindings.r2[${i}].bucket_name must be a string`);
+							}
+						}
+					}
 				}
 			}
 
@@ -190,11 +212,13 @@ export class DeploymentService {
 	private db: D1Database;
 	private codeBucket: R2Bucket;
 	private cfClient: CloudflareClient;
+	private provisioningService: ProvisioningService;
 
 	constructor(env: Bindings) {
 		this.db = env.DB;
 		this.codeBucket = env.CODE_BUCKET;
 		this.cfClient = new CloudflareClient(env);
+		this.provisioningService = new ProvisioningService(env);
 	}
 
 	/**
@@ -463,6 +487,41 @@ export class DeploymentService {
 				type: "ai",
 				name: intent.ai.binding,
 			});
+		}
+
+		// Resolve R2 bindings (provision if needed)
+		if (intent.r2 && Array.isArray(intent.r2)) {
+			// Get all existing R2 resources for this project
+			const existingR2Resources = await this.db
+				.prepare(
+					"SELECT binding_name, resource_name FROM resources WHERE project_id = ? AND resource_type = 'r2' AND status != 'deleted'",
+				)
+				.bind(projectId)
+				.all<{ binding_name: string; resource_name: string }>();
+
+			const existingByBinding = new Map(
+				(existingR2Resources.results ?? []).map((r) => [r.binding_name, r.resource_name]),
+			);
+
+			for (const r2Intent of intent.r2) {
+				let bucketName = existingByBinding.get(r2Intent.binding);
+
+				// If we don't have this R2 resource, provision it
+				if (!bucketName) {
+					const r2Resource = await this.provisioningService.provisionR2Binding(
+						projectId,
+						r2Intent.binding,
+						r2Intent.bucket_name,
+					);
+					bucketName = r2Resource.resource_name;
+				}
+
+				bindings.push({
+					type: "r2_bucket",
+					name: r2Intent.binding, // Use the user's binding name
+					bucket_name: bucketName,
+				});
+			}
 		}
 
 		// Note: Assets are NOT resolved here as bindings.

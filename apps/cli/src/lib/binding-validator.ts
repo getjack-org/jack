@@ -12,7 +12,7 @@ import type { WranglerConfig } from "./build-helper.ts";
 /**
  * Bindings supported by jack cloud managed deployments.
  */
-export const SUPPORTED_BINDINGS = ["d1_databases", "ai", "assets", "vars"] as const;
+export const SUPPORTED_BINDINGS = ["d1_databases", "ai", "assets", "vars", "r2_buckets"] as const;
 
 /**
  * Bindings not yet supported by jack cloud.
@@ -23,7 +23,6 @@ export const UNSUPPORTED_BINDINGS = [
 	"durable_objects",
 	"queues",
 	"services",
-	"r2_buckets",
 	"hyperdrive",
 	"vectorize",
 	"browser",
@@ -38,7 +37,6 @@ const BINDING_DISPLAY_NAMES: Record<string, string> = {
 	durable_objects: "Durable Objects",
 	queues: "Queues",
 	services: "Service Bindings",
-	r2_buckets: "R2 Buckets",
 	hyperdrive: "Hyperdrive",
 	vectorize: "Vectorize",
 	browser: "Browser Rendering",
@@ -68,16 +66,9 @@ export function validateBindings(
 		const value = config[binding as keyof WranglerConfig];
 		if (value !== undefined && value !== null) {
 			const displayName = BINDING_DISPLAY_NAMES[binding] || binding;
-			// Special message for R2 - suggest using Workers Assets instead
-			if (binding === "r2_buckets") {
-				errors.push(
-					`✗ R2 buckets not supported in managed deploy.\n  For static files, use Workers Assets instead (assets.directory in wrangler.jsonc).\n  Fix: Replace r2_buckets with assets config, or use 'wrangler deploy' for full control.`,
-				);
-			} else {
-				errors.push(
-					`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
-				);
-			}
+			errors.push(
+				`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, R2, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
+			);
 		}
 	}
 

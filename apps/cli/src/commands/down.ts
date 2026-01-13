@@ -9,8 +9,8 @@ import { fetchProjectResources } from "../lib/control-plane.ts";
 import { promptSelect } from "../lib/hooks.ts";
 import { managedDown } from "../lib/managed-down.ts";
 import { error, info, item, output, success, warn } from "../lib/output.ts";
+import { type LocalProjectLink, readProjectLink } from "../lib/project-link.ts";
 import { resolveProject } from "../lib/project-resolver.ts";
-import { type Project, getProject, updateProject } from "../lib/registry.ts";
 import { parseWranglerResources } from "../lib/resources.ts";
 import { deleteCloudProject, getProjectNameFromDir } from "../lib/storage/index.ts";
 
@@ -19,11 +19,14 @@ import { deleteCloudProject, getProjectNameFromDir } from "../lib/storage/index.
  * For managed projects: fetch from control plane.
  * For BYO projects: parse from wrangler.jsonc in cwd.
  */
-async function resolveDatabaseName(project: Project, projectName: string): Promise<string | null> {
+async function resolveDatabaseName(
+	link: LocalProjectLink | null,
+	projectName: string,
+): Promise<string | null> {
 	// For managed projects, fetch from control plane
-	if (project.deploy_mode === "managed" && project.remote?.project_id) {
+	if (link?.deploy_mode === "managed") {
 		try {
-			const resources = await fetchProjectResources(project.remote.project_id);
+			const resources = await fetchProjectResources(link.project_id);
 			const d1 = resources.find((r) => r.resource_type === "d1");
 			return d1?.resource_name || null;
 		} catch {
@@ -70,50 +73,39 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			}
 		}
 
-		// Resolve project from all sources (registry + control plane)
+		// Resolve project from all sources (local link + control plane)
 		const resolved = await resolveProject(name);
 
+		// Read local project link
+		const link = await readProjectLink(process.cwd());
+
 		// Check if found only on control plane (orphaned managed project)
-		if (resolved?.sources.controlPlane && !resolved.sources.registry) {
+		if (resolved?.sources.controlPlane && !resolved.sources.filesystem) {
 			console.error("");
 			info(`Found "${name}" on jack cloud, linking locally...`);
 		}
 
-		// Get the registry project (may have been created by resolver cache)
-		const project = await getProject(name);
-
-		if (!resolved && !project) {
+		if (!resolved && !link) {
 			// Not found anywhere
 			warn(`Project '${name}' not found`);
 			info("Will attempt to undeploy if deployed");
 		}
 
-		// Check if this is a managed project (either from resolved or registry)
-		const isManaged =
-			resolved?.remote?.projectId ||
-			(project?.deploy_mode === "managed" && project.remote?.project_id);
+		// Check if this is a managed project (from link or resolved data)
+		const isManaged = link?.deploy_mode === "managed" || resolved?.remote?.projectId;
 
 		if (isManaged) {
-			// Build project object for managedDown if we only have resolved data
-			const managedProject: Project = project || {
-				workerUrl: resolved?.url || null,
-				createdAt: resolved?.createdAt || new Date().toISOString(),
-				lastDeployed: resolved?.updatedAt || null,
-				status: resolved?.status === "live" ? "live" : "build_failed",
-				deploy_mode: "managed",
-				remote:
-					resolved?.remote && resolved.url
-						? {
-								project_id: resolved.remote.projectId,
-								project_slug: resolved.slug,
-								org_id: resolved.remote.orgId,
-								runjack_url: resolved.url,
-							}
-						: undefined,
-			};
+			// Get the project ID from link or resolved data
+			const projectId = link?.project_id || resolved?.remote?.projectId;
+			const runjackUrl = resolved?.url || null;
+
+			if (!projectId) {
+				error("Cannot determine project ID for managed deletion");
+				process.exit(1);
+			}
 
 			// Route to managed deletion flow
-			const deleteSuccess = await managedDown(managedProject, name, flags);
+			const deleteSuccess = await managedDown({ projectId, runjackUrl }, name, flags);
 			if (!deleteSuccess) {
 				process.exit(0); // User cancelled
 			}
@@ -144,14 +136,6 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			await deleteWorker(name);
 			output.stop();
 
-			// Update registry - keep entry but clear worker URL
-			if (project) {
-				await updateProject(name, {
-					workerUrl: null,
-					lastDeployed: null,
-				});
-			}
-
 			console.error("");
 			success(`'${name}' undeployed`);
 			info("Databases and backups were not affected");
@@ -162,10 +146,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		// Interactive mode - show what will be affected
 		console.error("");
 		info(`Project: ${name}`);
-		if (project?.workerUrl) {
-			item(`URL: ${project.workerUrl}`);
+		if (resolved?.url) {
+			item(`URL: ${resolved.url}`);
 		}
-		const dbName = project ? await resolveDatabaseName(project, name) : null;
+		const dbName = await resolveDatabaseName(link, name);
 		if (dbName) {
 			item(`Database: ${dbName}`);
 		}
@@ -223,12 +207,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 
 		// Handle backup deletion
 		let shouldDeleteR2 = false;
-		if (project) {
-			console.error("");
-			info("Delete backup for this project?");
-			const deleteR2Action = await promptSelect(["Yes", "No"]);
-			shouldDeleteR2 = deleteR2Action === 0;
-		}
+		console.error("");
+		info("Delete backup for this project?");
+		const deleteR2Action = await promptSelect(["Yes", "No"]);
+		shouldDeleteR2 = deleteR2Action === 0;
 
 		// Execute deletions
 		console.error("");
@@ -277,14 +259,6 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 				output.stop();
 				warn(`Failed to delete backup: ${err instanceof Error ? err.message : String(err)}`);
 			}
-		}
-
-		// Update registry - keep entry but clear worker URL
-		if (project) {
-			await updateProject(name, {
-				workerUrl: null,
-				lastDeployed: null,
-			});
 		}
 
 		console.error("");
