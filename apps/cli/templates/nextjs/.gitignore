@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.open-next/
+.env
+.env.*
+.dev.vars
+.secrets.json
+.jack/
+.wrangler/

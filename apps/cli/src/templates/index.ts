@@ -8,7 +8,7 @@ import type { Template } from "./types";
 // Resolve templates directory relative to this file (src/templates -> templates)
 const TEMPLATES_DIR = join(dirname(dirname(import.meta.dir)), "templates");
 
-export const BUILTIN_TEMPLATES = ["hello", "miniapp", "api"];
+export const BUILTIN_TEMPLATES = ["hello", "miniapp", "api", "nextjs"];
 
 /**
  * Resolved template with origin tracking for lineage
@@ -150,9 +150,10 @@ export async function resolveTemplateWithOrigin(
 export function renderTemplate(template: Template, vars: { name: string }): Template {
 	const rendered: Record<string, string> = {};
 	for (const [path, content] of Object.entries(template.files)) {
-		// Replace -db variant first to avoid partial matches
+		// Replace suffixed variants first to avoid partial matches
 		rendered[path] = content
 			.replace(/jack-template-db/g, `${vars.name}-db`)
+			.replace(/jack-template-cache/g, `${vars.name}-cache`)
 			.replace(/jack-template/g, vars.name);
 	}
 	return { ...template, files: rendered };

@@ -36,12 +36,15 @@ export interface WranglerConfig {
 		run_worker_first?: boolean;
 	};
 	vars?: Record<string, string>;
+	r2_buckets?: Array<{
+		binding: string;
+		bucket_name: string;
+	}>;
 	// Unsupported bindings (for validation)
 	kv_namespaces?: unknown;
 	durable_objects?: unknown;
 	queues?: unknown;
 	services?: unknown;
-	r2_buckets?: unknown;
 	hyperdrive?: unknown;
 	vectorize?: unknown;
 	browser?: unknown;
@@ -83,6 +86,18 @@ export async function needsViteBuild(projectPath: string): Promise<boolean> {
 }
 
 /**
+ * Checks if project requires OpenNext build by detecting open-next config files
+ * @param projectPath - Absolute path to project directory
+ * @returns true if open-next.config.ts or open-next.config.js exists
+ */
+export async function needsOpenNextBuild(projectPath: string): Promise<boolean> {
+	return (
+		existsSync(join(projectPath, "open-next.config.ts")) ||
+		existsSync(join(projectPath, "open-next.config.js"))
+	);
+}
+
+/**
  * Runs Vite build for the project
  * @param projectPath - Absolute path to project directory
  * @throws JackError if build fails
@@ -106,6 +121,29 @@ export async function runViteBuild(projectPath: string): Promise<void> {
 }
 
 /**
+ * Runs OpenNext build for Next.js projects targeting Cloudflare
+ * @param projectPath - Absolute path to project directory
+ * @throws JackError if build fails
+ */
+export async function runOpenNextBuild(projectPath: string): Promise<void> {
+	// OpenNext builds Next.js for Cloudflare Workers
+	// Outputs to .open-next/worker.js and .open-next/assets/
+	const buildResult = await $`bunx opennextjs-cloudflare build`.cwd(projectPath).nothrow().quiet();
+
+	if (buildResult.exitCode !== 0) {
+		throw new JackError(
+			JackErrorCode.BUILD_FAILED,
+			"OpenNext build failed",
+			"Check your next.config and source files for errors",
+			{
+				exitCode: buildResult.exitCode,
+				stderr: buildResult.stderr.toString(),
+			},
+		);
+	}
+}
+
+/**
  * Builds a Cloudflare Worker project using wrangler dry-run
  * @param options - Build options with project path and optional reporter
  * @returns BuildOutput containing build artifacts and metadata
@@ -117,13 +155,22 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 	// Parse wrangler config first
 	const config = await parseWranglerConfig(projectPath);
 
-	// Check if Vite build is needed and run it
+	// Check if OpenNext build is needed (Next.js + Cloudflare)
+	const hasOpenNext = await needsOpenNextBuild(projectPath);
+	if (hasOpenNext) {
+		reporter?.start("Building...");
+		await runOpenNextBuild(projectPath);
+		reporter?.stop();
+		reporter?.success("Built");
+	}
+
+	// Check if Vite build is needed and run it (skip if OpenNext already built)
 	const hasVite = await needsViteBuild(projectPath);
-	if (hasVite) {
-		reporter?.start("Building with Vite...");
+	if (hasVite && !hasOpenNext) {
+		reporter?.start("Building...");
 		await runViteBuild(projectPath);
 		reporter?.stop();
-		reporter?.success("Built with Vite");
+		reporter?.success("Built");
 	}
 
 	// Create unique temp directory for build output
@@ -208,4 +255,45 @@ async function resolveEntrypoint(outDir: string, main?: string): Promise<string>
 		"Could not determine build entrypoint",
 		"Ensure wrangler outputs a single entry file (index.js or worker.js)",
 	);
+}
+
+/**
+ * Ensures R2 buckets exist for BYO deploy.
+ * Creates buckets via wrangler if they don't exist.
+ * @param projectPath - Absolute path to project directory
+ * @returns Array of bucket names that were created or already existed
+ */
+export async function ensureR2Buckets(projectPath: string): Promise<string[]> {
+	const config = await parseWranglerConfig(projectPath);
+
+	if (!config.r2_buckets || config.r2_buckets.length === 0) {
+		return [];
+	}
+
+	const results: string[] = [];
+
+	for (const bucket of config.r2_buckets) {
+		const bucketName = bucket.bucket_name;
+
+		// Try to create the bucket (wrangler handles "already exists" gracefully)
+		const result = await $`wrangler r2 bucket create ${bucketName}`
+			.cwd(projectPath)
+			.nothrow()
+			.quiet();
+
+		// Exit code 0 = created, non-zero with "already exists" = fine
+		const stderr = result.stderr.toString();
+		if (result.exitCode === 0 || stderr.includes("already exists")) {
+			results.push(bucketName);
+		} else {
+			throw new JackError(
+				JackErrorCode.RESOURCE_ERROR,
+				`Failed to create R2 bucket: ${bucketName}`,
+				"Check your Cloudflare account has R2 enabled",
+				{ stderr },
+			);
+		}
+	}
+
+	return results;
 }

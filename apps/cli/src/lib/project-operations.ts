@@ -23,7 +23,7 @@ import {
 	runAgentOneShot,
 	validateAgentPaths,
 } from "./agents.ts";
-import { needsViteBuild, runViteBuild } from "./build-helper.ts";
+import { ensureR2Buckets, needsOpenNextBuild, needsViteBuild, runOpenNextBuild, runViteBuild } from "./build-helper.ts";
 import { checkWorkerExists, getAccountId, listD1Databases } from "./cloudflare-api.ts";
 import { getSyncConfig } from "./config.ts";
 import { deleteManagedProject } from "./control-plane.ts";
@@ -645,15 +645,8 @@ export async function createProject(
 		const validation = await validateAgentPaths();
 
 		if (validation.invalid.length > 0) {
-			reporter.stop();
-			reporter.warn("Some agent paths no longer exist:");
-			for (const { id, path } of validation.invalid) {
-				reporter.info(`  ${id}: ${path}`);
-			}
-			reporter.info("Run: jack agents scan");
-			reporter.start("Creating project...");
-
-			// Filter out invalid agents
+			// Silently filter out agents with missing paths
+			// User can run 'jack agents scan' to see/fix agent config
 			activeAgents = activeAgents.filter(
 				({ id }) => !validation.invalid.some((inv) => inv.id === id),
 			);
@@ -824,8 +817,19 @@ export async function createProject(
 	} else {
 		// BYO mode: deploy via wrangler
 
-		// Build first if needed (wrangler needs dist/ for assets)
-		if (await needsViteBuild(targetDir)) {
+		// Build first if needed (wrangler needs built assets)
+		if (await needsOpenNextBuild(targetDir)) {
+			reporter.start("Building...");
+			try {
+				await runOpenNextBuild(targetDir);
+				reporter.stop();
+				reporter.success("Built");
+			} catch (err) {
+				reporter.stop();
+				reporter.error("Build failed");
+				throw err;
+			}
+		} else if (await needsViteBuild(targetDir)) {
 			reporter.start("Building...");
 			try {
 				await runViteBuild(targetDir);
@@ -1022,8 +1026,17 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	} else {
 		// BYO mode: deploy via wrangler
 
-		// Build first if needed (wrangler needs dist/ for assets)
-		if (await needsViteBuild(projectPath)) {
+		// Build first if needed (wrangler needs built assets)
+		if (await needsOpenNextBuild(projectPath)) {
+			const buildSpin = reporter.spinner("Building...");
+			try {
+				await runOpenNextBuild(projectPath);
+				buildSpin.success("Built");
+			} catch (err) {
+				buildSpin.error("Build failed");
+				throw err;
+			}
+		} else if (await needsViteBuild(projectPath)) {
 			const buildSpin = reporter.spinner("Building...");
 			try {
 				await runViteBuild(projectPath);
@@ -1032,6 +1045,17 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 				buildSpin.error("Build failed");
 				throw err;
 			}
+		}
+
+		// Ensure R2 buckets exist before deploying (omakase - auto-provision)
+		try {
+			const buckets = await ensureR2Buckets(projectPath);
+			if (buckets.length > 0) {
+				reporter.info(`R2 buckets ready: ${buckets.join(", ")}`);
+			}
+		} catch (err) {
+			// Non-fatal: let wrangler deploy fail with a clearer error if bucket is missing
+			debug("R2 preflight failed:", err);
 		}
 
 		const spin = reporter.spinner("Deploying...");
