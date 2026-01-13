@@ -1,0 +1,57 @@
+# jack publish
+
+Make your project forkable by others.
+
+## Usage
+
+```bash
+jack publish
+```
+
+## Requirements
+
+- Project must be deployed (run `jack ship` first)
+- You must have a username set (prompted during first login)
+
+## What Happens
+
+1. Verifies you own the project
+2. Checks a source snapshot exists (created automatically on `jack ship`)
+3. Makes the project publicly visible for forking
+
+## After Publishing
+
+Others can fork your project with:
+
+```bash
+jack new my-fork -t yourusername/your-project
+```
+
+Your project URL format changes to include your username:
+- Before: `your-project.runjack.xyz`
+- After: `yourusername-your-project.runjack.xyz`
+
+Both URLs continue to work.
+
+## Example
+
+```bash
+# Create and deploy a project
+jack new cool-api -t api
+cd cool-api
+
+# Make some changes, then deploy
+jack ship
+
+# Publish for others to fork
+jack publish
+# Output: Published as alice/cool-api
+# Output: Fork with: jack new my-app -t alice/cool-api
+```
+
+## Notes
+
+- Publishing is one-way (no unpublish yet)
+- Source code becomes publicly downloadable
+- Forked projects are completely independent copies
+- Your deployed worker continues running normally

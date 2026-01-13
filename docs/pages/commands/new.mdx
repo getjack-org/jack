@@ -18,7 +18,17 @@ jack new [name] [options]
 
 | Option | Description |
 |--------|-------------|
-| `-t, --template` | Template to use (`miniapp`, `api`) |
+| `-t, --template` | Template to use (see below) |
+
+## Template Options
+
+| Format | Description |
+|--------|-------------|
+| `hello` | Default starter (Hono API) |
+| `api` | Hono API with examples |
+| `miniapp` | Farcaster Frame mini-app |
+| `nextjs` | Next.js on Cloudflare |
+| `username/slug` | Fork a published project |
 
 ## Examples
 
@@ -29,19 +39,30 @@ jack new
 # Create with a specific name
 jack new my-cool-app
 
-# Create with a specific template
+# Create with a builtin template
 jack new my-api -t api
+jack new my-miniapp -t miniapp
 
-# Fully specified
-jack new my-miniapp --template miniapp
+# Fork someone else's published project
+jack new my-fork -t alice/her-api
 ```
 
 ## What Happens
 
 1. Creates a new directory with your project name
-2. Copies the template files
+2. Copies the template files (or downloads from published project)
 3. Installs dependencies with `bun install`
-4. Deploys immediately with `jack ship`
+4. Builds and deploys with `jack ship`
 5. Opens your preferred AI agent (Claude Code, Cursor, etc.)
 
 After running `jack new`, your project is already live.
+
+## Forking Published Projects
+
+Any project published with [`jack publish`](/commands/publish) can be forked:
+
+```bash
+jack new my-version -t username/project-slug
+```
+
+This downloads the source code and creates a completely independent copy under your account.

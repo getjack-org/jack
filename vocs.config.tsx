@@ -50,6 +50,7 @@ export default defineConfig({
 			items: [
 				{ text: "new", link: "/commands/new" },
 				{ text: "ship", link: "/commands/ship" },
+				{ text: "publish", link: "/commands/publish" },
 				{ text: "ls", link: "/commands/ls" },
 				{ text: "projects", link: "/commands/projects" },
 				{ text: "open", link: "/commands/open" },
