@@ -17,7 +17,7 @@ import {
 } from "../lib/agents.ts";
 import { readConfig } from "../lib/config.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
-import { getProject } from "../lib/registry.ts";
+import { readTemplateMetadata } from "../lib/project-link.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 import { resolveTemplate } from "../templates/index.ts";
 import type { Template } from "../templates/types.ts";
@@ -116,7 +116,7 @@ async function scanAndPrompt(): Promise<void> {
 	const newAgents = detectionResult.detected.filter(({ id }) => !existingAgents[id]);
 
 	if (newAgents.length === 0) {
-		success("No new agents found");
+		success("All agents up to date");
 		await listAgents();
 		return;
 	}
@@ -331,19 +331,10 @@ async function preferAgentCommand(args: string[]): Promise<void> {
 async function refreshAgentFilesCommand(options: AgentsOptions = {}): Promise<void> {
 	const projectDir = process.cwd();
 	let projectName: string;
-	let project = null;
 
 	if (options.project) {
-		// When --project is specified, we still need to run from that project's directory
-		// since localPath is no longer stored in the registry
+		// When --project is specified, verify we're in that project's directory
 		projectName = options.project;
-		project = await getProject(projectName);
-
-		if (!project) {
-			error(`Project "${projectName}" not found in registry`);
-			info("List projects with: jack projects list");
-			process.exit(1);
-		}
 
 		// Verify the current directory matches the project
 		try {
@@ -354,7 +345,7 @@ async function refreshAgentFilesCommand(options: AgentsOptions = {}): Promise<vo
 				process.exit(1);
 			}
 		} catch {
-			error(`Current directory is not a valid project`);
+			error("Current directory is not a valid project");
 			info(`Run this command from the ${projectName} project directory`);
 			process.exit(1);
 		}
@@ -370,17 +361,11 @@ async function refreshAgentFilesCommand(options: AgentsOptions = {}): Promise<vo
 			process.exit(1);
 		}
 		outputSpinner.stop();
-
-		// 2. Get project from registry to find template origin
-		project = await getProject(projectName);
-		if (!project) {
-			error(`Project "${projectName}" not found in registry`);
-			info("List projects with: jack projects list");
-			process.exit(1);
-		}
 	}
 
-	if (!project?.template) {
+	// 2. Read template metadata from .jack/template.json
+	const templateMetadata = await readTemplateMetadata(projectDir);
+	if (!templateMetadata) {
 		error("No template lineage found for this project");
 		info("This project was created before lineage tracking was added.");
 		info("Re-create the project with `jack new` to enable refresh.");
@@ -391,10 +376,10 @@ async function refreshAgentFilesCommand(options: AgentsOptions = {}): Promise<vo
 	outputSpinner.start("Loading template...");
 	let template: Template;
 	try {
-		template = await resolveTemplate(project.template.name);
+		template = await resolveTemplate(templateMetadata.name);
 	} catch (err) {
 		outputSpinner.stop();
-		error(`Failed to load template: ${project.template.name}`);
+		error(`Failed to load template: ${templateMetadata.name}`);
 		if (err instanceof Error) {
 			info(err.message);
 		}

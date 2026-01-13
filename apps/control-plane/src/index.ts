@@ -28,6 +28,97 @@ declare module "hono" {
 	}
 }
 
+// Username validation: 3-39 chars, lowercase alphanumeric + hyphens, must start/end with alphanumeric
+const USERNAME_PATTERN = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]{1,2}$/;
+
+function validateUsername(username: string): string | null {
+	if (!username || username.trim() === "") {
+		return "Username cannot be empty";
+	}
+
+	if (username.length < 3) {
+		return "Username must be at least 3 characters";
+	}
+
+	if (username.length > 39) {
+		return "Username must be 39 characters or less";
+	}
+
+	if (username !== username.toLowerCase()) {
+		return "Username must be lowercase";
+	}
+
+	if (!USERNAME_PATTERN.test(username)) {
+		return "Username must contain only lowercase letters, numbers, and hyphens, and must start and end with a letter or number";
+	}
+
+	// Reserved usernames - system, product, and well-known brands
+	const reserved = [
+		// System & infrastructure
+		"admin",
+		"api",
+		"www",
+		"mail",
+		"cdn",
+		"static",
+		"assets",
+		"system",
+		"root",
+		"support",
+		"help",
+		"security",
+		// UI routes
+		"account",
+		"settings",
+		"profile",
+		"dashboard",
+		"login",
+		"logout",
+		"explore",
+		"trending",
+		// Jack product
+		"jack",
+		"getjack",
+		"templates",
+		"template",
+		// Cloud & infrastructure brands
+		"vercel",
+		"cloudflare",
+		"netlify",
+		"railway",
+		"render",
+		"supabase",
+		"neon",
+		"aws",
+		"azure",
+		"google",
+		"github",
+		"gitlab",
+		// Farcaster ecosystem
+		"farcaster",
+		"warpcast",
+		"neynar",
+		"privy",
+		// Big tech
+		"microsoft",
+		"apple",
+		"meta",
+		"facebook",
+		"twitter",
+		"x",
+	];
+	if (reserved.includes(username)) {
+		return "This username is reserved. Please choose a different one.";
+	}
+
+	// Block jack-* prefix to prevent impersonation
+	if (username.startsWith("jack-") || username.startsWith("getjack-")) {
+		return "Usernames starting with 'jack-' are reserved. Please choose a different one.";
+	}
+
+	return null;
+}
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use(
@@ -104,6 +195,37 @@ app.post("/v1/feedback", async (c) => {
 		console.error("Failed to store feedback:", error);
 		return c.json({ error: "internal_error", message: "Failed to store feedback" }, 500);
 	}
+});
+
+// Username availability check - no auth required for UX
+app.get("/v1/usernames/:name/available", async (c) => {
+	// Rate limit by IP
+	const ip = c.req.header("cf-connecting-ip") || "unknown";
+	const { success } = await c.env.USERNAME_CHECK_LIMITER.limit({ key: ip });
+	if (!success) {
+		return c.json(
+			{ error: "rate_limited", message: "Too many requests. Try again in a minute." },
+			429,
+		);
+	}
+
+	const name = c.req.param("name");
+
+	// Validate username format
+	const validationError = validateUsername(name);
+	if (validationError) {
+		return c.json({ available: false, username: name, error: validationError }, 200);
+	}
+
+	// Check if username exists
+	const existing = await c.env.DB.prepare("SELECT id FROM users WHERE username = ?")
+		.bind(name)
+		.first<{ id: string }>();
+
+	return c.json({
+		available: !existing,
+		username: name,
+	});
 });
 
 // Registration endpoint - called by CLI after login to sync user info
@@ -185,7 +307,7 @@ api.use("/*", async (c, next) => {
 api.get("/me", async (c) => {
 	const auth = c.get("auth");
 	const user = await c.env.DB.prepare(
-		"SELECT id, email, first_name, last_name, created_at, updated_at FROM users WHERE id = ?",
+		"SELECT id, email, first_name, last_name, username, created_at, updated_at FROM users WHERE id = ?",
 	)
 		.bind(auth.userId)
 		.first();
@@ -196,6 +318,51 @@ api.get("/me", async (c) => {
 		.first();
 
 	return c.json({ auth, user, org });
+});
+
+api.put("/me/username", async (c) => {
+	const auth = c.get("auth");
+	const body = await c.req.json<{ username: string }>();
+
+	if (!body.username) {
+		return c.json({ error: "invalid_request", message: "Username is required" }, 400);
+	}
+
+	// Validate username format
+	const validationError = validateUsername(body.username);
+	if (validationError) {
+		return c.json({ error: "invalid_request", message: validationError }, 400);
+	}
+
+	// Check if user already has a username
+	const user = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
+		.bind(auth.userId)
+		.first<{ username: string | null }>();
+
+	if (user?.username) {
+		return c.json(
+			{ error: "conflict", message: "Username already set. Contact support to change it." },
+			409,
+		);
+	}
+
+	// Try to set username (UNIQUE constraint will catch races)
+	try {
+		await c.env.DB.prepare(
+			"UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		)
+			.bind(body.username, auth.userId)
+			.run();
+
+		return c.json({ success: true, username: body.username });
+	} catch (error) {
+		// Handle UNIQUE constraint violation
+		const message = error instanceof Error ? error.message : String(error);
+		if (message.includes("UNIQUE constraint") || message.includes("users.username")) {
+			return c.json({ error: "conflict", message: "Username is already taken" }, 409);
+		}
+		throw error;
+	}
 });
 
 api.get("/orgs", async (c) => {
@@ -520,6 +687,129 @@ api.patch("/projects/:projectId", async (c) => {
 	}
 });
 
+// Tag validation regex: lowercase alphanumeric with colons and hyphens, must start/end with alphanumeric
+const TAG_PATTERN = /^[a-z0-9][a-z0-9:-]*[a-z0-9]$|^[a-z0-9]$/;
+
+api.put("/projects/:projectId/tags", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Parse request body
+	const body = await c.req.json<{ tags: string[] }>();
+
+	// Validate tags is an array
+	if (!Array.isArray(body.tags)) {
+		return c.json({ error: "invalid_request", message: "tags must be an array" }, 400);
+	}
+
+	// Validate max 20 tags
+	if (body.tags.length > 20) {
+		return c.json({ error: "invalid_request", message: "Maximum 20 tags allowed" }, 400);
+	}
+
+	// Validate each tag
+	for (const tag of body.tags) {
+		if (typeof tag !== "string") {
+			return c.json({ error: "invalid_request", message: "Each tag must be a string" }, 400);
+		}
+		if (tag.length > 50) {
+			return c.json(
+				{
+					error: "invalid_request",
+					message: `Tag '${tag}' exceeds maximum length of 50 characters`,
+				},
+				400,
+			);
+		}
+		if (!TAG_PATTERN.test(tag)) {
+			return c.json(
+				{
+					error: "invalid_request",
+					message: `Tag '${tag}' is invalid. Tags must be lowercase alphanumeric with colons and hyphens, starting and ending with alphanumeric characters`,
+				},
+				400,
+			);
+		}
+	}
+
+	// Get project and verify it exists
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Deduplicate and sort tags
+	const uniqueTags = [...new Set(body.tags)].sort();
+	const tagsJson = JSON.stringify(uniqueTags);
+
+	try {
+		await c.env.DB.prepare(
+			"UPDATE projects SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		)
+			.bind(tagsJson, projectId)
+			.run();
+
+		return c.json({ success: true, tags: uniqueTags });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to update tags";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+api.get("/projects/:projectId/tags", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify it exists
+	const project = await c.env.DB.prepare(
+		"SELECT id, org_id, tags FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; tags: string | null }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Parse tags from JSON, default to empty array
+	let tags: string[] = [];
+	try {
+		tags = project.tags ? JSON.parse(project.tags) : [];
+	} catch {
+		// If parsing fails, return empty array
+		tags = [];
+	}
+
+	return c.json({ tags });
+});
+
 // Database export endpoint
 api.get("/projects/:projectId/database/export", async (c) => {
 	const auth = c.get("auth");
@@ -641,14 +931,29 @@ api.delete("/projects/:projectId", async (c) => {
 		}
 	}
 
-	// Delete R2 content bucket
-	const r2Resource = resources.results?.find((r) => r.resource_type === "r2_content");
-	if (r2Resource) {
+	// Delete R2 content bucket (legacy enableContentBucket flow)
+	const r2ContentResource = resources.results?.find((r) => r.resource_type === "r2_content");
+	if (r2ContentResource) {
 		try {
-			await cfClient.deleteR2Bucket(r2Resource.resource_name);
+			await cfClient.deleteR2Bucket(r2ContentResource.resource_name);
 			deletionResults.push({ resource: "r2_content", success: true });
 		} catch (error) {
 			deletionResults.push({ resource: "r2_content", success: false, error: String(error) });
+		}
+	}
+
+	// Delete user-defined R2 buckets (from wrangler.jsonc r2_buckets)
+	const r2Resources = resources.results?.filter((r) => r.resource_type === "r2") ?? [];
+	for (const r2Res of r2Resources) {
+		try {
+			await cfClient.deleteR2Bucket(r2Res.resource_name);
+			deletionResults.push({ resource: `r2:${r2Res.resource_name}`, success: true });
+		} catch (error) {
+			deletionResults.push({
+				resource: `r2:${r2Res.resource_name}`,
+				success: false,
+				error: String(error),
+			});
 		}
 	}
 

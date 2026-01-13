@@ -377,6 +377,79 @@ export class ProvisioningService {
 	}
 
 	/**
+	 * Register a resource with a specific binding name.
+	 * Used for user-defined bindings (e.g., R2 buckets from wrangler.jsonc).
+	 */
+	async registerResourceWithBinding(
+		projectId: string,
+		type: "r2",
+		bindingName: string,
+		resourceName: string,
+		providerId: string,
+	): Promise<Resource> {
+		const resourceId = `res_${crypto.randomUUID()}`;
+
+		await this.db
+			.prepare(
+				`INSERT INTO resources (id, project_id, resource_type, binding_name, resource_name, provider_id, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+			)
+			.bind(resourceId, projectId, type, bindingName, resourceName, providerId)
+			.run();
+
+		const resource = await this.db
+			.prepare("SELECT * FROM resources WHERE id = ?")
+			.bind(resourceId)
+			.first<Resource>();
+
+		if (!resource) {
+			throw new Error("Failed to retrieve created resource");
+		}
+
+		return resource;
+	}
+
+	/**
+	 * Provision an R2 bucket for a specific binding.
+	 * Uses project-prefixed naming for uniqueness.
+	 */
+	async provisionR2Binding(
+		projectId: string,
+		bindingName: string,
+		bucketNameHint: string,
+	): Promise<Resource> {
+		const resourceNames = this.getResourceNames(projectId);
+		// Create unique bucket name: jack-{shortId}-{sanitized-hint}
+		const bucketName = `${resourceNames.worker}-${this.sanitizeBucketName(bucketNameHint)}`;
+
+		// Create bucket (idempotent)
+		await this.cfClient.createR2BucketIfNotExists(bucketName);
+
+		// Register resource with binding name
+		return await this.registerResourceWithBinding(
+			projectId,
+			"r2",
+			bindingName,
+			bucketName,
+			bucketName, // provider_id is the bucket name
+		);
+	}
+
+	/**
+	 * Sanitize a bucket name hint to be R2-compatible.
+	 * R2 bucket names: 3-63 chars, lowercase letters, numbers, hyphens.
+	 */
+	private sanitizeBucketName(hint: string): string {
+		return hint
+			.toLowerCase()
+			.replace(/^jack-template-/, "") // Remove template prefix
+			.replace(/[^a-z0-9-]/g, "-") // Replace invalid chars with hyphens
+			.replace(/-+/g, "-") // Collapse multiple hyphens
+			.replace(/^-|-$/g, "") // Trim leading/trailing hyphens
+			.slice(0, 30); // Limit length (leave room for prefix)
+	}
+
+	/**
 	 * Get a project by ID
 	 */
 	async getProject(projectId: string): Promise<Project | null> {

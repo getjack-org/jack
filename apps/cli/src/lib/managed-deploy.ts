@@ -6,10 +6,11 @@
 
 import { validateBindings } from "./binding-validator.ts";
 import { buildProject, parseWranglerConfig } from "./build-helper.ts";
-import { createManagedProject } from "./control-plane.ts";
+import { createManagedProject, syncProjectTags } from "./control-plane.ts";
 import { uploadDeployment } from "./deploy-upload.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import type { OperationReporter } from "./project-operations.ts";
+import { getProjectTags } from "./tags.ts";
 import { Events, track } from "./telemetry.ts";
 import { packageForDeploy } from "./zip-packager.ts";
 
@@ -137,6 +138,15 @@ export async function deployCodeToManagedProject(
 		track(Events.MANAGED_DEPLOY_COMPLETED, {
 			duration_ms: Date.now() - startTime,
 		});
+
+		// Fire-and-forget tag sync (non-blocking)
+		getProjectTags(projectPath)
+			.then((tags) => {
+				if (tags.length > 0) {
+					void syncProjectTags(projectId, tags);
+				}
+			})
+			.catch(() => {});
 
 		return {
 			deploymentId: result.id,

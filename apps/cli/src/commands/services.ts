@@ -3,7 +3,7 @@ import { fetchProjectResources } from "../lib/control-plane.ts";
 import { formatSize } from "../lib/format.ts";
 import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
-import { getProject } from "../lib/registry.ts";
+import { readProjectLink } from "../lib/project-link.ts";
 import { parseWranglerResources } from "../lib/resources.ts";
 import {
 	deleteDatabase,
@@ -43,12 +43,13 @@ async function ensureLocalProjectContext(projectName: string): Promise<void> {
  * For BYO: parse from wrangler.jsonc
  */
 async function resolveDatabaseInfo(projectName: string): Promise<ResolvedDatabaseInfo | null> {
-	const project = await getProject(projectName);
+	// Read deploy mode from .jack/project.json
+	const link = await readProjectLink(process.cwd());
 
 	// For managed projects, fetch from control plane
-	if (project?.deploy_mode === "managed" && project.remote?.project_id) {
+	if (link?.deploy_mode === "managed") {
 		try {
-			const resources = await fetchProjectResources(project.remote.project_id);
+			const resources = await fetchProjectResources(link.project_id);
 			const d1 = resources.find((r) => r.resource_type === "d1");
 			if (d1) {
 				return {

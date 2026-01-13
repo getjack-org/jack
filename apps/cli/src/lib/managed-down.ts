@@ -8,25 +8,22 @@ import { join } from "node:path";
 import { deleteManagedProject, exportManagedDatabase } from "./control-plane.ts";
 import { promptSelect } from "./hooks.ts";
 import { error, info, item, output, success, warn } from "./output.ts";
-import type { Project } from "./registry.ts";
-import { updateProject } from "./registry.ts";
 
 export interface ManagedDownFlags {
 	force?: boolean;
 }
 
+export interface ManagedProjectInfo {
+	projectId: string;
+	runjackUrl: string | null;
+}
+
 export async function managedDown(
-	project: Project,
+	project: ManagedProjectInfo,
 	projectName: string,
 	flags: ManagedDownFlags = {},
 ): Promise<boolean> {
-	const remote = project.remote;
-	if (!remote?.project_id) {
-		throw new Error("Project is not linked to jack cloud");
-	}
-
-	const runjackUrl = remote.runjack_url;
-	const projectId = remote.project_id;
+	const { projectId, runjackUrl } = project;
 
 	// Force mode - quick deletion without prompts
 	if (flags.force) {
@@ -38,11 +35,6 @@ export async function managedDown(
 		try {
 			await deleteManagedProject(projectId);
 			output.stop();
-
-			await updateProject(projectName, {
-				workerUrl: null,
-				lastDeployed: null,
-			});
 
 			console.error("");
 			success(`'${projectName}' undeployed`);
@@ -141,11 +133,6 @@ export async function managedDown(
 				warn(`Failed to delete ${resource.resource}: ${resource.error}`);
 			}
 		}
-
-		await updateProject(projectName, {
-			workerUrl: null,
-			lastDeployed: null,
-		});
 
 		console.error("");
 		success(`Project '${projectName}' undeployed`);
