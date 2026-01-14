@@ -49,7 +49,7 @@ export async function createManagedProjectRemote(
 			usePrebuilt: options?.usePrebuilt ?? true,
 		});
 
-		const runjackUrl = `https://${result.project.slug}.runjack.xyz`;
+		const runjackUrl = result.url || `https://${result.project.slug}.runjack.xyz`;
 
 		reporter?.stop();
 		reporter?.success("Created managed project");

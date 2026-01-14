@@ -93,6 +93,7 @@ export class ProvisioningService {
 		name: string,
 		slug?: string,
 		enableContentBucket = false,
+		ownerUsername: string | null = null,
 	): Promise<{ project: Project; resources: Resource[] }> {
 		const projectId = `proj_${crypto.randomUUID()}`;
 		const projectSlug = slug || this.generateSlug(name);
@@ -112,8 +113,8 @@ export class ProvisioningService {
 		// Insert project with status 'provisioning'
 		await this.db
 			.prepare(
-				`INSERT INTO projects (id, org_id, name, slug, status, code_bucket_prefix, content_bucket_enabled)
-         VALUES (?, ?, ?, ?, 'provisioning', ?, ?)`,
+				`INSERT INTO projects (id, org_id, name, slug, status, code_bucket_prefix, content_bucket_enabled, owner_username)
+         VALUES (?, ?, ?, ?, 'provisioning', ?, ?, ?)`,
 			)
 			.bind(
 				projectId,
@@ -122,6 +123,7 @@ export class ProvisioningService {
 				projectSlug,
 				resourceNames.codeBucketPrefix,
 				enableContentBucket ? 1 : 0,
+				ownerUsername,
 			)
 			.run();
 
@@ -212,6 +214,7 @@ export class ProvisioningService {
 				worker_name: resourceNames.worker,
 				d1_database_id: d1Database.uuid,
 				content_bucket_name: enableContentBucket ? resourceNames.r2Content : null,
+				owner_username: ownerUsername,
 				status: "active",
 				updated_at: new Date().toISOString(),
 			};
@@ -220,6 +223,14 @@ export class ProvisioningService {
 
 			// Write config by slug for dispatch worker lookup
 			await this.cache.put(`config:${projectSlug}`, JSON.stringify(projectConfig));
+
+			// Write config by username:slug for dispatch worker lookup (if username is present)
+			if (ownerUsername) {
+				await this.cache.put(
+					`config:${ownerUsername}:${projectSlug}`,
+					JSON.stringify(projectConfig),
+				);
+			}
 
 			// Write slug lookup to KV (org-scoped for control plane)
 			await this.cache.put(`slug:${orgId}:${projectSlug}`, projectId);

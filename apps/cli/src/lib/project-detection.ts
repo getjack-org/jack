@@ -17,7 +17,8 @@ export interface DetectionResult {
 		| "nuxt"
 		| "remix"
 		| "react-router"
-		| "tanstack-start";
+		| "tanstack-start"
+		| "tauri";
 	detectedDeps?: string[];
 	configFiles?: string[];
 }
@@ -134,6 +135,13 @@ Auto-deploy coming soon. For now, set up manually:
 
 Docs: https://tanstack.com/start/latest/docs/framework/react/hosting#cloudflare
 Want this supported? Run: jack feedback`,
+
+	tauri: `Tauri desktop app detected!
+
+Tauri apps are native desktop applications and cannot be deployed to Cloudflare Workers.
+jack is for web apps that run in the browser or on the edge.
+
+If you have a web frontend in this project, consider deploying it separately.`,
 };
 
 type UnsupportedFramework =
@@ -142,7 +150,8 @@ type UnsupportedFramework =
 	| "nuxt"
 	| "remix"
 	| "react-router"
-	| "tanstack-start";
+	| "tanstack-start"
+	| "tauri";
 
 function detectUnsupportedFramework(
 	projectPath: string,
@@ -176,6 +185,14 @@ function detectUnsupportedFramework(
 	// Legacy Remix (not React Router v7)
 	if (pkg && (hasDep(pkg, "@remix-run/node") || hasDep(pkg, "@remix-run/react"))) {
 		return "remix";
+	}
+
+	// Tauri - desktop app framework (check for src-tauri dir or tauri deps)
+	if (
+		existsSync(join(projectPath, "src-tauri")) ||
+		(pkg && (hasDep(pkg, "@tauri-apps/cli") || hasDep(pkg, "@tauri-apps/api")))
+	) {
+		return "tauri";
 	}
 
 	return null;

@@ -29,6 +29,7 @@ export interface LocalProjectLink {
 	deploy_mode: DeployMode;
 	linked_at: string;
 	tags?: string[];
+	owner_username?: string;
 }
 
 /**
@@ -93,6 +94,7 @@ export async function linkProject(
 	projectDir: string,
 	projectId: string,
 	deployMode: DeployMode,
+	ownerUsername?: string,
 ): Promise<void> {
 	const jackDir = getJackDir(projectDir);
 	const linkPath = getProjectLinkPath(projectDir);
@@ -107,6 +109,7 @@ export async function linkProject(
 		project_id: projectId,
 		deploy_mode: deployMode,
 		linked_at: new Date().toISOString(),
+		owner_username: ownerUsername,
 	};
 
 	await writeFile(linkPath, JSON.stringify(link, null, 2));

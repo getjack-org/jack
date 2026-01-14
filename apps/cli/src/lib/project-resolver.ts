@@ -121,11 +121,15 @@ function fromManagedProject(managed: ManagedProject): ResolvedProject {
 		}
 	}
 
+	const url = managed.owner_username
+		? `https://${managed.owner_username}-${managed.slug}.runjack.xyz`
+		: `https://${managed.slug}.runjack.xyz`;
+
 	return {
 		name: managed.name,
 		slug: managed.slug,
 		status,
-		url: `https://${managed.slug}.runjack.xyz`,
+		url,
 		errorMessage: managed.status === "error" ? "deployment failed" : undefined,
 		sources: {
 			controlPlane: true,

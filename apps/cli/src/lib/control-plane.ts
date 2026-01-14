@@ -193,6 +193,7 @@ export interface ManagedProject {
 	created_at: string;
 	updated_at: string;
 	tags?: string; // JSON string array from DB, e.g., '["backend", "api"]'
+	owner_username?: string | null;
 }
 
 /**
