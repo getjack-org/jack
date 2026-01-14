@@ -33,6 +33,12 @@ import {
 	runViteBuild,
 } from "./build-helper.ts";
 import { checkWorkerExists, getAccountId, listD1Databases } from "./cloudflare-api.ts";
+import {
+	generateWranglerConfig,
+	getDefaultProjectName,
+	slugify,
+	writeWranglerConfig,
+} from "./config-generator.ts";
 import { getSyncConfig } from "./config.ts";
 import { deleteManagedProject } from "./control-plane.ts";
 import { debug, isDebug } from "./debug.ts";
@@ -48,6 +54,7 @@ import {
 } from "./managed-deploy.ts";
 import { generateProjectName } from "./names.ts";
 import { getAllPaths, registerPath, unregisterPath } from "./paths-index.ts";
+import { detectProjectType, validateProject } from "./project-detection.ts";
 import {
 	type DeployMode,
 	type TemplateMetadata as TemplateOrigin,
@@ -91,6 +98,7 @@ export interface DeployOptions {
 	includeSync?: boolean;
 	managed?: boolean; // Force managed deploy mode
 	byo?: boolean; // Force BYO deploy mode
+	dryRun?: boolean; // Stop before actual deployment
 }
 
 export interface DeployResult {
@@ -299,6 +307,201 @@ async function preflightD1Capacity(
 			{ exitCode: 0, reported: true },
 		);
 	}
+}
+
+// ============================================================================
+// Auto-detect Flow for Ship Command
+// ============================================================================
+
+interface AutoDetectResult {
+	projectName: string;
+	projectId: string | null; // null when dry run (no cloud project created)
+	deployMode: DeployMode;
+}
+
+/**
+ * Run the auto-detect flow when no wrangler config exists.
+ * Detects project type, prompts user for confirmation, generates config,
+ * and creates managed project on jack cloud.
+ *
+ * @param dryRun - If true, skip cloud project creation and linking
+ */
+async function runAutoDetectFlow(
+	projectPath: string,
+	reporter: OperationReporter,
+	interactive: boolean,
+	dryRun = false,
+): Promise<AutoDetectResult> {
+	// Step 1: Validate project (file count, size limits)
+	const validation = await validateProject(projectPath);
+	if (!validation.valid) {
+		track(Events.AUTO_DETECT_REJECTED, { reason: "validation_failed" });
+		throw new JackError(
+			JackErrorCode.VALIDATION_ERROR,
+			validation.error || "Project validation failed",
+		);
+	}
+
+	// Step 2: Detect project type
+	const detection = detectProjectType(projectPath);
+
+	// Step 3: Handle unsupported frameworks
+	if (detection.unsupportedFramework) {
+		track(Events.AUTO_DETECT_FAILED, {
+			reason: "unsupported_framework",
+			framework: detection.unsupportedFramework,
+		});
+
+		// Use the detailed error message from detection (includes setup instructions)
+		throw new JackError(
+			JackErrorCode.VALIDATION_ERROR,
+			detection.error || `${detection.unsupportedFramework} is not yet supported`,
+		);
+	}
+
+	// Step 4: Handle unknown project type
+	if (detection.type === "unknown") {
+		track(Events.AUTO_DETECT_FAILED, { reason: "unknown_type" });
+
+		throw new JackError(
+			JackErrorCode.VALIDATION_ERROR,
+			"Could not detect project type\n\nSupported types:\n  - Vite (React, Vue, etc.)\n  - Hono API\n  - SvelteKit (with @sveltejs/adapter-cloudflare)\n\nTo deploy manually, create a wrangler.jsonc file.\nDocs: https://docs.getjack.org/guides/manual-setup",
+		);
+	}
+
+	// Step 5: Handle detection errors (e.g., missing adapter)
+	if (detection.error) {
+		track(Events.AUTO_DETECT_FAILED, {
+			reason: "detection_error",
+			type: detection.type,
+		});
+		throw new JackError(JackErrorCode.VALIDATION_ERROR, detection.error);
+	}
+
+	// Step 6: Detection succeeded - show what was detected
+	const typeLabels: Record<string, string> = {
+		vite: "Vite",
+		hono: "Hono API",
+		sveltekit: "SvelteKit",
+	};
+	const typeLabel = typeLabels[detection.type] || detection.type;
+	const configInfo = detection.configFile || detection.entryPoint || "";
+	reporter.info(`Detected: ${typeLabel} project${configInfo ? ` (${configInfo})` : ""}`);
+
+	// Step 7: Get default project name and prompt user
+	const defaultName = getDefaultProjectName(projectPath);
+
+	if (!interactive) {
+		// Non-interactive mode - use defaults
+		const projectName = defaultName;
+		const runjackUrl = `https://${projectName}.runjack.xyz`;
+
+		reporter.info(`Project name: ${projectName}`);
+		reporter.info(`Will deploy to: ${runjackUrl}`);
+
+		// Generate and write wrangler config
+		const wranglerConfig = generateWranglerConfig(
+			detection.type,
+			projectName,
+			detection.entryPoint,
+		);
+		writeWranglerConfig(projectPath, wranglerConfig);
+		reporter.success("Created wrangler.jsonc");
+
+		// Skip cloud creation and linking for dry run
+		if (dryRun) {
+			track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
+			return {
+				projectName,
+				projectId: null,
+				deployMode: "managed",
+			};
+		}
+
+		// Create managed project on jack cloud
+		const remoteResult = await createManagedProjectRemote(projectName, reporter, {
+			usePrebuilt: false,
+		});
+
+		// Link project locally
+		await linkProject(projectPath, remoteResult.projectId, "managed");
+		await registerPath(remoteResult.projectId, projectPath);
+
+		track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
+
+		return {
+			projectName,
+			projectId: remoteResult.projectId,
+			deployMode: "managed",
+		};
+	}
+
+	// Interactive mode - prompt for project name
+	const { input } = await import("@inquirer/prompts");
+
+	console.error("");
+	const projectName = await input({
+		message: "Project name:",
+		default: defaultName,
+	});
+
+	const slugifiedName = slugify(projectName.trim());
+	const runjackUrl = `https://${slugifiedName}.runjack.xyz`;
+
+	// Confirmation prompt
+	console.error("");
+	console.error("  This will:");
+	console.error("    - Create wrangler.jsonc");
+	console.error("    - Create project on jack cloud");
+	console.error(`    - Deploy to ${runjackUrl}`);
+	console.error("");
+
+	const { promptSelect } = await import("./hooks.ts");
+	const choice = await promptSelect(["Continue", "Cancel"]);
+
+	if (choice !== 0) {
+		track(Events.AUTO_DETECT_REJECTED, { reason: "user_cancelled" });
+		throw new JackError(JackErrorCode.VALIDATION_ERROR, "Deployment cancelled", undefined, {
+			exitCode: 0,
+			reported: true,
+		});
+	}
+
+	// Generate and write wrangler config
+	const wranglerConfig = generateWranglerConfig(
+		detection.type,
+		slugifiedName,
+		detection.entryPoint,
+	);
+	writeWranglerConfig(projectPath, wranglerConfig);
+	reporter.success("Created wrangler.jsonc");
+
+	// Skip cloud creation and linking for dry run
+	if (dryRun) {
+		track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
+		return {
+			projectName: slugifiedName,
+			projectId: null,
+			deployMode: "managed",
+		};
+	}
+
+	// Create managed project on jack cloud
+	const remoteResult = await createManagedProjectRemote(slugifiedName, reporter, {
+		usePrebuilt: false,
+	});
+
+	// Link project locally
+	await linkProject(projectPath, remoteResult.projectId, "managed");
+	await registerPath(remoteResult.projectId, projectPath);
+
+	track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
+
+	return {
+		projectName: slugifiedName,
+		projectId: remoteResult.projectId,
+		deployMode: "managed",
+	};
 }
 
 // ============================================================================
@@ -965,6 +1168,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		interactive: interactiveOption,
 		includeSecrets = false,
 		includeSync = false,
+		dryRun = false,
 	} = options;
 	const reporter = providedReporter ?? noopReporter;
 	const hasReporter = Boolean(providedReporter);
@@ -982,7 +1186,14 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		existsSync(join(projectPath, "wrangler.jsonc")) ||
 		existsSync(join(projectPath, "wrangler.json"));
 
-	if (!hasWranglerConfig) {
+	// Check for existing project link
+	const hasProjectLink = existsSync(join(projectPath, ".jack", "project.json"));
+
+	// Auto-detect flow: no wrangler config and no project link
+	let autoDetectResult: AutoDetectResult | null = null;
+	if (!hasWranglerConfig && !hasProjectLink) {
+		autoDetectResult = await runAutoDetectFlow(projectPath, reporter, interactive, dryRun);
+	} else if (!hasWranglerConfig) {
 		throw new JackError(
 			JackErrorCode.PROJECT_NOT_FOUND,
 			"No wrangler config found in current directory",
@@ -990,18 +1201,20 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		);
 	}
 
-	// Get project name from directory
-	const projectName = await getProjectNameFromDir(projectPath);
+	// Get project name from directory (or auto-detect result)
+	const projectName = autoDetectResult?.projectName ?? (await getProjectNameFromDir(projectPath));
 
 	// Read local project link for stored mode and project ID
 	const link = await readProjectLink(projectPath);
 
-	// Determine effective mode: explicit flag > stored mode > default BYO
+	// Determine effective mode: explicit flag > auto-detect > stored mode > default BYO
 	let deployMode: DeployMode;
 	if (options.managed) {
 		deployMode = "managed";
 	} else if (options.byo) {
 		deployMode = "byo";
+	} else if (autoDetectResult) {
+		deployMode = autoDetectResult.deployMode;
 	} else {
 		deployMode = link?.deploy_mode ?? "byo";
 	}
@@ -1018,7 +1231,11 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	// Deploy based on mode
 	if (deployMode === "managed") {
 		// Managed mode: deploy via jack cloud
-		if (!link?.project_id || link.deploy_mode !== "managed") {
+		// Use autoDetectResult.projectId if available, otherwise require existing link
+		const managedProjectId = autoDetectResult?.projectId ?? link?.project_id;
+
+		// For dry run, skip the project ID check since we didn't create a cloud project
+		if (!dryRun && (!managedProjectId || (!autoDetectResult && link?.deploy_mode !== "managed"))) {
 			throw new JackError(
 				JackErrorCode.VALIDATION_ERROR,
 				"Project not linked to jack cloud",
@@ -1026,8 +1243,38 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 			);
 		}
 
+		// Dry run: build for validation then stop before actual deployment
+		// (deployToManagedProject handles its own build, so only build here for dry-run)
+		if (dryRun) {
+			if (await needsOpenNextBuild(projectPath)) {
+				const buildSpin = reporter.spinner("Building...");
+				try {
+					await runOpenNextBuild(projectPath);
+					buildSpin.success("Built");
+				} catch (err) {
+					buildSpin.error("Build failed");
+					throw err;
+				}
+			} else if (await needsViteBuild(projectPath)) {
+				const buildSpin = reporter.spinner("Building...");
+				try {
+					await runViteBuild(projectPath);
+					buildSpin.success("Built");
+				} catch (err) {
+					buildSpin.error("Build failed");
+					throw err;
+				}
+			}
+			reporter.success("Dry run complete - config generated, build verified");
+			return {
+				workerUrl: null,
+				projectName,
+				deployMode,
+			};
+		}
+
 		// deployToManagedProject now handles both template and code deploy
-		await deployToManagedProject(link.project_id, projectPath, reporter);
+		await deployToManagedProject(managedProjectId as string, projectPath, reporter);
 
 		// Get the URL from the resolver or construct it
 		workerUrl = `https://${projectName}.runjack.xyz`;
@@ -1053,6 +1300,16 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 				buildSpin.error("Build failed");
 				throw err;
 			}
+		}
+
+		// Dry run: stop before actual deployment
+		if (dryRun) {
+			reporter.success("Dry run complete - build verified");
+			return {
+				workerUrl: null,
+				projectName,
+				deployMode,
+			};
 		}
 
 		// Check wrangler version for auto-provisioning (KV/R2/D1 without IDs)
