@@ -54,11 +54,15 @@ Every `jack ship` saves a source snapshot. This means:
 - **No extra steps** — Just deploy normally, forking is automatic
 - **Private by default** — Only you can fork your projects (unless you `jack publish`)
 
-```bash
-# You shipped a great API last month
-jack ship  # in /projects/my-great-api
+From your project directory (for example, `/projects/my-great-api`):
 
-# Now start something new based on it
+```bash
+jack ship
+```
+
+Now start something new based on it:
+
+```bash
 jack new my-new-thing -t my-great-api
 ```
 
