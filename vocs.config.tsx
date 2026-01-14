@@ -22,7 +22,8 @@ export default defineConfig({
 		light: "/logo-light.svg",
 		dark: "/logo-dark.svg",
 	},
-	iconUrl: "/favicon.ico",
+	iconUrl: "/jack-logo.png",
+	ogImageUrl: "/og.png",
 	topNav: [
 		{ text: "Guide", link: "/getting-started" },
 		{ text: "Templates", link: "/templates" },

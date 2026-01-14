@@ -1,0 +1,27 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0a0a"/>
+      <stop offset="100%" stop-color="#0f1a14"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(980 40) rotate(135) scale(520)">
+      <stop offset="0%" stop-color="#00ff7f" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#00ff7f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <image href="jack-logo.png" x="80" y="64" width="96" height="96"/>
+  <text x="200" y="128" fill="#d7ffe8" font-family="Space Grotesk, IBM Plex Sans, Avenir Next, sans-serif" font-size="28" font-weight="600" letter-spacing="0.5">jack</text>
+
+  <text x="80" y="250" fill="#f2f7f3" font-family="Space Grotesk, IBM Plex Sans, Avenir Next, sans-serif" font-size="56" font-weight="600">Ship before you forget</text>
+  <text x="80" y="315" fill="#f2f7f3" font-family="Space Grotesk, IBM Plex Sans, Avenir Next, sans-serif" font-size="56" font-weight="600">why you started.</text>
+
+  <rect x="80" y="410" width="360" height="44" rx="10" fill="#0b1410" stroke="#123b2a"/>
+  <text x="100" y="440" fill="#00ff7f" font-family="JetBrains Mono, SF Mono, Menlo, monospace" font-size="22" font-weight="600">&gt; jack ship</text>
+
+  <rect x="80" y="490" width="1040" height="3" fill="#00ff7f" opacity="0.55"/>
+  <text x="80" y="530" fill="#7e9088" font-family="Space Grotesk, IBM Plex Sans, Avenir Next, sans-serif" font-size="18">Deploy instantly. Stay in flow.</text>
+</svg>
