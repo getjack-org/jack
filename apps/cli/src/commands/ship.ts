@@ -3,7 +3,7 @@ import { output, spinner } from "../lib/output.ts";
 import { deployProject } from "../lib/project-operations.ts";
 
 export default async function ship(
-	options: { managed?: boolean; byo?: boolean } = {},
+	options: { managed?: boolean; byo?: boolean; dryRun?: boolean } = {},
 ): Promise<void> {
 	const isCi = process.env.CI === "true" || process.env.CI === "1";
 	try {
@@ -20,10 +20,11 @@ export default async function ship(
 				box: output.box,
 			},
 			interactive: !isCi,
-			includeSecrets: true,
-			includeSync: true,
+			includeSecrets: !options.dryRun,
+			includeSync: !options.dryRun,
 			managed: options.managed,
 			byo: options.byo,
+			dryRun: options.dryRun,
 		});
 
 		if (!result.workerUrl && result.deployOutput) {

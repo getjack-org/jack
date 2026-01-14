@@ -46,6 +46,38 @@ You'll need [Bun](https://bun.sh) and a Cloudflare account (free tier works).
 - **Project tracking** — 100 experiments scattered everywhere? `jack ls` finds them all.
 - **No lock-in** — Standard config files, standard TypeScript. Your projects work without jack installed.
 
+## Zero-Config Deploys
+
+`jack ship` auto-detects your framework. No config files needed.
+
+```bash
+jack ship
+```
+
+| Supported | Coming Soon |
+|-----------|-------------|
+| Vite, Hono, SvelteKit | Astro, React Router, Nuxt, TanStack |
+
+[How it works →](/commands/ship)
+
+---
+
+## Your Personal Template Library
+
+Every deploy becomes a forkable template. Build on your own work:
+
+```bash
+# Ship a project
+jack ship  # saves source snapshot
+
+# Later, start something new from it
+jack new my-new-thing -t my-existing-project
+```
+
+No extra steps. Private by default. [Learn more →](/commands/new#forking-projects)
+
+---
+
 ## Commands
 
 | Command | What it does |

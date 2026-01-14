@@ -207,6 +207,7 @@ try {
 			)({
 				managed: cli.flags.managed,
 				byo: cli.flags.byo,
+				dryRun: cli.flags.dryRun,
 			});
 			break;
 		}
