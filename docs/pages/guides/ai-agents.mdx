@@ -38,11 +38,17 @@ Every jack project includes an `AGENTS.md` file with instructions for AI agents.
 
 jack can automatically open your preferred coding agent after creating a project:
 
-```bash
-# Set your preferred agent
-jack agents prefer claude-code  # or: cursor, windsurf
+Set your preferred agent:
 
-# Now `jack new` will open your agent automatically
+```bash
+jack agents prefer claude-code
+```
+
+Other options: `cursor`, `windsurf`.
+
+Now `jack new` will open your agent automatically:
+
+```bash
 jack new my-app
 ```
 

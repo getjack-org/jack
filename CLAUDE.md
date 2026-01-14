@@ -109,3 +109,7 @@ When uploading Workers to Cloudflare's dispatch namespace, upload ALL files from
 - Use `biome` for formatting: `bun run lint` / `bun run format`
 - Prefer explicit types over inference for public APIs
 - Follow existing patterns in the codebase
+
+## Docs
+
+- Avoid inline comments in command/code blocks; keep snippets copy/pasteable and put explanations in surrounding text.
