@@ -28,6 +28,10 @@ export const Events = {
 	MANAGED_DEPLOY_STARTED: "managed_deploy_started",
 	MANAGED_DEPLOY_COMPLETED: "managed_deploy_completed",
 	MANAGED_DEPLOY_FAILED: "managed_deploy_failed",
+	// Auto-detect events
+	AUTO_DETECT_SUCCESS: "auto_detect_success",
+	AUTO_DETECT_FAILED: "auto_detect_failed",
+	AUTO_DETECT_REJECTED: "auto_detect_rejected",
 } as const;
 
 type EventName = (typeof Events)[keyof typeof Events];

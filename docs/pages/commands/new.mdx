@@ -20,49 +20,83 @@ jack new [name] [options]
 |--------|-------------|
 | `-t, --template` | Template to use (see below) |
 
-## Template Options
+## Templates
 
-| Format | Description |
-|--------|-------------|
+| Template | Description |
+|----------|-------------|
 | `hello` | Default starter (Hono API) |
 | `api` | Hono API with examples |
 | `miniapp` | Farcaster Frame mini-app |
 | `nextjs` | Next.js on Cloudflare |
-| `username/slug` | Fork a published project |
+
+## Forking Projects
+
+Every project you deploy with `jack ship` becomes a template you can fork.
+
+```bash
+# Fork your own project
+jack new my-new-api -t my-existing-api
+
+# Fork someone's published project
+jack new my-fork -t alice/cool-api
+```
+
+| Format | Access |
+|--------|--------|
+| `-t my-project` | Your own projects (private) |
+| `-t username/project` | Published projects (public) |
+
+### Your Personal Template Library
+
+Every `jack ship` saves a source snapshot. This means:
+
+- **Build on your own work** — Start new projects from proven foundations
+- **No extra steps** — Just deploy normally, forking is automatic
+- **Private by default** — Only you can fork your projects (unless you `jack publish`)
+
+```bash
+# You shipped a great API last month
+jack ship  # in /projects/my-great-api
+
+# Now start something new based on it
+jack new my-new-thing -t my-great-api
+```
+
+### Publishing for Others
+
+Want others to fork your work? Publish it:
+
+```bash
+jack publish
+```
+
+Then anyone can fork with `jack new -t yourname/project`.
 
 ## Examples
 
 ```bash
-# Interactive mode - prompts for everything
+# Interactive mode
 jack new
 
-# Create with a specific name
+# Create with a name
 jack new my-cool-app
 
-# Create with a builtin template
+# Use a builtin template
 jack new my-api -t api
-jack new my-miniapp -t miniapp
 
-# Fork someone else's published project
-jack new my-fork -t alice/her-api
+# Fork your own project
+jack new v2 -t my-existing-api
+
+# Fork a published project
+jack new my-version -t alice/her-api
 ```
 
 ## What Happens
 
 1. Creates a new directory with your project name
-2. Copies the template files (or downloads from published project)
-3. Installs dependencies with `bun install`
-4. Builds and deploys with `jack ship`
-5. Opens your preferred AI agent (Claude Code, Cursor, etc.)
+2. Copies template files (or downloads from published/your project)
+3. Installs dependencies
+4. Deploys with `jack ship`
+5. Opens your AI agent
 
-After running `jack new`, your project is already live.
-
-## Forking Published Projects
-
-Any project published with [`jack publish`](/commands/publish) can be forked:
-
-```bash
-jack new my-version -t username/project-slug
-```
-
-This downloads the source code and creates a completely independent copy under your account.
+Your project is live before you write a line of code.

@@ -10,17 +10,43 @@ jack ship
 
 Run this from your project directory. That's it.
 
+## Auto-Detection
+
+jack automatically detects your framework and generates the right config:
+
+| Framework | What jack does |
+|-----------|----------------|
+| Vite (React, Vue, etc.) | Builds and deploys as static assets |
+| Hono | Deploys as a Worker with your entry point |
+| SvelteKit | Builds with adapter-cloudflare, deploys |
+
+No `wrangler.json` needed. jack creates it for you.
+
+### Coming Soon
+
+These frameworks are detected but need manual setup for now:
+
+- Astro
+- React Router v7
+- Nuxt
+- TanStack Start
+
+Run `jack ship` in these projects to see setup instructions.
+
 ## What Happens
 
-1. Builds your project (if needed)
-2. Uploads to Cloudflare Workers
-3. Your changes are live in seconds
+1. Detects your project type
+2. Generates config (if needed)
+3. Builds your project
+4. Uploads to Cloudflare Workers
+5. Your changes are live in seconds
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
 | `--debug` | Show detailed deployment logs |
+| `--dry-run` | Test detection and build without deploying |
 
 ## Examples
 
@@ -28,12 +54,15 @@ Run this from your project directory. That's it.
 # Deploy current project
 jack ship
 
+# Test detection without deploying
+jack ship --dry-run
+
 # Deploy with debug output
 jack ship --debug
 ```
 
 ## Notes
 
-- Run from your project root (where `wrangler.json` lives)
 - First deploy may prompt for Cloudflare authentication
 - Subsequent deploys are instant
+- Every deploy saves a source snapshot (forkable via `jack new -t project-name`)
