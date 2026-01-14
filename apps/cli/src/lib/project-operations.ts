@@ -1237,9 +1237,11 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	}
 
 	// Validate mode availability
-	const modeError = await validateModeAvailability(deployMode);
-	if (modeError) {
-		throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
+	if (!dryRun) {
+		const modeError = await validateModeAvailability(deployMode);
+		if (modeError) {
+			throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
+		}
 	}
 
 	let workerUrl: string | null = null;
