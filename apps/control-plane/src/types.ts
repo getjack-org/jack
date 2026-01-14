@@ -30,6 +30,7 @@ export interface Project {
 	status: ProjectStatus;
 	code_bucket_prefix: string;
 	content_bucket_enabled: number; // SQLite boolean (0 or 1)
+	owner_username: string | null;
 	tags: string; // JSON string array of tags
 	created_at: string;
 	updated_at: string;
@@ -68,6 +69,7 @@ export interface ProjectConfig {
 	worker_name: string;
 	d1_database_id: string;
 	content_bucket_name: string | null;
+	owner_username: string | null;
 	status: ProjectStatus;
 	limits?: ProjectLimits;
 	updated_at: string;

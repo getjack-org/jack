@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -106,9 +106,20 @@ export async function needsOpenNextBuild(projectPath: string): Promise<boolean> 
  * @throws JackError if build fails
  */
 export async function runViteBuild(projectPath: string): Promise<void> {
-	// Jack controls the build for managed projects (omakase)
-	// Users wanting tsc can run `bun run build` manually before shipping
-	const buildResult = await $`bunx vite build`.cwd(projectPath).nothrow().quiet();
+	// Use local vite if installed to avoid module resolution issues
+	// bunx vite installs to temp dir, but vite.config.js may require('vite') from node_modules
+	// Don't use project's build script - it might do more than just vite build (e.g., Tauri)
+	let buildCommand: string[];
+
+	if (existsSync(join(projectPath, "node_modules", ".bin", "vite"))) {
+		// Local vite installed - use it directly
+		buildCommand = ["bun", "run", "vite", "build"];
+	} else {
+		// Fallback to bunx
+		buildCommand = ["bunx", "vite", "build"];
+	}
+
+	const buildResult = await $`${buildCommand}`.cwd(projectPath).nothrow().quiet();
 
 	if (buildResult.exitCode !== 0) {
 		throw new JackError(

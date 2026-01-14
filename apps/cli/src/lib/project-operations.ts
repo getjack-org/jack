@@ -388,13 +388,23 @@ async function runAutoDetectFlow(
 	const configInfo = detection.configFile || detection.entryPoint || "";
 	reporter.info(`Detected: ${typeLabel} project${configInfo ? ` (${configInfo})` : ""}`);
 
-	// Step 7: Get default project name and prompt user
+	// Step 7: Fetch username for URL preview (skip for dry run)
+	let ownerUsername: string | null = null;
+	if (!dryRun) {
+		const { getCurrentUserProfile } = await import("./control-plane.ts");
+		const profile = await getCurrentUserProfile();
+		ownerUsername = profile?.username ?? null;
+	}
+
+	// Step 8: Get default project name and prompt user
 	const defaultName = getDefaultProjectName(projectPath);
 
 	if (!interactive) {
 		// Non-interactive mode - use defaults
 		const projectName = defaultName;
-		const runjackUrl = `https://${projectName}.runjack.xyz`;
+		const runjackUrl = ownerUsername
+			? `https://${ownerUsername}-${projectName}.runjack.xyz`
+			: `https://${projectName}.runjack.xyz`;
 
 		reporter.info(`Project name: ${projectName}`);
 		reporter.info(`Will deploy to: ${runjackUrl}`);
@@ -423,8 +433,8 @@ async function runAutoDetectFlow(
 			usePrebuilt: false,
 		});
 
-		// Link project locally
-		await linkProject(projectPath, remoteResult.projectId, "managed");
+		// Link project locally (include username for correct URL display)
+		await linkProject(projectPath, remoteResult.projectId, "managed", ownerUsername ?? undefined);
 		await registerPath(remoteResult.projectId, projectPath);
 
 		track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
@@ -446,7 +456,9 @@ async function runAutoDetectFlow(
 	});
 
 	const slugifiedName = slugify(projectName.trim());
-	const runjackUrl = `https://${slugifiedName}.runjack.xyz`;
+	const runjackUrl = ownerUsername
+		? `https://${ownerUsername}-${slugifiedName}.runjack.xyz`
+		: `https://${slugifiedName}.runjack.xyz`;
 
 	// Confirmation prompt
 	console.error("");
@@ -491,8 +503,8 @@ async function runAutoDetectFlow(
 		usePrebuilt: false,
 	});
 
-	// Link project locally
-	await linkProject(projectPath, remoteResult.projectId, "managed");
+	// Link project locally (include username for correct URL display)
+	await linkProject(projectPath, remoteResult.projectId, "managed", ownerUsername ?? undefined);
 	await registerPath(remoteResult.projectId, projectPath);
 
 	track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
@@ -998,9 +1010,14 @@ export async function createProject(
 			);
 		}
 
+		// Fetch username for link storage
+		const { getCurrentUserProfile } = await import("./control-plane.ts");
+		const profile = await getCurrentUserProfile();
+		const ownerUsername = profile?.username ?? undefined;
+
 		// Link project locally and register path
 		try {
-			await linkProject(targetDir, remoteResult.projectId, "managed");
+			await linkProject(targetDir, remoteResult.projectId, "managed", ownerUsername);
 			await writeTemplateMetadata(targetDir, templateOrigin);
 			await registerPath(remoteResult.projectId, targetDir);
 		} catch (err) {
@@ -1276,8 +1293,10 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		// deployToManagedProject now handles both template and code deploy
 		await deployToManagedProject(managedProjectId as string, projectPath, reporter);
 
-		// Get the URL from the resolver or construct it
-		workerUrl = `https://${projectName}.runjack.xyz`;
+		// Construct URL with username if available
+		workerUrl = link?.owner_username
+			? `https://${link.owner_username}-${projectName}.runjack.xyz`
+			: `https://${projectName}.runjack.xyz`;
 	} else {
 		// BYO mode: deploy via wrangler
 
@@ -1406,7 +1425,11 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		if (!existingLink) {
 			// Not linked yet - create link
 			if (deployMode === "managed" && link?.project_id) {
-				await linkProject(projectPath, link.project_id, "managed");
+				// Fetch username for link storage
+				const { getCurrentUserProfile } = await import("./control-plane.ts");
+				const profile = await getCurrentUserProfile();
+				const ownerUsername = profile?.username ?? undefined;
+				await linkProject(projectPath, link.project_id, "managed", ownerUsername);
 				await registerPath(link.project_id, projectPath);
 			} else {
 				// BYO mode - generate new ID
@@ -1488,7 +1511,9 @@ export async function getProjectStatus(
 	// Determine URL based on mode
 	let workerUrl: string | null = null;
 	if (link?.deploy_mode === "managed") {
-		workerUrl = `https://${projectName}.runjack.xyz`;
+		workerUrl = link.owner_username
+			? `https://${link.owner_username}-${projectName}.runjack.xyz`
+			: `https://${projectName}.runjack.xyz`;
 	}
 
 	// Get database name on-demand

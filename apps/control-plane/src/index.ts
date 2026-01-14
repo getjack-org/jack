@@ -462,6 +462,11 @@ api.post("/projects", async (c) => {
 		slug = normalized;
 	}
 
+	// Fetch user's username for URL construction
+	const user = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
+		.bind(auth.userId)
+		.first<{ username: string | null }>();
+
 	const provisioning = new ProvisioningService(c.env);
 	try {
 		const result = await provisioning.createProject(
@@ -469,7 +474,13 @@ api.post("/projects", async (c) => {
 			body.name,
 			slug,
 			body.content_bucket ?? false,
+			user?.username ?? undefined,
 		);
+
+		// Construct URL with username if available
+		const url = user?.username
+			? `https://${user.username}-${result.project.slug}.runjack.xyz`
+			: `https://${result.project.slug}.runjack.xyz`;
 
 		// If pre-built deployment is requested, attempt it
 		if (body.use_prebuilt && body.template) {
@@ -487,7 +498,7 @@ api.post("/projects", async (c) => {
 					{
 						...result,
 						status: "live",
-						url: `https://${result.project.slug}.runjack.xyz`,
+						url,
 					},
 					201,
 				);
@@ -505,6 +516,7 @@ api.post("/projects", async (c) => {
 				return c.json(
 					{
 						...result,
+						url,
 						prebuilt_failed: true,
 						prebuilt_error: errorMessage,
 					},
@@ -513,7 +525,7 @@ api.post("/projects", async (c) => {
 			}
 		}
 
-		return c.json(result, 201);
+		return c.json({ ...result, url }, 201);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Project creation failed";
 		if (message.includes("already exists") || message.includes("projects.slug")) {
@@ -572,7 +584,12 @@ api.get("/projects/:projectId", async (c) => {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
 	}
 
-	return c.json({ project });
+	// Construct URL with owner_username if available
+	const url = project.owner_username
+		? `https://${project.owner_username}-${project.slug}.runjack.xyz`
+		: `https://${project.slug}.runjack.xyz`;
+
+	return c.json({ project, url });
 });
 
 api.get("/projects/:projectId/resources", async (c) => {
