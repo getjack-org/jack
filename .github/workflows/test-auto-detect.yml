@@ -1,0 +1,67 @@
+name: Test Auto-Detect
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/cli/src/index.ts'
+      - 'apps/cli/src/lib/project-detection.ts'
+      - 'apps/cli/src/lib/config-generator.ts'
+      - 'apps/cli/src/lib/project-operations.ts'
+      - 'apps/cli/src/lib/build-helper.ts'
+      - 'apps/cli/src/lib/deploy-mode.ts'
+      - 'apps/cli/src/commands/ship.ts'
+      - 'scripts/setup-test-fixtures.sh'
+      - 'scripts/test-auto-detect.sh'
+      - '.github/workflows/test-auto-detect.yml'
+  pull_request:
+    paths:
+      - 'apps/cli/src/index.ts'
+      - 'apps/cli/src/lib/project-detection.ts'
+      - 'apps/cli/src/lib/config-generator.ts'
+      - 'apps/cli/src/lib/project-operations.ts'
+      - 'apps/cli/src/lib/build-helper.ts'
+      - 'apps/cli/src/lib/deploy-mode.ts'
+      - 'apps/cli/src/commands/ship.ts'
+      - 'scripts/setup-test-fixtures.sh'
+      - 'scripts/test-auto-detect.sh'
+      - '.github/workflows/test-auto-detect.yml'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  test:
+    name: Auto-Detect Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install CLI dependencies
+        run: bun install
+
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/setup-test-fixtures.sh
+          chmod +x scripts/test-auto-detect.sh
+
+      - name: Generate test fixtures
+        run: ./scripts/setup-test-fixtures.sh
+        timeout-minutes: 10
+
+      - name: Run auto-detect tests
+        run: ./scripts/test-auto-detect.sh /tmp/jack-test-fixtures
+        env:
+          CI: true
