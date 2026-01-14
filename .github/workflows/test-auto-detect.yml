@@ -1,4 +1,4 @@
-name: Test Auto-Detect
+name: Project Auto-Detect Tests
 
 on:
   push:
@@ -30,7 +30,7 @@ on:
 
 jobs:
   test:
-    name: Auto-Detect Integration Tests
+    name: Project Auto-Detect Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
