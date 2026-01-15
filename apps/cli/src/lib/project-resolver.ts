@@ -179,6 +179,8 @@ export interface ResolveProjectOptions {
 	projectPath?: string;
 	/** Allow fallback lookup by managed project name when slug lookup fails */
 	matchByName?: boolean;
+	/** Prefer local .jack/project.json when resolving (default true) */
+	preferLocalLink?: boolean;
 }
 
 /**
@@ -225,9 +227,10 @@ export async function resolveProject(
 	let resolved: ResolvedProject | null = null;
 	const matchByName = options?.matchByName !== false;
 	const projectPath = options?.projectPath || process.cwd();
+	const preferLocalLink = options?.preferLocalLink ?? true;
 
 	// First, check if we're resolving from a local path with .jack/project.json
-	const link = await readProjectLink(projectPath);
+	const link = preferLocalLink ? await readProjectLink(projectPath) : null;
 
 	if (link) {
 		// We have a local link - start with that

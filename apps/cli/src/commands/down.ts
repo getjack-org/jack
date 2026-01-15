@@ -62,6 +62,7 @@ export interface DownFlags {
 export default async function down(projectName?: string, flags: DownFlags = {}): Promise<void> {
 	try {
 		// Get project name
+		const hasExplicitName = Boolean(projectName);
 		let name = projectName;
 		if (!name) {
 			try {
@@ -74,15 +75,31 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		}
 
 		// Resolve project from all sources (local link + control plane)
-		const resolved = await resolveProject(name);
+		const resolved = await resolveProject(name, {
+			preferLocalLink: !hasExplicitName,
+		});
 
-		// Read local project link
-		const link = await readProjectLink(process.cwd());
+		// Read local project link (only when no explicit name provided)
+		const link = hasExplicitName ? null : await readProjectLink(process.cwd());
 
 		// Check if found only on control plane (orphaned managed project)
 		if (resolved?.sources.controlPlane && !resolved.sources.filesystem) {
 			console.error("");
 			info(`Found "${name}" on jack cloud, linking locally...`);
+		}
+
+
+		// Guard against mismatched resolutions when an explicit name is provided
+		if (hasExplicitName && resolved) {
+			const matches =
+				name === resolved.slug ||
+				name === resolved.name ||
+				name === resolved.remote?.projectId;
+			if (!matches) {
+				error(`Refusing to undeploy '${name}' because it resolves to '${resolved.slug}'.`);
+				info("Use the exact slug/name shown by 'jack info' and try again.");
+				process.exit(1);
+			}
 		}
 
 		if (!resolved && !link) {
