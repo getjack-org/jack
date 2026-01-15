@@ -45,16 +45,21 @@ export class ProjectCacheService {
 
 		const writes: Promise<void>[] = [
 			this.cache.put(CACHE_KEYS.project(config.project_id), serialized),
-			this.cache.put(CACHE_KEYS.configBySlug(config.slug), serialized),
 		];
 
 		if (config.owner_username) {
+			// Published projects: only username-prefixed URL works
 			writes.push(
 				this.cache.put(
 					CACHE_KEYS.configByUsernameSlug(config.owner_username, config.slug),
 					serialized,
 				),
 			);
+			// Delete legacy slug-only key to prevent old URL from working
+			writes.push(this.cache.delete(CACHE_KEYS.configBySlug(config.slug)));
+		} else {
+			// Unpublished projects: slug-only URL works
+			writes.push(this.cache.put(CACHE_KEYS.configBySlug(config.slug), serialized));
 		}
 
 		await Promise.all(writes);
