@@ -1,0 +1,90 @@
+# Launch Day Flow (Jack Cloud)
+
+Frame is the scaffolding project-management tool for agentic coders—no overhead, no ceremony, no UI switch. This page mirrors the Launch Day video so your watchers can read (and copy) every step without leaving the docs.
+
+> Related: The SPIRIT of jack demands instant first use, invisible infrastructure, and preparing the session so every `jack new` already ships AGENTS.md context. [/internal/SPIRIT.md](/internal/SPIRIT.md)
+
+## Deploy Your Vite Project
+
+Already have a Vite project? Get it live in minutes.
+
+### 1. Create a Jack project
+
+```bash
+jack new my-vite-site -t miniapp
+```
+
+This scaffolds the deployment pipeline and gives you a live URL immediately.
+
+### 2. Drop in your code and ship
+
+Copy your Vite files (`src/`, `vite.config.*`, `package.json`, etc.) into the generated directory, keeping the `jack.json` and `AGENTS.md` files.
+
+```bash
+bun install
+jack ship
+```
+
+Your site is now live at `https://your-project.runjack.xyz`.
+
+### 3. Fork to experiment
+
+Want to try something without breaking the original?
+
+```bash
+jack new my-vite-sandbox -t my-vite-site
+```
+
+Jack treats any shipped project as a forkable template—no git setup, no manual config. Each fork inherits the same context and secrets.
+
+### 4. Keep iterating
+
+Make changes, run `jack ship`, see them live. When you're happy with the result, `jack publish` makes it available for others to fork too.
+
+## The play (assume Cloudflare + jack already logged in)
+
+1. **Create a Frame miniapp and ship it in one command**
+
+```bash
+jack new launch-miniapp -t miniapp
+```
+
+- `jack new` scaffolds the Farcaster Frame miniapp, installs deps, and deploys immediately (SPIRIT principle: first use is instant and infrastructure disappears).
+- The template comes with React, a D1 guestbook, the Neynar API proxy, and `AGENTS.md` so your agent already knows the stack.
+- jack automatically copies the live URL and prepares the MCP server for Claude, Cursor, or whatever agent you prefer.
+
+2. **Fork your live project from jack cloud with a second command**
+
+```bash
+jack new launch-fork -t launch-miniapp
+```
+
+- jack reuses the published snapshot of `launch-miniapp` as a template (SPIRIT #9: pre-git simplicity and no lock-in).
+- No git remotes, no `wrangler.toml` edits, no manual secrets—just type `jack new`, name your fork, and start hacking.
+- The fork is private by default (publish only if you want others to tip the flow).
+
+## Why this beats the usual rewrite
+
+- **Zero ceremony**: Traditional flows need `npm install`, `wrangler init`, `wrangler login`, `git remote add`, then manual deploys. Here, two `jack new` calls do all of that and keep the project ready for your agents.
+- **Immediate context**: Every jack project ships AGENTS/CLAUDE context plus roaming secrets, so your agent is set up without copy/paste.
+- **Jack Cloud awareness**: You never have to juggle local vs cloud state—`jack new` sees the last deploy snapshot, and `jack ls`/`jack projects` show cloud-only entries right away.
+- **Fork-first thinking**: Every deployment becomes a template you can fork from any machine, so experimentation feels like branching, not rebuilding.
+
+## Blog posts (Launch Day)
+
+The Launch Day video links directly to this doc. Keep this section lean and update the transcript/notes every time you publish a new clip so viewers can read the same commands you show on-screen.
+
+- **Launch Day Flow** — 🎥 Video: [Placeholder link] | Commands: `jack new launch-miniapp -t miniapp` + `jack new launch-fork -t launch-miniapp`. Paste the transcript here if you publish it anywhere else.
+
+Need a new clip? Drop the transcript below and keep the same minimal layout so you can drop a single URL in your YouTube description or tweet.
+
+```
+Transcript goes here…
+```
+
+## Next steps
+
+1. `jack ship` again from any folder to capture updates before your next fork (manifested snapshots keep evolving).
+2. `jack ls` to see both local and cloud-only projects. No cleanup ritual needed.
+
+Anyone who watched the video can now replicate the flow—two commands, a live Frame miniapp, and a fork ready for experiments. Need to highlight another clip? Copy this structure, swap the commands, and you have a new blog post in seconds.
