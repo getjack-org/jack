@@ -1185,4 +1185,308 @@ export class CloudflareClient {
 			throw new Error(`Failed to upload dispatch script with assets: ${errorMsg}`);
 		}
 	}
+
+	// =====================================================
+	// Analytics Engine SQL API Methods
+	// =====================================================
+
+	/**
+	 * Query Analytics Engine using SQL API.
+	 * Docs: https://developers.cloudflare.com/analytics/analytics-engine/sql-api/
+	 */
+	async queryAnalyticsEngine(sql: string): Promise<AnalyticsEngineQueryResult> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/analytics_engine/sql`;
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "text/plain",
+			},
+			body: sql,
+		});
+
+		if (!response.ok) {
+			const text = await response.text();
+			throw new Error(`Analytics Engine query failed: ${response.status} ${text}`);
+		}
+
+		return response.json() as Promise<AnalyticsEngineQueryResult>;
+	}
+
+	/**
+	 * Get aggregated usage metrics for an org from Analytics Engine.
+	 */
+	async getOrgUsageFromAE(orgId: string, from: string, to: string): Promise<UsageMetricsAE> {
+		const escapedOrgId = this.escapeSQL(orgId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+		const whereClause = `blob1 = '${escapedOrgId}' AND timestamp >= toDateTime('${formattedFrom}') AND timestamp <= toDateTime('${formattedTo}')`;
+
+		const metricsQuery = `
+			SELECT
+				SUM(_sample_interval) as requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as bandwidth_in_bytes,
+				SUM(double4 * _sample_interval) as bandwidth_out_bytes
+			FROM jack_usage
+			WHERE ${whereClause}
+		`;
+
+		const statusQuery = `
+			SELECT blob9 as status_class, SUM(_sample_interval) as count
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob9
+		`;
+
+		const cacheQuery = `
+			SELECT blob4 as cache_status, SUM(_sample_interval) as count
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob4
+		`;
+
+		const [metricsResult, statusResult, cacheResult] = await Promise.all([
+			this.queryAnalyticsEngine(metricsQuery),
+			this.queryAnalyticsEngine(statusQuery),
+			this.queryAnalyticsEngine(cacheQuery),
+		]);
+
+		return this.combineUsageMetrics(metricsResult, statusResult, cacheResult);
+	}
+
+	/**
+	 * Get usage metrics for a specific project from Analytics Engine.
+	 */
+	async getProjectUsageFromAE(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<UsageMetricsAE> {
+		const escapedProjectId = this.escapeSQL(projectId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+		const whereClause = `index1 = '${escapedProjectId}' AND timestamp >= toDateTime('${formattedFrom}') AND timestamp <= toDateTime('${formattedTo}')`;
+
+		const metricsQuery = `
+			SELECT
+				SUM(_sample_interval) as requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as bandwidth_in_bytes,
+				SUM(double4 * _sample_interval) as bandwidth_out_bytes
+			FROM jack_usage
+			WHERE ${whereClause}
+		`;
+
+		const statusQuery = `
+			SELECT blob9 as status_class, SUM(_sample_interval) as count
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob9
+		`;
+
+		const cacheQuery = `
+			SELECT blob4 as cache_status, SUM(_sample_interval) as count
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob4
+		`;
+
+		const [metricsResult, statusResult, cacheResult] = await Promise.all([
+			this.queryAnalyticsEngine(metricsQuery),
+			this.queryAnalyticsEngine(statusQuery),
+			this.queryAnalyticsEngine(cacheQuery),
+		]);
+
+		return this.combineUsageMetrics(metricsResult, statusResult, cacheResult);
+	}
+
+	/**
+	 * Combine metrics from main query with status and cache breakdowns.
+	 */
+	private combineUsageMetrics(
+		metricsResult: AnalyticsEngineQueryResult,
+		statusResult: AnalyticsEngineQueryResult,
+		cacheResult: AnalyticsEngineQueryResult,
+	): UsageMetricsAE {
+		const row = metricsResult.data[0] || {};
+		const requests = Number(row.requests) || 0;
+
+		// Calculate errors from status breakdown (5xx responses)
+		const errors = statusResult.data
+			.filter((r) => r.status_class === "5xx")
+			.reduce((sum, r) => sum + Number(r.count), 0);
+		const errorRate = requests > 0 ? Math.round((errors / requests) * 10000) / 100 : 0;
+
+		// Calculate cache hit rate from cache breakdown
+		const cacheHits = cacheResult.data
+			.filter((r) => r.cache_status === "HIT")
+			.reduce((sum, r) => sum + Number(r.count), 0);
+		const cacheHitRate = requests > 0 ? Math.round((cacheHits / requests) * 10000) / 100 : 0;
+
+		return {
+			requests,
+			errors: Math.round(errors),
+			error_rate: errorRate,
+			avg_latency_ms: Math.round((Number(row.avg_latency_ms) || 0) * 100) / 100,
+			bandwidth_in_bytes: Math.round(Number(row.bandwidth_in_bytes) || 0),
+			bandwidth_out_bytes: Math.round(Number(row.bandwidth_out_bytes) || 0),
+			cache_hit_rate: cacheHitRate,
+		};
+	}
+
+	/**
+	 * Get traffic breakdown by country for a project.
+	 */
+	async getProjectTrafficByCountry(
+		projectId: string,
+		from: string,
+		to: string,
+		limit = 10,
+	): Promise<UsageByDimension[]> {
+		const sql = `
+			SELECT
+				blob5 as country,
+				SUM(_sample_interval) as requests
+			FROM jack_usage
+			WHERE index1 = '${this.escapeSQL(projectId)}'
+				AND timestamp >= toDateTime('${this.formatTimestamp(from)}')
+				AND timestamp <= toDateTime('${this.formatTimestamp(to)}')
+			GROUP BY blob5
+			ORDER BY requests DESC
+			LIMIT ${limit}
+		`;
+
+		const result = await this.queryAnalyticsEngine(sql);
+		return this.parseDimensionBreakdown(result, "country");
+	}
+
+	/**
+	 * Get traffic breakdown by path for a project.
+	 */
+	async getProjectTrafficByPath(
+		projectId: string,
+		from: string,
+		to: string,
+		limit = 10,
+	): Promise<UsageByDimension[]> {
+		const sql = `
+			SELECT
+				blob10 as path,
+				SUM(_sample_interval) as requests
+			FROM jack_usage
+			WHERE index1 = '${this.escapeSQL(projectId)}'
+				AND timestamp >= toDateTime('${this.formatTimestamp(from)}')
+				AND timestamp <= toDateTime('${this.formatTimestamp(to)}')
+			GROUP BY blob10
+			ORDER BY requests DESC
+			LIMIT ${limit}
+		`;
+
+		const result = await this.queryAnalyticsEngine(sql);
+		return this.parseDimensionBreakdown(result, "path");
+	}
+
+	/**
+	 * Get traffic breakdown by HTTP method for a project.
+	 */
+	async getProjectTrafficByMethod(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<UsageByDimension[]> {
+		const sql = `
+			SELECT
+				blob3 as method,
+				SUM(_sample_interval) as requests
+			FROM jack_usage
+			WHERE index1 = '${this.escapeSQL(projectId)}'
+				AND timestamp >= toDateTime('${this.formatTimestamp(from)}')
+				AND timestamp <= toDateTime('${this.formatTimestamp(to)}')
+			GROUP BY blob3
+			ORDER BY requests DESC
+		`;
+
+		const result = await this.queryAnalyticsEngine(sql);
+		return this.parseDimensionBreakdown(result, "method");
+	}
+
+	/**
+	 * Get cache status breakdown for a project.
+	 */
+	async getProjectCacheBreakdown(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<UsageByDimension[]> {
+		const sql = `
+			SELECT
+				blob4 as cache_status,
+				SUM(_sample_interval) as requests
+			FROM jack_usage
+			WHERE index1 = '${this.escapeSQL(projectId)}'
+				AND timestamp >= toDateTime('${this.formatTimestamp(from)}')
+				AND timestamp <= toDateTime('${this.formatTimestamp(to)}')
+			GROUP BY blob4
+			ORDER BY requests DESC
+		`;
+
+		const result = await this.queryAnalyticsEngine(sql);
+		return this.parseDimensionBreakdown(result, "cache_status");
+	}
+
+	private parseDimensionBreakdown(
+		result: AnalyticsEngineQueryResult,
+		dimensionKey: string,
+	): UsageByDimension[] {
+		const total = result.data.reduce((sum, row) => sum + (Number(row.requests) || 0), 0);
+
+		return result.data.map((row) => ({
+			dimension: String(row[dimensionKey] || "unknown"),
+			requests: Math.round(Number(row.requests) || 0),
+			percentage: total > 0 ? Math.round((Number(row.requests) / total) * 10000) / 100 : 0,
+		}));
+	}
+
+	private escapeSQL(value: string): string {
+		// Basic SQL injection prevention - escape single quotes
+		return value.replace(/'/g, "''");
+	}
+
+	/**
+	 * Convert ISO 8601 timestamp to Analytics Engine format.
+	 * Analytics Engine expects 'YYYY-MM-DD HH:MM:SS' not ISO 8601.
+	 */
+	private formatTimestamp(isoString: string): string {
+		// Remove 'T', 'Z', and milliseconds
+		return isoString
+			.replace("T", " ")
+			.replace("Z", "")
+			.replace(/\.\d{3}$/, "");
+	}
+}
+
+// Analytics Engine types
+interface AnalyticsEngineQueryResult {
+	data: Array<Record<string, unknown>>;
+	meta: { name: string; type: string }[];
+	rows: number;
+	rows_before_limit_at_least: number;
+}
+
+export interface UsageMetricsAE {
+	requests: number;
+	errors: number;
+	error_rate: number;
+	avg_latency_ms: number;
+	bandwidth_in_bytes: number;
+	bandwidth_out_bytes: number;
+	cache_hit_rate: number;
+}
+
+export interface UsageByDimension {
+	dimension: string;
+	requests: number;
+	percentage: number;
 }

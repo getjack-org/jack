@@ -35,6 +35,12 @@ type = "ratelimit"
 namespace_id = "1002"
 simple = { limit = 30, period = 60 }
 
+# Analytics Engine for querying usage data
+# Same dataset that dispatch worker writes to
+[[analytics_engine_datasets]]
+binding = "USAGE"
+dataset = "jack_usage"
+
 # Note: Run `wrangler d1 create jack-control-db` first
 # Then add the database_id here
 # Secrets:

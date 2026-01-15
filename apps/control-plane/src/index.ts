@@ -3,7 +3,12 @@ import type { JwtPayload } from "@getjack/auth";
 import { unzipSync } from "fflate";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { CloudflareClient, getMimeType } from "./cloudflare-api";
+import {
+	CloudflareClient,
+	getMimeType,
+	type UsageMetricsAE,
+	type UsageByDimension,
+} from "./cloudflare-api";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
@@ -401,92 +406,6 @@ api.get("/orgs/:orgId", async (c) => {
 	return c.json({ org });
 });
 
-api.get("/orgs/:orgId/usage", async (c) => {
-	const auth = c.get("auth");
-	const orgId = c.req.param("orgId");
-	const rangeResult = resolveAnalyticsRange(c);
-
-	if (!rangeResult.ok) {
-		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
-	}
-
-	const { range } = rangeResult;
-	const sort = parseUsageSort(c.req.query("sort"));
-	const limit = parseUsageLimit(c.req.query("limit"));
-
-	const membership = await c.env.DB.prepare(
-		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
-	)
-		.bind(orgId, auth.userId)
-		.first();
-
-	if (!membership) {
-		return c.json({ error: "not_found", message: "Org not found" }, 404);
-	}
-
-	const cacheKey = `analytics:org:${orgId}:${range.from}:${range.to}:${sort}:${limit}`;
-	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
-	if (cached) {
-		return c.json(JSON.parse(cached));
-	}
-
-	const result = await c.env.DB.prepare(
-		`SELECT p.id as project_id, p.slug, r.resource_name as worker_name
-     FROM projects p
-     JOIN resources r ON p.id = r.project_id
-     WHERE p.org_id = ? AND p.status != 'deleted' AND r.resource_type = 'worker' AND r.status != 'deleted'`,
-	)
-		.bind(orgId)
-		.all<{ project_id: string; slug: string; worker_name: string }>();
-
-	const projects = result.results ?? [];
-	const scriptNames = projects.map((project) => project.worker_name).filter(Boolean);
-
-	let metricsByScript: Record<string, UsageMetrics> = {};
-	if (scriptNames.length > 0) {
-		try {
-			const cfClient = new CloudflareClient(c.env);
-			metricsByScript = await cfClient.getWorkersAnalytics(scriptNames, range.from, range.to);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "Analytics query failed";
-			return c.json({ error: "upstream_error", message }, 502);
-		}
-	}
-
-	const totals = emptyUsageMetrics();
-	const projectEntries = projects.map((project) => {
-		const metrics = metricsByScript[project.worker_name] ?? emptyUsageMetrics();
-		totals.invocations += metrics.invocations;
-		totals.errors += metrics.errors;
-
-		return {
-			project_id: project.project_id,
-			slug: project.slug,
-			worker_name: project.worker_name,
-			metrics,
-		};
-	});
-	// Calculate overall error rate after summing
-	totals.error_rate = totals.invocations > 0
-		? Math.round((totals.errors / totals.invocations) * 10000) / 100
-		: 0;
-
-	projectEntries.sort((a, b) => b.metrics[sort] - a.metrics[sort]);
-
-	const response = {
-		org_id: orgId,
-		range,
-		totals,
-		projects: projectEntries.slice(0, limit),
-	};
-
-	await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
-		expirationTtl: ANALYTICS_CACHE_TTL_SECONDS,
-	});
-
-	return c.json(response);
-});
-
 // Slug availability check
 api.get("/slugs/:slug/available", async (c) => {
 	const auth = c.get("auth");
@@ -732,48 +651,98 @@ api.get("/projects/:projectId/usage", async (c) => {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
 	}
 
-	const workerResource = await c.env.DB.prepare(
-		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
-	)
-		.bind(projectId)
-		.first<{ resource_name: string }>();
-
-	if (!workerResource) {
-		return c.json({ error: "not_found", message: "Project has no deployed worker" }, 404);
-	}
-
-	const cacheKey = `analytics:project:${projectId}:${range.from}:${range.to}`;
+	// Check cache first (5 min TTL for detailed analytics)
+	const cacheKey = `ae:project:${projectId}:${range.from}:${range.to}`;
 	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
 	if (cached) {
 		return c.json(JSON.parse(cached));
 	}
 
-	let metrics = emptyUsageMetrics();
 	try {
 		const cfClient = new CloudflareClient(c.env);
-		const metricsByScript = await cfClient.getWorkersAnalytics(
-			[workerResource.resource_name],
-			range.from,
-			range.to,
-		);
-		metrics = metricsByScript[workerResource.resource_name] ?? emptyUsageMetrics();
+
+		// Fetch all metrics in parallel
+		const [metrics, byCountry, byPath, byMethod, byCacheStatus] = await Promise.all([
+			cfClient.getProjectUsageFromAE(projectId, range.from, range.to),
+			cfClient.getProjectTrafficByCountry(projectId, range.from, range.to),
+			cfClient.getProjectTrafficByPath(projectId, range.from, range.to),
+			cfClient.getProjectTrafficByMethod(projectId, range.from, range.to),
+			cfClient.getProjectCacheBreakdown(projectId, range.from, range.to),
+		]);
+
+		const response = {
+			project_id: projectId,
+			range,
+			metrics,
+			breakdown: {
+				by_country: byCountry,
+				by_path: byPath,
+				by_method: byMethod,
+				by_cache_status: byCacheStatus,
+			},
+		};
+
+		// Cache for 5 minutes
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+			expirationTtl: 300,
+		});
+
+		return c.json(response);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Analytics query failed";
+		console.error("Analytics Engine query error:", error);
 		return c.json({ error: "upstream_error", message }, 502);
 	}
+});
 
-	const response = {
-		project_id: projectId,
-		worker_name: workerResource.resource_name,
-		range,
-		metrics,
-	};
+// Org-level Analytics Engine usage
+api.get("/orgs/:orgId/usage", async (c) => {
+	const auth = c.get("auth");
+	const orgId = c.req.param("orgId");
+	const rangeResult = resolveAnalyticsRange(c);
 
-	await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
-		expirationTtl: ANALYTICS_CACHE_TTL_SECONDS,
-	});
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
 
-	return c.json(response);
+	const { range } = rangeResult;
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(orgId, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Org not found" }, 404);
+	}
+
+	const cacheKey = `ae:org:${orgId}:${range.from}:${range.to}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const metrics = await cfClient.getOrgUsageFromAE(orgId, range.from, range.to);
+
+		const response = {
+			org_id: orgId,
+			range,
+			metrics,
+		};
+
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+			expirationTtl: 300,
+		});
+
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Analytics query failed";
+		console.error("Analytics Engine query error:", error);
+		return c.json({ error: "upstream_error", message }, 502);
+	}
 });
 
 api.post("/projects/:projectId/content-bucket", async (c) => {
@@ -2130,14 +2099,6 @@ function defaultOrgName(payload: WorkosJwtPayload): string {
 	return `${base}'s Workspace`;
 }
 
-type UsageMetrics = {
-	invocations: number;
-	errors: number;
-	error_rate: number; // Percentage 0-100
-};
-
-type UsageSortField = "invocations" | "errors" | "error_rate";
-
 type AnalyticsRange = {
 	from: string;
 	to: string;
@@ -2146,28 +2107,6 @@ type AnalyticsRange = {
 type AnalyticsRangeResult =
 	| { ok: true; range: AnalyticsRange }
 	| { ok: false; message: string };
-
-function emptyUsageMetrics(): UsageMetrics {
-	return {
-		invocations: 0,
-		errors: 0,
-		error_rate: 0,
-	};
-}
-
-function parseUsageSort(value: string | undefined): UsageSortField {
-	if (value === "errors" || value === "error_rate") {
-		return value;
-	}
-	return "invocations";
-}
-
-function parseUsageLimit(value: string | undefined): number {
-	if (!value) return 20;
-	const parsed = Number.parseInt(value, 10);
-	if (!Number.isFinite(parsed) || parsed < 1) return 20;
-	return Math.min(parsed, 100);
-}
 
 function resolveAnalyticsRange(c: { req: { query: (key: string) => string | undefined } }): AnalyticsRangeResult {
 	const fromParam = c.req.query("from");
