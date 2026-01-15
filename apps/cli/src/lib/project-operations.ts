@@ -1047,22 +1047,22 @@ export async function createProject(
 
 		// Build first if needed (wrangler needs built assets)
 		if (await needsOpenNextBuild(targetDir)) {
-			reporter.start("Building...");
+			reporter.start("Building assets...");
 			try {
 				await runOpenNextBuild(targetDir);
 				reporter.stop();
-				reporter.success("Built");
+				reporter.success("Built assets");
 			} catch (err) {
 				reporter.stop();
 				reporter.error("Build failed");
 				throw err;
 			}
 		} else if (await needsViteBuild(targetDir)) {
-			reporter.start("Building...");
+			reporter.start("Building assets...");
 			try {
 				await runViteBuild(targetDir);
 				reporter.stop();
-				reporter.success("Built");
+				reporter.success("Built assets");
 			} catch (err) {
 				reporter.stop();
 				reporter.error("Build failed");
@@ -1266,19 +1266,19 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		// (deployToManagedProject handles its own build, so only build here for dry-run)
 		if (dryRun) {
 			if (await needsOpenNextBuild(projectPath)) {
-				const buildSpin = reporter.spinner("Building...");
+				const buildSpin = reporter.spinner("Building assets...");
 				try {
 					await runOpenNextBuild(projectPath);
-					buildSpin.success("Built");
+					buildSpin.success("Built assets");
 				} catch (err) {
 					buildSpin.error("Build failed");
 					throw err;
 				}
 			} else if (await needsViteBuild(projectPath)) {
-				const buildSpin = reporter.spinner("Building...");
+				const buildSpin = reporter.spinner("Building assets...");
 				try {
 					await runViteBuild(projectPath);
-					buildSpin.success("Built");
+					buildSpin.success("Built assets");
 				} catch (err) {
 					buildSpin.error("Build failed");
 					throw err;
@@ -1304,19 +1304,19 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 
 		// Build first if needed (wrangler needs built assets)
 		if (await needsOpenNextBuild(projectPath)) {
-			const buildSpin = reporter.spinner("Building...");
+			const buildSpin = reporter.spinner("Building assets...");
 			try {
 				await runOpenNextBuild(projectPath);
-				buildSpin.success("Built");
+				buildSpin.success("Built assets");
 			} catch (err) {
 				buildSpin.error("Build failed");
 				throw err;
 			}
 		} else if (await needsViteBuild(projectPath)) {
-			const buildSpin = reporter.spinner("Building...");
+			const buildSpin = reporter.spinner("Building assets...");
 			try {
 				await runViteBuild(projectPath);
-				buildSpin.success("Built");
+				buildSpin.success("Built assets");
 			} catch (err) {
 				buildSpin.error("Build failed");
 				throw err;
@@ -1401,13 +1401,13 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	if (includeSync) {
 		const syncConfig = await getSyncConfig();
 		if (syncConfig.enabled && syncConfig.autoSync) {
-			const syncSpin = reporter.spinner("Syncing source to cloud...");
+			const syncSpin = reporter.spinner("Syncing source to jack storage...");
 			try {
 				const syncResult = await syncToCloud(projectPath);
 				if (syncResult.success) {
 					if (syncResult.filesUploaded > 0 || syncResult.filesDeleted > 0) {
 						syncSpin.success(
-							`Backed up ${syncResult.filesUploaded} files to jack-storage/${projectName}/`,
+							`Synced source to jack storage (${syncResult.filesUploaded} uploaded, ${syncResult.filesDeleted} removed)`,
 						);
 					} else {
 						syncSpin.success("Source already synced");

@@ -172,19 +172,19 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 	// Check if OpenNext build is needed (Next.js + Cloudflare)
 	const hasOpenNext = await needsOpenNextBuild(projectPath);
 	if (hasOpenNext) {
-		reporter?.start("Building...");
+		reporter?.start("Building assets...");
 		await runOpenNextBuild(projectPath);
 		reporter?.stop();
-		reporter?.success("Built");
+		reporter?.success("Built assets");
 	}
 
 	// Check if Vite build is needed and run it (skip if OpenNext already built)
 	const hasVite = await needsViteBuild(projectPath);
 	if (hasVite && !hasOpenNext) {
-		reporter?.start("Building...");
+		reporter?.start("Building assets...");
 		await runViteBuild(projectPath);
 		reporter?.stop();
-		reporter?.success("Built");
+		reporter?.success("Built assets");
 	}
 
 	// Create unique temp directory for build output
@@ -193,7 +193,7 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 	await mkdir(outDir, { recursive: true });
 
 	// Run wrangler dry-run to build without deploying
-	reporter?.start("Building worker...");
+	reporter?.start("Bundling runtime...");
 
 	const dryRunResult = await $`wrangler deploy --dry-run --outdir=${outDir}`
 		.cwd(projectPath)
@@ -215,7 +215,7 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 	}
 
 	reporter?.stop();
-	reporter?.success("Built worker");
+	reporter?.success("Bundled runtime");
 
 	const entrypoint = await resolveEntrypoint(outDir, config.main);
 
