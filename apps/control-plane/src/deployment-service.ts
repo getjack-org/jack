@@ -8,7 +8,8 @@ import {
 	getMimeType,
 } from "./cloudflare-api";
 import { ProvisioningService } from "./provisioning";
-import type { Bindings, Deployment, Project, Resource } from "./types";
+import { ProjectCacheService } from "./repositories/project-cache-service";
+import type { Bindings, Deployment, Project, ProjectConfig, Resource } from "./types";
 
 const DISPATCH_NAMESPACE = "jack-tenants";
 
@@ -214,12 +215,14 @@ export class DeploymentService {
 	private codeBucket: R2Bucket;
 	private cfClient: CloudflareClient;
 	private provisioningService: ProvisioningService;
+	private cacheService: ProjectCacheService;
 
 	constructor(env: Bindings) {
 		this.db = env.DB;
 		this.codeBucket = env.CODE_BUCKET;
 		this.cfClient = new CloudflareClient(env);
 		this.provisioningService = new ProvisioningService(env);
+		this.cacheService = new ProjectCacheService(env.PROJECTS_CACHE);
 	}
 
 	/**
@@ -626,6 +629,9 @@ export class DeploymentService {
 				)
 				.bind(artifactPrefix, deploymentId)
 				.run();
+
+			// Refresh cache after successful deployment
+			await this.refreshProjectCache(input.projectId);
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
 			await this.db
@@ -644,6 +650,48 @@ export class DeploymentService {
 			.first<Deployment>();
 		if (!deployment) throw new Error("Failed to retrieve created deployment");
 		return deployment;
+	}
+
+	private async refreshProjectCache(projectId: string): Promise<void> {
+		const project = await this.db
+			.prepare("SELECT * FROM projects WHERE id = ? AND status != 'deleted'")
+			.bind(projectId)
+			.first<{ id: string; org_id: string; slug: string; owner_username: string | null; content_bucket_enabled: number }>();
+
+		if (!project) return;
+
+		const workerResource = await this.db
+			.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'worker'")
+			.bind(projectId)
+			.first<{ provider_id: string }>();
+
+		const d1Resource = await this.db
+			.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1'")
+			.bind(projectId)
+			.first<{ provider_id: string }>();
+
+		const r2Resource = project.content_bucket_enabled
+			? await this.db
+					.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'r2_content'")
+					.bind(projectId)
+					.first<{ provider_id: string }>()
+			: null;
+
+		const projectConfig: ProjectConfig = {
+			project_id: projectId,
+			org_id: project.org_id,
+			slug: project.slug,
+			worker_name: workerResource?.provider_id || "",
+			d1_database_id: d1Resource?.provider_id || "",
+			content_bucket_name: r2Resource?.provider_id || null,
+			owner_username: project.owner_username,
+			status: "active",
+			updated_at: new Date().toISOString(),
+		};
+
+		await this.cacheService.setProjectConfig(projectConfig);
+		await this.cacheService.setSlugLookup(project.org_id, project.slug, projectId);
+		await this.cacheService.clearNotFound(project.slug, project.owner_username);
 	}
 
 	/**
