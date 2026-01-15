@@ -1398,7 +1398,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 	}
 
-	if (includeSync) {
+	if (includeSync && deployMode !== "byo") {
 		const syncConfig = await getSyncConfig();
 		if (syncConfig.enabled && syncConfig.autoSync) {
 			const syncSpin = reporter.spinner("Syncing source to jack storage...");
