@@ -40,7 +40,8 @@ export interface JackConfig {
 	sync?: SyncConfig;
 }
 
-export const CONFIG_DIR = join(homedir(), ".config", "jack");
+const DEFAULT_CONFIG_DIR = join(homedir(), ".config", "jack");
+export const CONFIG_DIR = process.env.JACK_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 /**

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { CONFIG_DIR } from "./config.ts";
 
 export interface SecretEntry {
 	value: string;
@@ -14,7 +14,6 @@ export interface SecretsFile {
 	secrets: Record<string, SecretEntry>;
 }
 
-const CONFIG_DIR = join(homedir(), ".config", "jack");
 const SECRETS_PATH = join(CONFIG_DIR, "secrets.json");
 
 /**
