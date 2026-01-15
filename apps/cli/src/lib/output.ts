@@ -32,7 +32,27 @@ export const output = {
  * Create a spinner for long-running operations
  */
 export function spinner(text: string) {
-	return yoctoSpinner({ text }).start();
+	const spin = yoctoSpinner({ text }).start();
+
+	return {
+		success(message: string) {
+			spin.stop();
+			success(message);
+		},
+		error(message: string) {
+			spin.stop();
+			error(message);
+		},
+		stop() {
+			spin.stop();
+		},
+		get text() {
+			return spin.text;
+		},
+		set text(value: string | undefined) {
+			spin.text = value ?? "";
+		},
+	};
 }
 
 /**
