@@ -6,6 +6,7 @@ import { cors } from "hono/cors";
 import { CloudflareClient, getMimeType } from "./cloudflare-api";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
+import { ProjectCacheService } from "./repositories/project-cache-service";
 import type { Bindings } from "./types";
 
 type WorkosJwtPayload = JwtPayload & {
@@ -30,6 +31,7 @@ declare module "hono" {
 
 // Username validation: 3-39 chars, lowercase alphanumeric + hyphens, must start/end with alphanumeric
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]{1,2}$/;
+const ANALYTICS_CACHE_TTL_SECONDS = 600;
 
 function validateUsername(username: string): string | null {
 	if (!username || username.trim() === "") {
@@ -399,6 +401,92 @@ api.get("/orgs/:orgId", async (c) => {
 	return c.json({ org });
 });
 
+api.get("/orgs/:orgId/usage", async (c) => {
+	const auth = c.get("auth");
+	const orgId = c.req.param("orgId");
+	const rangeResult = resolveAnalyticsRange(c);
+
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
+
+	const { range } = rangeResult;
+	const sort = parseUsageSort(c.req.query("sort"));
+	const limit = parseUsageLimit(c.req.query("limit"));
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(orgId, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Org not found" }, 404);
+	}
+
+	const cacheKey = `analytics:org:${orgId}:${range.from}:${range.to}:${sort}:${limit}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	const result = await c.env.DB.prepare(
+		`SELECT p.id as project_id, p.slug, r.resource_name as worker_name
+     FROM projects p
+     JOIN resources r ON p.id = r.project_id
+     WHERE p.org_id = ? AND p.status != 'deleted' AND r.resource_type = 'worker' AND r.status != 'deleted'`,
+	)
+		.bind(orgId)
+		.all<{ project_id: string; slug: string; worker_name: string }>();
+
+	const projects = result.results ?? [];
+	const scriptNames = projects.map((project) => project.worker_name).filter(Boolean);
+
+	let metricsByScript: Record<string, UsageMetrics> = {};
+	if (scriptNames.length > 0) {
+		try {
+			const cfClient = new CloudflareClient(c.env);
+			metricsByScript = await cfClient.getWorkersAnalytics(scriptNames, range.from, range.to);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Analytics query failed";
+			return c.json({ error: "upstream_error", message }, 502);
+		}
+	}
+
+	const totals = emptyUsageMetrics();
+	const projectEntries = projects.map((project) => {
+		const metrics = metricsByScript[project.worker_name] ?? emptyUsageMetrics();
+		totals.invocations += metrics.invocations;
+		totals.errors += metrics.errors;
+
+		return {
+			project_id: project.project_id,
+			slug: project.slug,
+			worker_name: project.worker_name,
+			metrics,
+		};
+	});
+	// Calculate overall error rate after summing
+	totals.error_rate = totals.invocations > 0
+		? Math.round((totals.errors / totals.invocations) * 10000) / 100
+		: 0;
+
+	projectEntries.sort((a, b) => b.metrics[sort] - a.metrics[sort]);
+
+	const response = {
+		org_id: orgId,
+		range,
+		totals,
+		projects: projectEntries.slice(0, limit),
+	};
+
+	await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+		expirationTtl: ANALYTICS_CACHE_TTL_SECONDS,
+	});
+
+	return c.json(response);
+});
+
 // Slug availability check
 api.get("/slugs/:slug/available", async (c) => {
 	const auth = c.get("auth");
@@ -615,6 +703,77 @@ api.get("/projects/:projectId/resources", async (c) => {
 
 	const resources = await provisioning.getProjectResources(projectId);
 	return c.json({ resources });
+});
+
+api.get("/projects/:projectId/usage", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const rangeResult = resolveAnalyticsRange(c);
+
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
+
+	const { range } = rangeResult;
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const workerResource = await c.env.DB.prepare(
+		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ resource_name: string }>();
+
+	if (!workerResource) {
+		return c.json({ error: "not_found", message: "Project has no deployed worker" }, 404);
+	}
+
+	const cacheKey = `analytics:project:${projectId}:${range.from}:${range.to}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	let metrics = emptyUsageMetrics();
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const metricsByScript = await cfClient.getWorkersAnalytics(
+			[workerResource.resource_name],
+			range.from,
+			range.to,
+		);
+		metrics = metricsByScript[workerResource.resource_name] ?? emptyUsageMetrics();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Analytics query failed";
+		return c.json({ error: "upstream_error", message }, 502);
+	}
+
+	const response = {
+		project_id: projectId,
+		worker_name: workerResource.resource_name,
+		range,
+		metrics,
+	};
+
+	await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+		expirationTtl: ANALYTICS_CACHE_TTL_SECONDS,
+	});
+
+	return c.json(response);
 });
 
 api.post("/projects/:projectId/content-bucket", async (c) => {
@@ -900,7 +1059,7 @@ api.delete("/projects/:projectId", async (c) => {
 		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
 	)
 		.bind(projectId)
-		.first<{ id: string; org_id: string; slug: string }>();
+		.first<{ id: string; org_id: string; slug: string; owner_username: string | null }>();
 
 	if (!project) {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
@@ -1011,9 +1170,8 @@ api.delete("/projects/:projectId", async (c) => {
 
 	// Delete KV cache entries
 	try {
-		await c.env.PROJECTS_CACHE.delete(`project:${projectId}`);
-		await c.env.PROJECTS_CACHE.delete(`config:${project.slug}`);
-		await c.env.PROJECTS_CACHE.delete(`slug:${project.org_id}:${project.slug}`);
+		const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
+		await cacheService.invalidateProject(projectId, project.slug, project.org_id, project.owner_username);
 		deletionResults.push({ resource: "kv_cache", success: true });
 	} catch (error) {
 		deletionResults.push({ resource: "kv_cache", success: false, error: String(error) });
@@ -1764,7 +1922,7 @@ api.post("/projects/:projectId/publish", async (c) => {
 	const fullProject = await c.env.DB.prepare(
 		`SELECT p.*, r.provider_id as d1_database_id
 		 FROM projects p
-		 LEFT JOIN resources r ON r.project_id = p.id AND r.resource_type = 'D1_DATABASE'
+		 LEFT JOIN resources r ON r.project_id = p.id AND r.resource_type = 'd1'
 		 WHERE p.id = ?`,
 	)
 		.bind(projectId)
@@ -1796,14 +1954,9 @@ api.post("/projects/:projectId/publish", async (c) => {
 			updated_at: new Date().toISOString(),
 		};
 
-		// Write new key format: config:{username}:{slug}
-		await c.env.PROJECTS_CACHE.put(
-			`config:${user.username}:${fullProject.slug}`,
-			JSON.stringify(projectConfig),
-		);
-
-		// Also update the legacy key with owner_username
-		await c.env.PROJECTS_CACHE.put(`config:${fullProject.slug}`, JSON.stringify(projectConfig));
+		const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
+		await cacheService.setProjectConfig(projectConfig);
+		await cacheService.clearNotFound(fullProject.slug, user.username);
 	}
 
 	return c.json({
@@ -1975,4 +2128,90 @@ async function ensureMembership(db: D1Database, orgId: string, userId: string) {
 function defaultOrgName(payload: WorkosJwtPayload): string {
 	const base = payload.first_name ?? payload.email?.split("@")[0] ?? "Personal";
 	return `${base}'s Workspace`;
+}
+
+type UsageMetrics = {
+	invocations: number;
+	errors: number;
+	error_rate: number; // Percentage 0-100
+};
+
+type UsageSortField = "invocations" | "errors" | "error_rate";
+
+type AnalyticsRange = {
+	from: string;
+	to: string;
+};
+
+type AnalyticsRangeResult =
+	| { ok: true; range: AnalyticsRange }
+	| { ok: false; message: string };
+
+function emptyUsageMetrics(): UsageMetrics {
+	return {
+		invocations: 0,
+		errors: 0,
+		error_rate: 0,
+	};
+}
+
+function parseUsageSort(value: string | undefined): UsageSortField {
+	if (value === "errors" || value === "error_rate") {
+		return value;
+	}
+	return "invocations";
+}
+
+function parseUsageLimit(value: string | undefined): number {
+	if (!value) return 20;
+	const parsed = Number.parseInt(value, 10);
+	if (!Number.isFinite(parsed) || parsed < 1) return 20;
+	return Math.min(parsed, 100);
+}
+
+function resolveAnalyticsRange(c: { req: { query: (key: string) => string | undefined } }): AnalyticsRangeResult {
+	const fromParam = c.req.query("from");
+	const toParam = c.req.query("to");
+	const preset = c.req.query("preset") ?? "last_7d";
+	const now = new Date();
+
+	if (fromParam || toParam) {
+		if (!fromParam || !toParam) {
+			return { ok: false, message: "from and to must both be provided" };
+		}
+
+		const fromDate = new Date(fromParam);
+		const toDate = new Date(toParam);
+
+		if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+			return { ok: false, message: "from and to must be valid ISO timestamps" };
+		}
+
+		if (fromDate > toDate) {
+			return { ok: false, message: "from must be before to" };
+		}
+
+		return {
+			ok: true,
+			range: { from: fromDate.toISOString(), to: toDate.toISOString() },
+		};
+	}
+
+	if (preset !== "last_24h" && preset !== "last_7d" && preset !== "mtd") {
+		return { ok: false, message: "preset must be one of last_24h, last_7d, mtd" };
+	}
+
+	let fromDate: Date;
+	if (preset === "last_24h") {
+		fromDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+	} else if (preset === "mtd") {
+		fromDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+	} else {
+		fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+	}
+
+	return {
+		ok: true,
+		range: { from: fromDate.toISOString(), to: now.toISOString() },
+	};
 }
