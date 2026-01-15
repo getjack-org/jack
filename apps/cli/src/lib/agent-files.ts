@@ -21,7 +21,6 @@ This project is deployed to Cloudflare Workers using jack:
 \`\`\`bash
 jack ship    # Deploy to Cloudflare Workers
 jack logs    # Stream production logs
-jack dev     # Start local development server
 \`\`\`
 
 All deployment is handled by jack. Never run \`wrangler\` commands directly.
@@ -42,7 +41,6 @@ See [AGENTS.md](./AGENTS.md) for complete project context and deployment instruc
 
 - **Deploy**: \`jack ship\` - Deploy to Cloudflare Workers
 - **Logs**: \`jack logs\` - Stream production logs
-- **Dev**: \`jack dev\` - Start local development server
 
 ## Important
 
