@@ -71,6 +71,14 @@ app.all("/*", async (c) => {
 	}
 
 	const { username, slug } = parsed;
+	const fullSubdomain = username ? `${username}-${slug}` : slug;
+
+	const notFoundKey = `notfound:${fullSubdomain}`;
+	const isKnownNotFound = await env.PROJECTS_CACHE.get(notFoundKey);
+	if (isKnownNotFound) {
+		return c.json({ error: "Project not found", subdomain: fullSubdomain }, 404);
+	}
+
 	let config: ProjectConfig | null = null;
 
 	// Look up project config - try multiple strategies
@@ -81,7 +89,6 @@ app.all("/*", async (c) => {
 
 		if (!config) {
 			// Fallback to legacy format: treat entire subdomain as slug
-			const fullSubdomain = `${username}-${slug}`;
 			config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${fullSubdomain}`, "json");
 		}
 	} else {
@@ -95,14 +102,8 @@ app.all("/*", async (c) => {
 	}
 
 	if (!config) {
-		const fullSubdomain = username ? `${username}-${slug}` : slug;
-		return c.json(
-			{
-				error: "Project not found",
-				subdomain: fullSubdomain,
-			},
-			404,
-		);
+		await env.PROJECTS_CACHE.put(notFoundKey, "1", { expirationTtl: 60 });
+		return c.json({ error: "Project not found", subdomain: fullSubdomain }, 404);
 	}
 
 	// Check project status

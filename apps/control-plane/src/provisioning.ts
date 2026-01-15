@@ -1,4 +1,5 @@
 import { CloudflareClient, type DispatchScriptBinding } from "./cloudflare-api";
+import { ProjectCacheService } from "./repositories/project-cache-service";
 import type { Bindings, Project, ProjectConfig, ProjectLimits, Resource } from "./types";
 
 const DISPATCH_NAMESPACE = "jack-tenants";
@@ -48,11 +49,13 @@ export class ProvisioningService {
 	private db: D1Database;
 	private cache: KVNamespace;
 	private cfClient: CloudflareClient;
+	private cacheService: ProjectCacheService;
 
 	constructor(env: Bindings) {
 		this.db = env.DB;
 		this.cache = env.PROJECTS_CACHE;
 		this.cfClient = new CloudflareClient(env);
+		this.cacheService = new ProjectCacheService(env.PROJECTS_CACHE);
 	}
 
 	/**
@@ -219,21 +222,9 @@ export class ProvisioningService {
 				updated_at: new Date().toISOString(),
 			};
 
-			await this.cache.put(`project:${projectId}`, JSON.stringify(projectConfig));
-
-			// Write config by slug for dispatch worker lookup
-			await this.cache.put(`config:${projectSlug}`, JSON.stringify(projectConfig));
-
-			// Write config by username:slug for dispatch worker lookup (if username is present)
-			if (ownerUsername) {
-				await this.cache.put(
-					`config:${ownerUsername}:${projectSlug}`,
-					JSON.stringify(projectConfig),
-				);
-			}
-
-			// Write slug lookup to KV (org-scoped for control plane)
-			await this.cache.put(`slug:${orgId}:${projectSlug}`, projectId);
+			await this.cacheService.setProjectConfig(projectConfig);
+			await this.cacheService.setSlugLookup(orgId, projectSlug, projectId);
+			await this.cacheService.clearNotFound(projectSlug, ownerUsername);
 
 			// Fetch the final project state
 			const project = await this.getProject(projectId);
@@ -250,6 +241,9 @@ export class ProvisioningService {
 				)
 				.bind(projectId)
 				.run();
+
+			// Clean up any cache entries that may have been written
+			await this.cacheService.invalidateProject(projectId, projectSlug, orgId, ownerUsername);
 
 			throw error;
 		}
@@ -343,14 +337,46 @@ export class ProvisioningService {
 				.run();
 		}
 
-		// Update KV cache (both by ID and by slug)
-		const cachedConfig = await this.cache.get(`project:${projectId}`);
-		if (cachedConfig) {
-			const config: ProjectConfig = JSON.parse(cachedConfig);
-			config.content_bucket_name = resourceNames.r2Content;
-			config.updated_at = new Date().toISOString();
-			await this.cache.put(`project:${projectId}`, JSON.stringify(config));
-			await this.cache.put(`config:${config.slug}`, JSON.stringify(config));
+		// Update KV cache via cache service
+		const updated = await this.cacheService.updateProjectConfig(projectId, {
+			content_bucket_name: resourceNames.r2Content,
+		});
+
+		if (!updated) {
+			// Cache miss - rebuild and write full config
+			const projectRecord = await this.db
+				.prepare("SELECT * FROM projects WHERE id = ?")
+				.bind(projectId)
+				.first<{ id: string; org_id: string; slug: string; owner_username: string | null }>();
+
+			if (projectRecord) {
+				const workerResource = await this.db
+					.prepare(
+						"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'worker'",
+					)
+					.bind(projectId)
+					.first<{ provider_id: string }>();
+
+				const d1ResourceRecord = await this.db
+					.prepare(
+						"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1'",
+					)
+					.bind(projectId)
+					.first<{ provider_id: string }>();
+
+				const projectConfig: ProjectConfig = {
+					project_id: projectId,
+					org_id: projectRecord.org_id,
+					slug: projectRecord.slug,
+					worker_name: workerResource?.provider_id || "",
+					d1_database_id: d1ResourceRecord?.provider_id || "",
+					content_bucket_name: resourceNames.r2Content,
+					owner_username: projectRecord.owner_username,
+					status: "active",
+					updated_at: new Date().toISOString(),
+				};
+				await this.cacheService.setProjectConfig(projectConfig);
+			}
 		}
 
 		return r2Resource;
@@ -538,27 +564,61 @@ export class ProvisioningService {
 		projectId: string,
 		limits?: { requests_per_minute?: number },
 	): Promise<void> {
-		// Get current config from KV cache
-		const cachedConfig = await this.cache.get(`project:${projectId}`);
-		if (!cachedConfig) {
-			throw new Error(`Project ${projectId} not found in cache`);
+		if (!limits) {
+			return;
 		}
 
-		const config: ProjectConfig = JSON.parse(cachedConfig);
+		let existingConfig = await this.cacheService.getProjectConfig(projectId);
 
-		// Merge new limits into config
-		if (limits) {
-			config.limits = {
-				...config.limits,
-				...limits,
+		if (!existingConfig) {
+			const project = await this.db
+				.prepare("SELECT * FROM projects WHERE id = ? AND status != 'deleted'")
+				.bind(projectId)
+				.first<{
+					id: string;
+					org_id: string;
+					slug: string;
+					owner_username: string | null;
+					content_bucket_enabled: number;
+				}>();
+
+			if (!project) {
+				throw new Error(`Project ${projectId} not found`);
+			}
+
+			const workerResource = await this.db
+				.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'worker'")
+				.bind(projectId)
+				.first<{ provider_id: string }>();
+
+			const d1Resource = await this.db
+				.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1'")
+				.bind(projectId)
+				.first<{ provider_id: string }>();
+
+			const r2Resource = project.content_bucket_enabled
+				? await this.db
+						.prepare(
+							"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'r2_content'",
+						)
+						.bind(projectId)
+						.first<{ provider_id: string }>()
+				: null;
+
+			existingConfig = {
+				project_id: projectId,
+				org_id: project.org_id,
+				slug: project.slug,
+				worker_name: workerResource?.provider_id || "",
+				d1_database_id: d1Resource?.provider_id || "",
+				content_bucket_name: r2Resource?.provider_id || null,
+				owner_username: project.owner_username,
+				status: "active",
+				updated_at: new Date().toISOString(),
 			};
 		}
 
-		// Update timestamp
-		config.updated_at = new Date().toISOString();
-
-		// Write back to KV cache (both by ID and by slug)
-		await this.cache.put(`project:${projectId}`, JSON.stringify(config));
-		await this.cache.put(`config:${config.slug}`, JSON.stringify(config));
+		const mergedLimits = { ...existingConfig.limits, ...limits };
+		await this.cacheService.updateProjectConfig(projectId, { limits: mergedLimits });
 	}
 }
