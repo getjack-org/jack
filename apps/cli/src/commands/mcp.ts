@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
+import { rm, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { error, info, success } from "../lib/output.ts";
 import { startMcpServer } from "../mcp/server.ts";
+
+const cliRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 interface McpOptions {
 	project?: string;
@@ -32,10 +38,19 @@ export default async function mcp(subcommand?: string, options: McpOptions = {})
  * Test MCP server by spawning it and sending test requests
  */
 async function testMcpServer(): Promise<void> {
+	const configDir = await mkdtemp(join(tmpdir(), "jack-config-"));
+
 	info("Testing MCP server...\n");
 
-	const proc = spawn("./src/index.ts", ["mcp", "serve"], {
+	const proc = spawn("bun", ["run", "src/index.ts", "mcp", "serve"], {
 		stdio: ["pipe", "pipe", "pipe"],
+		cwd: cliRoot,
+		env: {
+			...process.env,
+			CI: "1",
+			JACK_TELEMETRY_DISABLED: "1",
+			JACK_CONFIG_DIR: configDir,
+		},
 	});
 
 	const results: { test: string; passed: boolean; error?: string }[] = [];
@@ -126,6 +141,7 @@ async function testMcpServer(): Promise<void> {
 		error(`   ✗ Error: ${errorMsg}`);
 	} finally {
 		proc.kill();
+		await rm(configDir, { recursive: true, force: true });
 	}
 
 	// Summary

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { CONFIG_DIR } from "./config.ts";
 
 /**
  * Telemetry configuration structure
@@ -12,8 +12,8 @@ export interface TelemetryConfig {
 	version: number; // config schema version (start at 1)
 }
 
-export const TELEMETRY_CONFIG_DIR = join(homedir(), ".config", "jack");
-export const TELEMETRY_CONFIG_PATH = join(TELEMETRY_CONFIG_DIR, "telemetry.json");
+export const TELEMETRY_CONFIG_DIR = CONFIG_DIR;
+export const TELEMETRY_CONFIG_PATH = join(CONFIG_DIR, "telemetry.json");
 
 /**
  * Cached telemetry config for memoization

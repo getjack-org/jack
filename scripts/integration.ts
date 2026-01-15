@@ -11,6 +11,11 @@ import { fileURLToPath } from "node:url";
 // Flags: --cleanup, --no-log, --keep-registry
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+	callMcpGetProjectStatus,
+	callMcpListProjects,
+	verifyMcpToolsAndResources,
+} from "../apps/cli/src/mcp/test-utils.ts";
 
 type Step = {
 	name: string;
@@ -313,33 +318,14 @@ async function connectMcp(expectedDeployed: boolean | null): Promise<void> {
 
 	try {
 		await client.connect(transport);
-		const tools = await client.listTools();
-		if (!tools.tools?.length) {
-			throw new Error("MCP server reported no tools");
-		}
+		await verifyMcpToolsAndResources(client);
 
-		const resources = await client.listResources();
-		if (!resources.resources?.length) {
-			throw new Error("MCP server reported no resources");
-		}
-
-		await client.readResource({ uri: "agents://context" });
-
-		const listResult = await client.callTool({
-			name: "list_projects",
-			arguments: { filter: "local" },
-		});
-		const listData = parseMcpToolResult(listResult);
-
-		if (!Array.isArray(listData) || !listData.some((proj) => proj?.name === projectName)) {
+		const listData = await callMcpListProjects(client, "local");
+		if (!listData.some((proj) => (proj as { name?: string })?.name === projectName)) {
 			throw new Error("MCP list_projects did not include the test project");
 		}
 
-		const statusResult = await client.callTool({
-			name: "get_project_status",
-			arguments: { name: projectName },
-		});
-		const statusData = parseMcpToolResult(statusResult) as {
+		const statusData = (await callMcpGetProjectStatus(client, { name: projectName })) as {
 			deployed?: boolean;
 			local?: boolean;
 			name?: string;
@@ -355,7 +341,7 @@ async function connectMcp(expectedDeployed: boolean | null): Promise<void> {
 			throw new Error("MCP get_project_status expected local=true");
 		}
 
-		console.log(`MCP OK: tools=${tools.tools.length} resources=${resources.resources.length}`);
+		console.log("MCP OK");
 	} catch (error) {
 		if (stderrBuffer.trim()) {
 			console.error("\nMCP server stderr:");

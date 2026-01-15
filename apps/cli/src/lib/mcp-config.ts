@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { platform } from "node:os";
 import { dirname, join } from "node:path";
+import { CONFIG_DIR } from "./config.ts";
 
 /**
  * MCP server configuration structure
@@ -44,7 +45,7 @@ export const APP_MCP_CONFIGS: Record<string, AppMcpConfig> = {
 /**
  * Jack MCP configuration storage path
  */
-const JACK_MCP_CONFIG_DIR = join(homedir(), ".config", "jack", "mcp");
+const JACK_MCP_CONFIG_DIR = join(CONFIG_DIR, "mcp");
 const JACK_MCP_CONFIG_PATH = join(JACK_MCP_CONFIG_DIR, "config.json");
 
 /**
