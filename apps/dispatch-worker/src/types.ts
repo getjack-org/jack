@@ -1,6 +1,7 @@
 export interface Bindings {
 	PROJECTS_CACHE: KVNamespace;
 	TENANT_DISPATCH: DispatchNamespace;
+	USAGE: AnalyticsEngineDataset;
 }
 
 export type ProjectStatus = "provisioning" | "active" | "error" | "deleted";

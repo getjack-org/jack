@@ -16,3 +16,9 @@ id = "1745e7c2b059484c81d39c694201d061"
 [[dispatch_namespaces]]
 binding = "TENANT_DISPATCH"
 namespace = "jack-tenants"
+
+# Analytics Engine for usage metering
+# Writes data points per request for billing and analytics dashboard
+[[analytics_engine_datasets]]
+binding = "USAGE"
+dataset = "jack_usage"

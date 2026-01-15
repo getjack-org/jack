@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { RateLimiter } from "./rate-limiter";
+import { createUsageDataPoint } from "./metering";
 import type { Bindings, ProjectConfig } from "./types";
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -51,7 +52,9 @@ function parseHostname(host: string): { username: string | null; slug: string } 
 }
 
 app.all("/*", async (c) => {
+	const startTime = Date.now();
 	const env = c.env;
+	const ctx = c.executionCtx;
 	const host = c.req.header("host");
 
 	if (!host) {
@@ -131,6 +134,22 @@ app.all("/*", async (c) => {
 		const worker = env.TENANT_DISPATCH.get(config.worker_name);
 		const response = await worker.fetch(c.req.raw);
 
+		// Write usage data point (fire-and-forget, 0ms latency impact)
+		ctx.waitUntil(
+			Promise.resolve().then(() => {
+				env.USAGE.writeDataPoint(
+					createUsageDataPoint({
+						projectId: config.project_id,
+						orgId: config.org_id,
+						tier: "free", // TODO: Get from config when tiers are implemented
+						request: c.req.raw,
+						response,
+						startTime,
+					}),
+				);
+			}),
+		);
+
 		// Clone response to add rate limit headers
 		const headers = new Headers(response.headers);
 		headers.set("X-RateLimit-Limit", limit.toString());
@@ -143,6 +162,22 @@ app.all("/*", async (c) => {
 			headers,
 		});
 	} catch (error) {
+		// Track errors in analytics too
+		ctx.waitUntil(
+			Promise.resolve().then(() => {
+				env.USAGE.writeDataPoint(
+					createUsageDataPoint({
+						projectId: config.project_id,
+						orgId: config.org_id,
+						tier: "free",
+						request: c.req.raw,
+						response: new Response(null, { status: 503 }),
+						startTime,
+					}),
+				);
+			}),
+		);
+
 		console.error("Worker fetch failed:", error);
 		return c.json({ error: "Service temporarily unavailable" }, 503);
 	}
