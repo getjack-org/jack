@@ -297,9 +297,28 @@ export function detectProjectType(projectPath: string): DetectionResult {
 	if (viteConfig && hasDep(pkg, "vite")) {
 		configFiles.push(viteConfig);
 		detectedDeps.push("vite");
+
+		// Check for Vite + Worker hybrid pattern
+		// This is indicated by @cloudflare/vite-plugin AND a worker entry file
+		const hasCloudflarePlugin = hasDep(pkg, "@cloudflare/vite-plugin");
+		let workerEntry: string | null = null;
+
+		if (hasCloudflarePlugin) {
+			detectedDeps.push("@cloudflare/vite-plugin");
+			// Check common worker entry locations
+			const workerCandidates = ["src/worker.ts", "src/worker.js", "worker.ts", "worker.js"];
+			for (const candidate of workerCandidates) {
+				if (existsSync(join(projectPath, candidate))) {
+					workerEntry = candidate;
+					break;
+				}
+			}
+		}
+
 		return {
 			type: "vite",
 			configFile: viteConfig,
+			entryPoint: workerEntry || undefined,
 			detectedDeps,
 			configFiles,
 		};

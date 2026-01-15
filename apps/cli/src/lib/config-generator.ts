@@ -33,6 +33,19 @@ export function generateWranglerConfig(
 			};
 
 		case "vite":
+			// Check if this is a Vite + Worker hybrid (has entryPoint)
+			if (entryPoint) {
+				// Hybrid mode: Vite frontend + custom Worker backend
+				return {
+					name: projectName,
+					main: entryPoint,
+					compatibility_date: COMPATIBILITY_DATE,
+					assets: {
+						directory: "./dist",
+						binding: "ASSETS",
+					},
+				};
+			}
 			// Pure Vite SPAs use assets-only mode (no worker entry)
 			// Cloudflare auto-generates a worker that serves static files
 			return {
