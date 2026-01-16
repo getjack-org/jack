@@ -105,8 +105,12 @@ jack ship
 
 After deploy, jack will:
 1. Copy the URL to your clipboard
-2. Offer to generate a Farcaster manifest
-3. Link to the Farcaster preview tool
+2. Open the Farcaster manifest signing tool
+3. Prompt you to paste the signed `accountAssociation` JSON into `public/.well-known/farcaster.json`
+4. Link to the Farcaster preview tool
+
+The manifest file lives at `public/.well-known/farcaster.json` and is served as a static asset at
+`/.well-known/farcaster.json` after deploy. Use the `miniapp` key (not `frame`).
 
 ## Development
 

@@ -110,6 +110,20 @@ name = "jack-template"           → name = "my-app"
 
 Templates can define hooks in `.jack.json` that run at specific lifecycle points.
 
+### Hook Schema (Quick Reference)
+
+| Action | Required Fields | Non-Interactive Behavior |
+|--------|------------------|--------------------------|
+| `message` | `text` | Prints message |
+| `box` | `title`, `lines` | Prints box |
+| `url` | `url` | Prints label + URL |
+| `clipboard` | `text` | Prints text |
+| `pause` | _(none)_ | Skipped |
+| `require` | `source`, `key` | Validates, prints setup if provided |
+| `shell` | `command` | Runs with stdin ignored |
+| `prompt` | `message` | Skipped (supports `validate: "json" | "accountAssociation"`) |
+| `writeJson` | `path`, `set` | Runs (safe in CI) |
+
 ### Hook Lifecycle
 
 ```json
@@ -132,6 +146,8 @@ Templates can define hooks in `.jack.json` that run at specific lifecycle points
 | `shell` | Execute shell command | `{"action": "shell", "command": "curl {{url}}/health"}` |
 | `pause` | Wait for Enter key | `{"action": "pause", "message": "Press Enter..."}` |
 | `require` | Verify secret or env | `{"action": "require", "source": "secret", "key": "API_KEY"}` |
+| `prompt` | Prompt for input and update JSON file | `{"action": "prompt", "message": "Paste JSON", "validate": "json", "successMessage": "Saved", "writeJson": {"path": "public/data.json", "set": {"data": {"from": "input"}}}}` |
+| `writeJson` | Update JSON file with template vars | `{"action": "writeJson", "path": "public/data.json", "set": {"siteUrl": "{{url}}"}}` |
 
 ### Non-Interactive Mode
 
@@ -141,7 +157,9 @@ Hooks run in a non-interactive mode for MCP/silent execution. In this mode:
 - `clipboard` prints the text (no clipboard access)
 - `pause` is skipped
 - `require` still validates; if `setupUrl` exists it prints `Setup: ...`
+- `prompt` is skipped
 - `shell` runs with stdin ignored to avoid hangs
+- `writeJson` still runs (non-interactive safe)
 
 ### Hook Variables
 
@@ -178,7 +196,9 @@ These variables are substituted at runtime (different from template placeholders
     "postDeploy": [
       {"action": "clipboard", "text": "{{url}}"},
       {"action": "box", "title": "Deployed: {{name}}", "lines": ["URL: {{url}}"]},
-      {"action": "url", "url": "https://farcaster.xyz/.../manifest?domain={{domain}}", "label": "Generate manifest"},
+      {"action": "url", "url": "https://farcaster.xyz/.../manifest?domain={{domain}}", "label": "Sign manifest"},
+      {"action": "writeJson", "path": "public/.well-known/farcaster.json", "set": {"miniapp.homeUrl": "{{url}}"}},
+      {"action": "prompt", "message": "Paste accountAssociation JSON", "validate": "accountAssociation", "successMessage": "Saved domain association", "writeJson": {"path": "public/.well-known/farcaster.json", "set": {"accountAssociation": {"from": "input"}}}},
       {"action": "url", "url": "https://farcaster.xyz/.../preview?url={{url}}", "label": "Preview"}
     ]
   }

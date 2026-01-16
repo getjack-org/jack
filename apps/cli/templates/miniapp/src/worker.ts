@@ -13,6 +13,13 @@ type Env = {
 	APP_URL?: string; // Production URL for share embeds (e.g., https://my-app.workers.dev)
 };
 
+function isIpAddress(hostname: string): boolean {
+	if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+		return true;
+	}
+	return hostname.includes(":");
+}
+
 // Get production base URL - required for valid Farcaster embeds
 // Farcaster requires absolute https:// URLs (no localhost, no relative paths)
 // See: https://miniapps.farcaster.xyz/docs/embeds
@@ -23,8 +30,13 @@ function getBaseUrl(
 	// 1. Prefer explicit APP_URL if set (most reliable for custom domains)
 	if (env.APP_URL && env.APP_URL.trim() !== "") {
 		const url = env.APP_URL.replace(/\/$/, "");
-		if (url.startsWith("https://")) {
-			return url;
+		try {
+			const parsed = new URL(url);
+			if (parsed.protocol === "https:" && !isIpAddress(parsed.hostname)) {
+				return parsed.origin;
+			}
+		} catch {
+			// Ignore parse errors
 		}
 		// If APP_URL is set but not https, warn and continue
 		console.warn(`APP_URL should be https, got: ${url}`);
@@ -33,8 +45,19 @@ function getBaseUrl(
 	// 2. Use Host header (always set by Cloudflare in production)
 	const host = c.req.header("host");
 	if (host) {
-		// Reject localhost - embeds won't work in local dev
-		if (host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
+		let hostname = host;
+		try {
+			hostname = new URL(`https://${host}`).hostname;
+		} catch {
+			// Ignore parse errors and fall back to raw host
+		}
+
+		// Reject localhost or IPs - embeds won't work in local dev or IP domains
+		if (
+			hostname === "localhost" ||
+			hostname === "127.0.0.1" ||
+			isIpAddress(hostname)
+		) {
 			return null; // Signal that we can't generate valid embed URLs
 		}
 
