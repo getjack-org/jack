@@ -26,6 +26,7 @@ export const output = {
 	warn,
 	item,
 	box,
+	celebrate,
 };
 
 /**
@@ -94,25 +95,75 @@ export function item(message: string): void {
 	console.error(`  ${message}`);
 }
 
+// Random neon purple for cyberpunk styling
+function getRandomPurple(): string {
+	const purples = [177, 165, 141, 129];
+	const colorCode = purples[Math.floor(Math.random() * purples.length)];
+	return `\x1b[38;5;${colorCode}m`;
+}
+
 /**
- * Print a boxed message for important info
+ * Print a boxed message for important info (cyberpunk style)
  */
 export function box(title: string, lines: string[]): void {
 	const maxLen = Math.max(title.length, ...lines.map((l) => l.length));
-	const width = maxLen + 4;
-	const border = isColorEnabled ? "\x1b[90m" : "";
+	const innerWidth = maxLen + 4;
+
+	const purple = isColorEnabled ? getRandomPurple() : "";
+	const bold = isColorEnabled ? "\x1b[1m" : "";
 	const reset = isColorEnabled ? "\x1b[0m" : "";
-	const titleColor = isColorEnabled ? "\x1b[1m" : "";
+
+	const bar = "═".repeat(innerWidth);
+	const fill = "▓".repeat(innerWidth);
+	const gradient = "░".repeat(innerWidth);
+
+	const pad = (text: string) => `  ${text.padEnd(maxLen)}  `;
 
 	console.error("");
-	console.error(`${border}┌${"─".repeat(width)}┐${reset}`);
-	console.error(
-		`${border}│${reset}  ${titleColor}${title.padEnd(maxLen)}${reset}  ${border}│${reset}`,
-	);
-	console.error(`${border}├${"─".repeat(width)}┤${reset}`);
+	console.error(`  ${purple}╔${bar}╗${reset}`);
+	console.error(`  ${purple}║${fill}║${reset}`);
+	console.error(`  ${purple}║${pad(bold + title + reset + purple)}║${reset}`);
+	console.error(`  ${purple}║${"─".repeat(innerWidth)}║${reset}`);
 	for (const line of lines) {
-		console.error(`${border}│${reset}  ${line.padEnd(maxLen)}  ${border}│${reset}`);
+		console.error(`  ${purple}║${pad(line)}║${reset}`);
 	}
-	console.error(`${border}└${"─".repeat(width)}┘${reset}`);
+	console.error(`  ${purple}║${gradient}║${reset}`);
+	console.error(`  ${purple}╚${bar}╝${reset}`);
+	console.error("");
+}
+
+/**
+ * Print a celebration box (for final success after setup)
+ */
+export function celebrate(title: string, lines: string[]): void {
+	const maxLen = Math.max(title.length, ...lines.map((l) => l.length));
+	const innerWidth = maxLen + 4;
+
+	const purple = isColorEnabled ? getRandomPurple() : "";
+	const bold = isColorEnabled ? "\x1b[1m" : "";
+	const reset = isColorEnabled ? "\x1b[0m" : "";
+
+	const bar = "═".repeat(innerWidth);
+	const fill = "▓".repeat(innerWidth);
+	const gradient = "░".repeat(innerWidth);
+	const space = " ".repeat(innerWidth);
+
+	const center = (text: string) => {
+		const left = Math.floor((innerWidth - text.length) / 2);
+		return " ".repeat(left) + text + " ".repeat(innerWidth - text.length - left);
+	};
+
+	console.error("");
+	console.error(`  ${purple}╔${bar}╗${reset}`);
+	console.error(`  ${purple}║${fill}║${reset}`);
+	console.error(`  ${purple}║${space}║${reset}`);
+	console.error(`  ${purple}║${center(bold + title + reset + purple)}║${reset}`);
+	console.error(`  ${purple}║${space}║${reset}`);
+	for (const line of lines) {
+		console.error(`  ${purple}║${center(line)}║${reset}`);
+	}
+	console.error(`  ${purple}║${space}║${reset}`);
+	console.error(`  ${purple}║${gradient}║${reset}`);
+	console.error(`  ${purple}╚${bar}╝${reset}`);
 	console.error("");
 }

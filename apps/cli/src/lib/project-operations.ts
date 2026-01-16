@@ -939,11 +939,11 @@ export async function createProject(
 	// Run pre-deploy hooks
 	if (template.hooks?.preDeploy?.length) {
 		const hookContext = { projectName, projectDir: targetDir };
-		const passed = await runHook(template.hooks.preDeploy, hookContext, {
+		const hookResult = await runHook(template.hooks.preDeploy, hookContext, {
 			interactive,
 			output: reporter,
 		});
-		if (!passed) {
+		if (!hookResult.success) {
 			reporter.error("Pre-deploy checks failed");
 			throw new JackError(JackErrorCode.VALIDATION_ERROR, "Pre-deploy checks failed", undefined, {
 				exitCode: 0,
@@ -1145,7 +1145,7 @@ export async function createProject(
 	// Run post-deploy hooks (for both modes)
 	if (template.hooks?.postDeploy?.length && workerUrl) {
 		const domain = workerUrl.replace(/^https?:\/\//, "");
-		await runHook(
+		const hookResult = await runHook(
 			template.hooks.postDeploy,
 			{
 				domain,
@@ -1155,6 +1155,11 @@ export async function createProject(
 			},
 			{ interactive, output: reporter },
 		);
+
+		// Show final celebration if there were interactive prompts (URL might have scrolled away)
+		if (hookResult.hadInteractiveActions && reporter.celebrate) {
+			reporter.celebrate("You're live!", [domain]);
+		}
 	}
 
 	return {

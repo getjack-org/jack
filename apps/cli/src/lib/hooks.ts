@@ -18,6 +18,7 @@ export interface HookOutput {
 	error(message: string): void;
 	success(message: string): void;
 	box(title: string, lines: string[]): void;
+	celebrate?(title: string, lines: string[]): void;
 }
 
 export interface HookOptions {
@@ -465,20 +466,34 @@ async function executeAction(
 	return handler(action, context, options ?? {});
 }
 
+export interface HookResult {
+	success: boolean;
+	hadInteractiveActions: boolean;
+}
+
 /**
  * Run a list of hook actions
- * Returns true if all succeeded, false if any failed (for preDeploy checks)
+ * Returns success status and whether any interactive actions were executed
  */
 export async function runHook(
 	actions: HookAction[],
 	context: HookContext,
 	options?: HookOptions,
-): Promise<boolean> {
+): Promise<HookResult> {
+	const interactive = options?.interactive !== false;
+	// Track if we had any interactive actions (prompt, pause) that ran
+	const interactiveActionTypes = ["prompt", "pause"];
+	let hadInteractiveActions = false;
+
 	for (const action of actions) {
+		// Check if this is an interactive action that will actually run
+		if (interactive && interactiveActionTypes.includes(action.action)) {
+			hadInteractiveActions = true;
+		}
 		const shouldContinue = await executeAction(action, context, options);
 		if (!shouldContinue) {
-			return false;
+			return { success: false, hadInteractiveActions };
 		}
 	}
-	return true;
+	return { success: true, hadInteractiveActions };
 }
