@@ -33,11 +33,7 @@ export default async function login(options: LoginOptions = {}): Promise<void> {
 	}
 
 	console.error("");
-	console.error("  ┌────────────────────────────────────┐");
-	console.error("  │                                    │");
-	console.error(`  │    Your code:  ${deviceAuth.user_code.padEnd(12)}      │`);
-	console.error("  │                                    │");
-	console.error("  └────────────────────────────────────┘");
+	renderCodeBox(deviceAuth.user_code);
 	console.error("");
 	info(`Opening ${deviceAuth.verification_uri} in your browser...`);
 	console.error("");
@@ -78,7 +74,8 @@ export default async function login(options: LoginOptions = {}): Promise<void> {
 				await identifyUser(tokens.user.id, { email: tokens.user.email });
 
 				console.error("");
-				success(`Logged in as ${tokens.user.email}`);
+				const displayName = tokens.user.first_name || "Logged in";
+				success(tokens.user.first_name ? `Welcome back, ${displayName}` : displayName);
 
 				// Prompt for username if not set
 				await promptForUsername(tokens.user.email);
@@ -212,4 +209,37 @@ function normalizeToUsername(input: string): string {
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 39);
+}
+
+function renderCodeBox(code: string): void {
+	const label = "Your code:";
+	const padding = 4;
+	const innerWidth = Math.max(label.length, code.length) + padding * 2;
+
+	const bar = "═".repeat(innerWidth);
+	const fill = "▓".repeat(innerWidth);
+	const gradient = "░".repeat(innerWidth);
+	const space = " ".repeat(innerWidth);
+
+	const center = (text: string) => {
+		const left = Math.floor((innerWidth - text.length) / 2);
+		return " ".repeat(left) + text + " ".repeat(innerWidth - text.length - left);
+	};
+
+	// Random neon purple color
+	const isColorEnabled = !process.env.NO_COLOR && process.stderr.isTTY !== false;
+	const purples = [177, 165, 141, 129];
+	const colorCode = purples[Math.floor(Math.random() * purples.length)];
+	const purple = isColorEnabled ? `\x1b[38;5;${colorCode}m` : "";
+	const reset = isColorEnabled ? "\x1b[0m" : "";
+
+	console.error(`  ${purple}╔${bar}╗${reset}`);
+	console.error(`  ${purple}║${fill}║${reset}`);
+	console.error(`  ${purple}║${space}║${reset}`);
+	console.error(`  ${purple}║${center(label)}║${reset}`);
+	console.error(`  ${purple}║${space}║${reset}`);
+	console.error(`  ${purple}║${center(code)}║${reset}`);
+	console.error(`  ${purple}║${space}║${reset}`);
+	console.error(`  ${purple}║${gradient}║${reset}`);
+	console.error(`  ${purple}╚${bar}╝${reset}`);
 }
