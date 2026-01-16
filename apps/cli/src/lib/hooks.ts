@@ -384,8 +384,14 @@ const actionHandlers: {
 			try {
 				parsedInput = JSON.parse(rawValue);
 			} catch {
-				ui.error("Invalid JSON input");
-				return action.required ? false : true;
+				// Try normalizing whitespace (handles some multi-line paste issues)
+				try {
+					const normalized = rawValue.replace(/\n\s*/g, "");
+					parsedInput = JSON.parse(normalized);
+				} catch {
+					ui.error("Invalid JSON input");
+					return action.required ? false : true;
+				}
 			}
 		}
 
