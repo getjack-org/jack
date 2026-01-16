@@ -18,11 +18,7 @@ import {
 	sortByUpdated,
 	toListItems,
 } from "../lib/project-list.ts";
-import {
-	cleanupStaleProjects,
-	getProjectStatus,
-	scanStaleProjects,
-} from "../lib/project-operations.ts";
+import { cleanupStaleProjects, scanStaleProjects } from "../lib/project-operations.ts";
 import {
 	type ResolvedProject,
 	listAllProjects,
@@ -247,6 +243,7 @@ function renderFlatTable(items: ProjectListItem[]): void {
  * Show detailed project info
  */
 async function infoProject(args: string[]): Promise<void> {
+	const hasExplicitName = Boolean(args[0]);
 	let name = args[0];
 
 	// If no name provided, try to get from cwd
@@ -261,80 +258,82 @@ async function infoProject(args: string[]): Promise<void> {
 		}
 	}
 
-	// Check actual status (with spinner for API calls)
+	// Resolve project using the same pattern as down.ts
 	outputSpinner.start("Fetching project info...");
-	const status = await getProjectStatus(name);
+	const resolved = await resolveProject(name, {
+		preferLocalLink: !hasExplicitName,
+		includeResources: true,
+	});
 	outputSpinner.stop();
 
-	if (!status) {
-		error(`Project "${name}" not found in registry`);
+	// Guard against mismatched resolutions when an explicit name is provided
+	if (hasExplicitName && resolved) {
+		const matches =
+			name === resolved.slug || name === resolved.name || name === resolved.remote?.projectId;
+		if (!matches) {
+			error(`Project '${name}' resolves to '${resolved.slug}'.`);
+			info("Use the exact slug/name and try again.");
+			process.exit(1);
+		}
+	}
+
+	if (!resolved) {
+		error(`Project "${name}" not found`);
 		info("List projects with: jack projects list");
 		process.exit(1);
 	}
 
 	console.error("");
-	info(`Project: ${status.name}`);
+	info(`Project: ${resolved.name}`);
 	console.error("");
 
 	// Status section
 	const statuses: string[] = [];
-	if (status.local) {
+	if (resolved.sources.filesystem) {
 		statuses.push("local");
 	}
-	if (status.deployed) {
+	if (resolved.status === "live") {
 		statuses.push("deployed");
-	}
-	if (status.backedUp) {
-		statuses.push("backup");
 	}
 
 	item(`Status: ${statuses.join(", ") || "none"}`);
 	console.error("");
 
 	// Workspace info (only shown if running from project directory)
-	if (status.localPath) {
-		item(`Workspace path: ${status.localPath}`);
+	if (resolved.localPath) {
+		item(`Workspace path: ${resolved.localPath}`);
 		console.error("");
 	}
 
 	// Deployment info
-	if (status.workerUrl) {
-		item(`Worker URL: ${status.workerUrl}`);
+	if (resolved.url) {
+		item(`Worker URL: ${resolved.url}`);
 	}
-	if (status.lastDeployed) {
-		item(`Last deployed: ${new Date(status.lastDeployed).toLocaleString()}`);
+	if (resolved.updatedAt) {
+		item(`Last deployed: ${new Date(resolved.updatedAt).toLocaleString()}`);
 	}
-	if (status.deployed) {
-		console.error("");
-	}
-
-	// Backup info
-	if (status.backedUp && status.backupFiles !== null) {
-		item(`Backup: ${status.backupFiles} files`);
-		if (status.backupLastSync) {
-			item(`Last synced: ${new Date(status.backupLastSync).toLocaleString()}`);
-		}
+	if (resolved.status === "live") {
 		console.error("");
 	}
 
 	// Account info
-	if (status.accountId) {
-		item(`Account ID: ${status.accountId}`);
+	if (resolved.remote?.orgId) {
+		item(`Account ID: ${resolved.remote.orgId}`);
 	}
-	if (status.workerId) {
-		item(`Worker ID: ${status.workerId}`);
+	if (resolved.slug) {
+		item(`Worker ID: ${resolved.slug}`);
 	}
 	console.error("");
 
 	// Resources
-	if (status.dbName) {
-		item(`Database: ${status.dbName}`);
+	if (resolved.resources?.d1?.name) {
+		item(`Database: ${resolved.resources.d1.name}`);
 		console.error("");
 	}
 
 	// Timestamps
-	if (status.createdAt) {
-		item(`Created: ${new Date(status.createdAt).toLocaleString()}`);
+	if (resolved.createdAt) {
+		item(`Created: ${new Date(resolved.createdAt).toLocaleString()}`);
 	}
 	console.error("");
 }
