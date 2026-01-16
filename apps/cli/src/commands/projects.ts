@@ -100,7 +100,7 @@ async function listProjects(args: string[]): Promise<void> {
 	const cloudOnly = args.includes("--cloud");
 
 	// Fetch all projects from registry and control plane
-	outputSpinner.start("Checking project status...");
+	outputSpinner.start("Loading projects...");
 	const projects: ResolvedProject[] = await listAllProjects();
 	outputSpinner.stop();
 
@@ -410,7 +410,7 @@ async function removeProjectEntry(args: string[]): Promise<void> {
 	}
 
 	// Use resolver to find project anywhere (registry OR control plane)
-	outputSpinner.start("Checking project status...");
+	outputSpinner.start("Finding project...");
 	const project = await resolveProject(name);
 	outputSpinner.stop();
 
