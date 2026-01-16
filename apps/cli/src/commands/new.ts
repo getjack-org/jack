@@ -59,6 +59,7 @@ export default async function newProject(
 				error: output.error,
 				success: output.success,
 				box: output.box,
+				celebrate: output.celebrate,
 			},
 			interactive: !isCi,
 			managed: options.managed,
