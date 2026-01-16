@@ -150,6 +150,7 @@ async function listProjects(args: string[]): Promise<void> {
 function renderGroupedView(items: ProjectListItem[]): void {
 	const groups = groupProjects(items);
 	const total = items.length;
+	const CLOUD_LIMIT = 5;
 
 	// Build consistent tag color map across all projects
 	const tagColorMap = buildTagColorMap(items);
@@ -174,7 +175,6 @@ function renderGroupedView(items: ProjectListItem[]): void {
 
 	// Section 3: Cloud-only (show last N by updatedAt)
 	if (groups.cloudOnly.length > 0) {
-		const CLOUD_LIMIT = 5;
 		const sorted = sortByUpdated(groups.cloudOnly);
 
 		console.error("");
@@ -187,9 +187,14 @@ function renderGroupedView(items: ProjectListItem[]): void {
 		);
 	}
 
-	// Footer hint
+	// Footer hint - only show --all hint if there are hidden cloud projects
 	console.error("");
-	info("jack ls --all for full list, --status error to filter");
+	const hasHiddenCloudProjects = groups.cloudOnly.length > CLOUD_LIMIT;
+	if (hasHiddenCloudProjects) {
+		info(`jack ls --all to see all ${groups.cloudOnly.length} cloud projects`);
+	} else {
+		info("jack ls --status error to filter, --json for machine output");
+	}
 	console.error("");
 }
 
