@@ -10,6 +10,7 @@ export function setJsonPath(
 
 	for (let i = 0; i < keys.length - 1; i++) {
 		const key = keys[i];
+		if (key === undefined) continue;
 		const next = current[key];
 		if (!next || typeof next !== "object" || Array.isArray(next)) {
 			current[key] = {};
