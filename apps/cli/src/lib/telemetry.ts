@@ -147,6 +147,35 @@ export async function identify(properties: Partial<UserProperties>): Promise<voi
 	}
 }
 
+/**
+ * Link a logged-in user to their pre-login anonymous events.
+ * This should be called after successful authentication.
+ *
+ * @param userId - The WorkOS user ID (user.id)
+ * @param properties - Optional user properties like email
+ */
+export async function identifyUser(userId: string, properties?: { email?: string }): Promise<void> {
+	if (!(await isEnabled())) return;
+
+	try {
+		const anonymousId = await getAnonymousId();
+
+		// Identify with real user ID
+		send(`${TELEMETRY_PROXY}/identify`, {
+			distinctId: userId,
+			properties: { ...properties, ...userProps },
+		});
+
+		// Alias to merge pre-login anonymous events with identified user
+		send(`${TELEMETRY_PROXY}/alias`, {
+			distinctId: userId,
+			alias: anonymousId,
+		});
+	} catch {
+		// Silent
+	}
+}
+
 // ============================================
 // TRACK
 // ============================================

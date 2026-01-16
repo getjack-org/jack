@@ -11,6 +11,11 @@ export interface IdentifyEvent {
 	setOnce?: Record<string, unknown>;
 }
 
+export interface AliasEvent {
+	distinctId: string;
+	alias: string;
+}
+
 export interface Bindings {
 	POSTHOG_API_KEY: string;
 	RATE_LIMIT: KVNamespace;

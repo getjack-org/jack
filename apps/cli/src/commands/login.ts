@@ -7,6 +7,7 @@ import {
 	setUsername,
 } from "../lib/control-plane.ts";
 import { error, info, spinner, success, warn } from "../lib/output.ts";
+import { identifyUser } from "../lib/telemetry.ts";
 
 interface LoginOptions {
 	/** Skip the initial "Logging in..." message (used when called from auto-login) */
@@ -72,6 +73,9 @@ export default async function login(options: LoginOptions = {}): Promise<void> {
 					user: tokens.user,
 				};
 				await saveCredentials(creds);
+
+				// Link user identity for cross-platform analytics
+				await identifyUser(tokens.user.id, { email: tokens.user.email });
 
 				console.error("");
 				success(`Logged in as ${tokens.user.email}`);

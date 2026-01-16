@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { Bindings, IdentifyEvent, TelemetryEvent } from "./types.ts";
+import type { AliasEvent, Bindings, IdentifyEvent, TelemetryEvent } from "./types.ts";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -36,6 +36,12 @@ function isValidIdentify(payload: unknown): payload is IdentifyEvent {
 	if (!payload || typeof payload !== "object") return false;
 	const p = payload as Record<string, unknown>;
 	return typeof p.distinctId === "string" && typeof p.properties === "object";
+}
+
+function isValidAlias(payload: unknown): payload is AliasEvent {
+	if (!payload || typeof payload !== "object") return false;
+	const p = payload as Record<string, unknown>;
+	return typeof p.distinctId === "string" && typeof p.alias === "string";
 }
 
 // Track event endpoint
@@ -117,6 +123,45 @@ app.post("/identify", async (c) => {
 				},
 				$set: payload.properties,
 				...(payload.setOnce && { $set_once: payload.setOnce }),
+			}),
+		}).catch(() => {}),
+	);
+
+	return c.json({ status: "ok" });
+});
+
+// Alias endpoint - links anonymous ID to identified user
+app.post("/alias", async (c) => {
+	const ip = c.req.header("cf-connecting-ip") || "unknown";
+
+	if (!(await checkRateLimit(c.env.RATE_LIMIT, ip))) {
+		return c.json({ error: "rate_limited" }, 429);
+	}
+
+	let payload: unknown;
+	try {
+		const text = await c.req.text();
+		payload = JSON.parse(text);
+	} catch {
+		return c.json({ error: "invalid_payload" }, 400);
+	}
+	if (!isValidAlias(payload)) {
+		return c.json({ error: "invalid_payload" }, 400);
+	}
+
+	// Forward to PostHog - creates alias relationship
+	c.executionCtx.waitUntil(
+		fetch(`${POSTHOG_HOST}/capture`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				api_key: c.env.POSTHOG_API_KEY,
+				distinct_id: payload.distinctId,
+				event: "$create_alias",
+				properties: {
+					alias: payload.alias,
+					$ip: ip,
+				},
 			}),
 		}).catch(() => {}),
 	);
