@@ -1,9 +1,43 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import * as readline from "node:readline";
 import type { HookAction } from "../templates/types";
 import { applyJsonWrite } from "./json-edit";
 import { getSavedSecrets } from "./secrets";
 import { restoreTty } from "./tty";
+
+/**
+ * Read multi-line JSON input from stdin
+ * User pastes JSON, then presses Enter on empty line to submit
+ */
+async function readMultilineJson(prompt: string): Promise<string> {
+	console.error(prompt);
+	console.error("(Paste JSON, then press Enter on empty line to submit)\n");
+
+	const rl = readline.createInterface({
+		input: process.stdin,
+		output: process.stderr,
+	});
+
+	const lines: string[] = [];
+
+	return new Promise((resolve) => {
+		rl.on("line", (line) => {
+			if (line.trim() === "" && lines.length > 0) {
+				rl.close();
+				resolve(lines.join("\n"));
+				return;
+			}
+			if (line.trim() !== "") {
+				lines.push(line);
+			}
+		});
+
+		rl.on("close", () => {
+			resolve(lines.join("\n"));
+		});
+	});
+}
 
 export interface HookContext {
 	domain?: string; // deployed domain (e.g., "my-app.username.workers.dev")
@@ -147,14 +181,39 @@ function resolveHookPath(filePath: string, context: HookContext): string {
 	return join(context.projectDir, filePath);
 }
 
-function isAccountAssociation(value: unknown): value is { header: string; payload: string; signature: string } {
+function isAccountAssociation(value: unknown): boolean {
 	if (!value || typeof value !== "object") return false;
-	const obj = value as { header?: unknown; payload?: unknown; signature?: unknown };
-	return (
-		typeof obj.header === "string" &&
-		typeof obj.payload === "string" &&
-		typeof obj.signature === "string"
-	);
+	// Check direct format: { header, payload, signature }
+	const obj = value as Record<string, unknown>;
+	if (typeof obj.header === "string" && typeof obj.payload === "string" && typeof obj.signature === "string") {
+		return true;
+	}
+	// Check nested format from Farcaster: { accountAssociation: { header, payload, signature } }
+	if (obj.accountAssociation && typeof obj.accountAssociation === "object") {
+		const inner = obj.accountAssociation as Record<string, unknown>;
+		return typeof inner.header === "string" && typeof inner.payload === "string" && typeof inner.signature === "string";
+	}
+	return false;
+}
+
+/**
+ * Extract the accountAssociation object (handles both nested and flat formats)
+ */
+function extractAccountAssociation(value: unknown): { header: string; payload: string; signature: string } | null {
+	if (!value || typeof value !== "object") return null;
+	const obj = value as Record<string, unknown>;
+	// Direct format
+	if (typeof obj.header === "string" && typeof obj.payload === "string" && typeof obj.signature === "string") {
+		return { header: obj.header, payload: obj.payload, signature: obj.signature };
+	}
+	// Nested format from Farcaster
+	if (obj.accountAssociation && typeof obj.accountAssociation === "object") {
+		const inner = obj.accountAssociation as Record<string, unknown>;
+		if (typeof inner.header === "string" && typeof inner.payload === "string" && typeof inner.signature === "string") {
+			return { header: inner.header, payload: inner.payload, signature: inner.signature };
+		}
+	}
+	return null;
 }
 
 /**
@@ -363,16 +422,21 @@ const actionHandlers: {
 			return true;
 		}
 
-		const { input } = await import("@inquirer/prompts");
-
 		let rawValue = "";
-		try {
-			rawValue = await input({ message: action.message });
-		} catch (err) {
-			if (err instanceof Error && err.name === "ExitPromptError") {
-				return true;
+
+		// Use multi-line input for JSON validation (handles paste from Farcaster etc.)
+		if (action.validate === "json" || action.validate === "accountAssociation") {
+			rawValue = await readMultilineJson(action.message);
+		} else {
+			const { input } = await import("@inquirer/prompts");
+			try {
+				rawValue = await input({ message: action.message });
+			} catch (err) {
+				if (err instanceof Error && err.name === "ExitPromptError") {
+					return true;
+				}
+				throw err;
 			}
-			throw err;
 		}
 
 		if (!rawValue.trim()) {
@@ -395,9 +459,13 @@ const actionHandlers: {
 			}
 		}
 
-		if (action.validate === "accountAssociation" && !isAccountAssociation(parsedInput)) {
-			ui.error("Invalid accountAssociation JSON (expected header, payload, signature)");
-			return action.required ? false : true;
+		if (action.validate === "accountAssociation") {
+			if (!isAccountAssociation(parsedInput)) {
+				ui.error("Invalid accountAssociation JSON (expected header, payload, signature)");
+				return action.required ? false : true;
+			}
+			// Extract the actual accountAssociation object (handles nested format from Farcaster)
+			parsedInput = extractAccountAssociation(parsedInput);
 		}
 
 		if (action.writeJson) {
