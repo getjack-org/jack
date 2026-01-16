@@ -7,6 +7,19 @@ import { JackError, JackErrorCode } from "./errors.ts";
 import { parseJsonc } from "./jsonc.ts";
 import type { OperationReporter } from "./project-operations.ts";
 
+/**
+ * Get the wrangler config file path for a project
+ */
+function getWranglerConfigPath(projectPath: string): string | null {
+	const configs = ["wrangler.jsonc", "wrangler.toml", "wrangler.json"];
+	for (const config of configs) {
+		if (existsSync(join(projectPath, config))) {
+			return config;
+		}
+	}
+	return null;
+}
+
 export interface BuildOutput {
 	outDir: string;
 	entrypoint: string;
@@ -195,7 +208,9 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 	// Run wrangler dry-run to build without deploying
 	reporter?.start("Bundling runtime...");
 
-	const dryRunResult = await $`wrangler deploy --dry-run --outdir=${outDir}`
+	const configFile = getWranglerConfigPath(projectPath);
+	const configArg = configFile ? ["--config", configFile] : [];
+	const dryRunResult = await $`wrangler deploy ${configArg} --dry-run --outdir=${outDir}`
 		.cwd(projectPath)
 		.nothrow()
 		.quiet();

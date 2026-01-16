@@ -169,6 +169,36 @@ const noopReporter: OperationReporter = {
 };
 
 /**
+ * Get the wrangler config file path for a project
+ * Returns the first found: wrangler.jsonc, wrangler.toml, wrangler.json
+ */
+function getWranglerConfigPath(projectPath: string): string | null {
+	const configs = ["wrangler.jsonc", "wrangler.toml", "wrangler.json"];
+	for (const config of configs) {
+		if (existsSync(join(projectPath, config))) {
+			return config;
+		}
+	}
+	return null;
+}
+
+/**
+ * Run wrangler deploy with explicit config to avoid parent directory conflicts
+ */
+async function runWranglerDeploy(
+	projectPath: string,
+	options: { dryRun?: boolean; outDir?: string } = {},
+) {
+	const configFile = getWranglerConfigPath(projectPath);
+	const configArg = configFile ? ["--config", configFile] : [];
+	const dryRunArgs = options.dryRun
+		? ["--dry-run", ...(options.outDir ? ["--outdir", options.outDir] : [])]
+		: [];
+
+	return await $`wrangler deploy ${configArg} ${dryRunArgs}`.cwd(projectPath).nothrow().quiet();
+}
+
+/**
  * Run bun install and managed project creation in parallel.
  * Handles partial failures with cleanup.
  */
@@ -1072,7 +1102,7 @@ export async function createProject(
 
 		reporter.start("Deploying...");
 
-		const deployResult = await $`wrangler deploy`.cwd(targetDir).nothrow().quiet();
+		const deployResult = await runWranglerDeploy(targetDir);
 
 		if (deployResult.exitCode !== 0) {
 			reporter.stop();
@@ -1357,7 +1387,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 
 		const spin = reporter.spinner("Deploying...");
-		const result = await $`wrangler deploy`.cwd(projectPath).nothrow().quiet();
+		const result = await runWranglerDeploy(projectPath);
 
 		if (result.exitCode !== 0) {
 			spin.error("Deploy failed");
