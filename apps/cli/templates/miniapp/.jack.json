@@ -38,12 +38,41 @@
 			{
 				"action": "box",
 				"title": "Deployed: {{name}}",
-				"lines": ["URL: {{url}}", "", "Next: Generate a manifest, then preview your miniapp"]
+				"lines": [
+					"URL: {{url}}",
+					"Manifest: {{url}}/.well-known/farcaster.json",
+					"",
+					"Next: Sign the manifest and paste accountAssociation when prompted"
+				]
+			},
+			{
+				"action": "writeJson",
+				"path": "public/.well-known/farcaster.json",
+				"successMessage": "Updated manifest URLs to {{url}}",
+				"set": {
+					"miniapp.name": "{{name}}",
+					"miniapp.homeUrl": "{{url}}",
+					"miniapp.iconUrl": "{{url}}/icon.png",
+					"miniapp.imageUrl": "{{url}}/og.png",
+					"miniapp.splashImageUrl": "{{url}}/icon.png"
+				}
 			},
 			{
 				"action": "url",
 				"url": "https://farcaster.xyz/~/developers/mini-apps/manifest?domain={{domain}}",
-				"label": "Generate manifest"
+				"label": "Sign manifest"
+			},
+			{
+				"action": "prompt",
+				"message": "Paste accountAssociation JSON from Farcaster (or press Enter to skip):",
+				"validate": "accountAssociation",
+				"successMessage": "Saved domain association to public/.well-known/farcaster.json",
+				"writeJson": {
+					"path": "public/.well-known/farcaster.json",
+					"set": {
+						"accountAssociation": { "from": "input" }
+					}
+				}
 			},
 			{
 				"action": "url",

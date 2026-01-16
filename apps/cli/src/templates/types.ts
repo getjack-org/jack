@@ -7,6 +7,23 @@ export type HookAction =
 	| { action: "shell"; command: string; cwd?: "project"; message?: string }
 	| { action: "pause"; message?: string } // press enter to continue
 	| {
+			action: "prompt";
+			message: string;
+			validate?: "json" | "accountAssociation";
+			required?: boolean;
+			successMessage?: string;
+			writeJson?: {
+				path: string;
+				set: Record<string, string | { from: "input" }>;
+			};
+	  }
+	| {
+			action: "writeJson";
+			path: string;
+			set: Record<string, string>;
+			successMessage?: string;
+	  }
+	| {
 			action: "require";
 			source: "secret" | "env";
 			key: string;
