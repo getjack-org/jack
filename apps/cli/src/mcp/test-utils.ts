@@ -22,7 +22,7 @@ export async function openMcpTestClient(options: McpClientOptions): Promise<McpT
 		command: options.command,
 		args: options.args ?? [],
 		cwd: options.cwd,
-		env: options.env,
+		env: options.env as Record<string, string> | undefined,
 		stderr: "pipe",
 	});
 
@@ -53,6 +53,7 @@ export async function openMcpTestClient(options: McpClientOptions): Promise<McpT
 
 export function parseMcpToolResult(toolResult: {
 	content?: Array<{ type: string; text?: string }>;
+	[key: string]: unknown;
 }): unknown {
 	const toolText = toolResult.content?.[0]?.type === "text" ? toolResult.content[0].text : null;
 	if (!toolText) {

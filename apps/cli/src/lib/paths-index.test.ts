@@ -187,7 +187,7 @@ describe("paths-index", () => {
 				const index = await readPathsIndex();
 
 				// Should store absolute path
-				expect(index.paths.proj_rel[0].startsWith("/")).toBe(true);
+				expect(index.paths.proj_rel?.[0]?.startsWith("/")).toBe(true);
 			} finally {
 				process.chdir(originalCwd);
 			}
@@ -351,7 +351,7 @@ describe("paths-index", () => {
 			const discovered = await scanAndRegisterProjects(testDir);
 
 			expect(discovered).toHaveLength(1);
-			expect(discovered[0].projectId).toBe("proj_linked");
+			expect(discovered[0]!.projectId).toBe("proj_linked");
 		});
 
 		it("respects maxDepth", async () => {
@@ -366,7 +366,7 @@ describe("paths-index", () => {
 			const discovered = await scanAndRegisterProjects(testDir, 2);
 
 			expect(discovered).toHaveLength(1);
-			expect(discovered[0].projectId).toBe("proj_shallow");
+			expect(discovered[0]!.projectId).toBe("proj_shallow");
 		});
 
 		it("skips node_modules", async () => {
@@ -379,7 +379,7 @@ describe("paths-index", () => {
 			const discovered = await scanAndRegisterProjects(testDir);
 
 			expect(discovered).toHaveLength(1);
-			expect(discovered[0].projectId).toBe("proj_valid");
+			expect(discovered[0]!.projectId).toBe("proj_valid");
 		});
 
 		it("skips .git directory", async () => {
@@ -392,7 +392,7 @@ describe("paths-index", () => {
 			const discovered = await scanAndRegisterProjects(testDir);
 
 			expect(discovered).toHaveLength(1);
-			expect(discovered[0].projectId).toBe("proj_valid");
+			expect(discovered[0]!.projectId).toBe("proj_valid");
 		});
 
 		it("does not recurse into linked projects", async () => {
@@ -407,7 +407,7 @@ describe("paths-index", () => {
 
 			// Should only find parent, not nested child
 			expect(discovered).toHaveLength(1);
-			expect(discovered[0].projectId).toBe("proj_parent");
+			expect(discovered[0]!.projectId).toBe("proj_parent");
 		});
 
 		it("registers discovered projects in index", async () => {
@@ -517,7 +517,7 @@ describe("paths-index", () => {
 
 			const discovered = await scanAndRegisterProjects(testDir);
 			expect(discovered).toHaveLength(1);
-			expect(discovered[0].projectId).toBe("proj_spaces");
+			expect(discovered[0]!.projectId).toBe("proj_spaces");
 		});
 
 		it("handles permission errors gracefully", async () => {

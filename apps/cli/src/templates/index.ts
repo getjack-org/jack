@@ -225,7 +225,7 @@ export async function resolveTemplate(template?: string): Promise<Template> {
 
 	// username/slug format - fetch from jack cloud
 	if (template.includes("/")) {
-		const [username, slug] = template.split("/", 2);
+		const [username, slug] = template.split("/", 2) as [string, string];
 		return fetchPublishedTemplate(username, slug);
 	}
 
