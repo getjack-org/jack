@@ -148,16 +148,19 @@ export function celebrate(title: string, lines: string[]): void {
 	const gradient = "░".repeat(innerWidth);
 	const space = " ".repeat(innerWidth);
 
-	const center = (text: string) => {
+	// Center text based on visual length, then apply colors
+	const center = (text: string, applyBold = false) => {
 		const left = Math.floor((innerWidth - text.length) / 2);
-		return " ".repeat(left) + text + " ".repeat(innerWidth - text.length - left);
+		const right = innerWidth - text.length - left;
+		const centered = " ".repeat(left) + text + " ".repeat(right);
+		return applyBold ? centered.replace(text, bold + text + reset + purple) : centered;
 	};
 
 	console.error("");
 	console.error(`  ${purple}╔${bar}╗${reset}`);
 	console.error(`  ${purple}║${fill}║${reset}`);
 	console.error(`  ${purple}║${space}║${reset}`);
-	console.error(`  ${purple}║${center(bold + title + reset + purple)}║${reset}`);
+	console.error(`  ${purple}║${center(title, true)}║${reset}`);
 	console.error(`  ${purple}║${space}║${reset}`);
 	for (const line of lines) {
 		console.error(`  ${purple}║${center(line)}║${reset}`);
