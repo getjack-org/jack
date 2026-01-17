@@ -1,5 +1,10 @@
 # Jack CLI - Agent Context
 
+## Release Etiquette
+
+- **Don't release without asking.** Never bump versions, create tags, or push releases unless the user explicitly requests it.
+- Commits and pushes are fine when asked, but releasing to npm is a separate decision.
+
 ## Project Overview
 
 jack is a CLI tool for vibecoders to rapidly deploy to Cloudflare Workers. Read `docs/internal/SPIRIT.md` for the philosophy.
