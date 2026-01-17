@@ -370,6 +370,48 @@ export async function fetchProjectTags(projectId: string): Promise<string[]> {
 	}
 }
 
+export interface RegisterUserRequest {
+	email: string;
+	first_name?: string | null;
+	last_name?: string | null;
+}
+
+export interface RegisterUserResponse {
+	user: {
+		id: string;
+		email: string;
+		first_name?: string;
+		last_name?: string;
+	};
+	org: {
+		id: string;
+		workos_org_id: string;
+	};
+}
+
+/**
+ * Register or update user in the control plane after login.
+ * This must be called after device auth to create/sync the user in the database.
+ */
+export async function registerUser(userInfo: RegisterUserRequest): Promise<RegisterUserResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/register`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(userInfo),
+	});
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to register user: ${response.status}`);
+	}
+
+	return response.json() as Promise<RegisterUserResponse>;
+}
+
 /**
  * Check if a username is available on jack cloud.
  * Does not require authentication.

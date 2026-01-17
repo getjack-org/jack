@@ -4,6 +4,7 @@ import { type AuthCredentials, saveCredentials } from "../lib/auth/store.ts";
 import {
 	checkUsernameAvailable,
 	getCurrentUserProfile,
+	registerUser,
 	setUsername,
 } from "../lib/control-plane.ts";
 import { celebrate, error, info, spinner, success, warn } from "../lib/output.ts";
@@ -67,6 +68,20 @@ export default async function login(options: LoginOptions = {}): Promise<void> {
 					user: tokens.user,
 				};
 				await saveCredentials(creds);
+
+				// Register user in control plane database (required for subsequent API calls)
+				try {
+					await registerUser({
+						email: tokens.user.email,
+						first_name: tokens.user.first_name,
+						last_name: tokens.user.last_name,
+					});
+				} catch (regError) {
+					// Registration is required - without it, all API calls will fail
+					error("Failed to complete login - could not reach jack cloud.");
+					error("Please check your internet connection and try again.");
+					process.exit(1);
+				}
 
 				// Link user identity for cross-platform analytics
 				await identifyUser(tokens.user.id, { email: tokens.user.email });
@@ -208,4 +223,3 @@ function normalizeToUsername(input: string): string {
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 39);
 }
-
