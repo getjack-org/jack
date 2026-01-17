@@ -12,6 +12,7 @@ const SESSION_ID = crypto.randomUUID();
 // EVENT REGISTRY
 // ============================================
 export const Events = {
+	AUTH_GATE_RESOLVED: "auth_gate_resolved",
 	COMMAND_INVOKED: "command_invoked",
 	COMMAND_COMPLETED: "command_completed",
 	COMMAND_FAILED: "command_failed",

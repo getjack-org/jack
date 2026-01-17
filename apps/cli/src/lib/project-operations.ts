@@ -42,7 +42,7 @@ import {
 import { getSyncConfig } from "./config.ts";
 import { deleteManagedProject } from "./control-plane.ts";
 import { debug, isDebug } from "./debug.ts";
-import { resolveDeployMode, validateModeAvailability } from "./deploy-mode.ts";
+import { validateModeAvailability } from "./deploy-mode.ts";
 import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parser.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { type HookOutput, runHook } from "./hooks.ts";
@@ -587,15 +587,16 @@ export async function createProject(
 		throw new JackError(JackErrorCode.VALIDATION_ERROR, "jack is not set up yet", "Run: jack init");
 	}
 
-	// Resolve deploy mode (omakase: logged in => managed, logged out => BYO)
-	const deployMode = await resolveDeployMode({
-		managed: options.managed,
-		byo: options.byo,
+	// Auth gate - check/prompt for authentication before any work
+	const { ensureAuthForCreate } = await import("./auth/ensure-auth.ts");
+	const authResult = await ensureAuthForCreate({
+		interactive,
+		forceManaged: options.managed,
+		forceByo: options.byo,
 	});
-	const modeError = await validateModeAvailability(deployMode);
-	if (modeError) {
-		throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
-	}
+
+	// Use authResult.mode (auth gate handles mode resolution)
+	const deployMode = authResult.mode;
 
 	// Close the "Starting..." spinner from new.ts
 	reporter.stop();
