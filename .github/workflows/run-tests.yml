@@ -4,28 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'apps/cli/src/index.ts'
-      - 'apps/cli/src/lib/project-detection.ts'
-      - 'apps/cli/src/lib/config-generator.ts'
-      - 'apps/cli/src/lib/project-operations.ts'
-      - 'apps/cli/src/lib/build-helper.ts'
-      - 'apps/cli/src/lib/deploy-mode.ts'
-      - 'apps/cli/src/commands/ship.ts'
-      - 'apps/cli/src/mcp/**'
+      - 'apps/cli/src/**'
       - 'apps/cli/tests/**'
       - 'scripts/setup-test-fixtures.sh'
       - 'scripts/test-auto-detect.sh'
       - '.github/workflows/run-tests.yml'
   pull_request:
     paths:
-      - 'apps/cli/src/index.ts'
-      - 'apps/cli/src/lib/project-detection.ts'
-      - 'apps/cli/src/lib/config-generator.ts'
-      - 'apps/cli/src/lib/project-operations.ts'
-      - 'apps/cli/src/lib/build-helper.ts'
-      - 'apps/cli/src/lib/deploy-mode.ts'
-      - 'apps/cli/src/commands/ship.ts'
-      - 'apps/cli/src/mcp/**'
+      - 'apps/cli/src/**'
       - 'apps/cli/tests/**'
       - 'scripts/setup-test-fixtures.sh'
       - 'scripts/test-auto-detect.sh'
@@ -55,6 +41,12 @@ jobs:
 
       - name: Install CLI dependencies
         run: bun install
+
+      - name: Run unit tests
+        run: bun test apps/cli/src/lib/**/*.test.ts
+        env:
+          CI: true
+          JACK_TELEMETRY_DISABLED: '1'
 
       - name: Make scripts executable
         run: |
