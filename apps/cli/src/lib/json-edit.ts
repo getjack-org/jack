@@ -1,10 +1,6 @@
 import { existsSync } from "node:fs";
 
-export function setJsonPath(
-	target: Record<string, unknown>,
-	path: string,
-	value: unknown,
-): void {
+export function setJsonPath(target: Record<string, unknown>, path: string, value: unknown): void {
 	const keys = path.split(".").filter(Boolean);
 	let current: Record<string, unknown> = target;
 

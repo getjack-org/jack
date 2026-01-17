@@ -53,11 +53,7 @@ function getBaseUrl(
 		}
 
 		// Reject localhost or IPs - embeds won't work in local dev or IP domains
-		if (
-			hostname === "localhost" ||
-			hostname === "127.0.0.1" ||
-			isIpAddress(hostname)
-		) {
+		if (hostname === "localhost" || hostname === "127.0.0.1" || isIpAddress(hostname)) {
 			return null; // Signal that we can't generate valid embed URLs
 		}
 
