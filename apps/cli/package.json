@@ -7,10 +7,7 @@
 	"bin": {
 		"jack": "./src/index.ts"
 	},
-	"files": [
-		"src",
-		"templates"
-	],
+	"files": ["src", "templates"],
 	"engines": {
 		"bun": ">=1.0.0"
 	},

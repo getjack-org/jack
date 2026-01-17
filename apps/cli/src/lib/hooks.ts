@@ -185,13 +185,21 @@ function isAccountAssociation(value: unknown): boolean {
 	if (!value || typeof value !== "object") return false;
 	// Check direct format: { header, payload, signature }
 	const obj = value as Record<string, unknown>;
-	if (typeof obj.header === "string" && typeof obj.payload === "string" && typeof obj.signature === "string") {
+	if (
+		typeof obj.header === "string" &&
+		typeof obj.payload === "string" &&
+		typeof obj.signature === "string"
+	) {
 		return true;
 	}
 	// Check nested format from Farcaster: { accountAssociation: { header, payload, signature } }
 	if (obj.accountAssociation && typeof obj.accountAssociation === "object") {
 		const inner = obj.accountAssociation as Record<string, unknown>;
-		return typeof inner.header === "string" && typeof inner.payload === "string" && typeof inner.signature === "string";
+		return (
+			typeof inner.header === "string" &&
+			typeof inner.payload === "string" &&
+			typeof inner.signature === "string"
+		);
 	}
 	return false;
 }
@@ -199,17 +207,27 @@ function isAccountAssociation(value: unknown): boolean {
 /**
  * Extract the accountAssociation object (handles both nested and flat formats)
  */
-function extractAccountAssociation(value: unknown): { header: string; payload: string; signature: string } | null {
+function extractAccountAssociation(
+	value: unknown,
+): { header: string; payload: string; signature: string } | null {
 	if (!value || typeof value !== "object") return null;
 	const obj = value as Record<string, unknown>;
 	// Direct format
-	if (typeof obj.header === "string" && typeof obj.payload === "string" && typeof obj.signature === "string") {
+	if (
+		typeof obj.header === "string" &&
+		typeof obj.payload === "string" &&
+		typeof obj.signature === "string"
+	) {
 		return { header: obj.header, payload: obj.payload, signature: obj.signature };
 	}
 	// Nested format from Farcaster
 	if (obj.accountAssociation && typeof obj.accountAssociation === "object") {
 		const inner = obj.accountAssociation as Record<string, unknown>;
-		if (typeof inner.header === "string" && typeof inner.payload === "string" && typeof inner.signature === "string") {
+		if (
+			typeof inner.header === "string" &&
+			typeof inner.payload === "string" &&
+			typeof inner.signature === "string"
+		) {
 			return { header: inner.header, payload: inner.payload, signature: inner.signature };
 		}
 	}
@@ -490,10 +508,8 @@ const actionHandlers: {
 	writeJson: async (action, context, options) => {
 		const ui = options.output ?? noopOutput;
 		const targetPath = resolveHookPath(action.path, context);
-		const ok = await applyJsonWrite(
-			targetPath,
-			action.set,
-			(value) => substituteVars(value, context),
+		const ok = await applyJsonWrite(targetPath, action.set, (value) =>
+			substituteVars(value, context),
 		);
 		if (!ok) {
 			ui.error(`Invalid JSON file: ${targetPath}`);

@@ -656,12 +656,20 @@ export class DeploymentService {
 		const project = await this.db
 			.prepare("SELECT * FROM projects WHERE id = ? AND status != 'deleted'")
 			.bind(projectId)
-			.first<{ id: string; org_id: string; slug: string; owner_username: string | null; content_bucket_enabled: number }>();
+			.first<{
+				id: string;
+				org_id: string;
+				slug: string;
+				owner_username: string | null;
+				content_bucket_enabled: number;
+			}>();
 
 		if (!project) return;
 
 		const workerResource = await this.db
-			.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'worker'")
+			.prepare(
+				"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'worker'",
+			)
 			.bind(projectId)
 			.first<{ provider_id: string }>();
 
@@ -672,7 +680,9 @@ export class DeploymentService {
 
 		const r2Resource = project.content_bucket_enabled
 			? await this.db
-					.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'r2_content'")
+					.prepare(
+						"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'r2_content'",
+					)
 					.bind(projectId)
 					.first<{ provider_id: string }>()
 			: null;

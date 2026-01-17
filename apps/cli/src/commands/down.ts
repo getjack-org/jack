@@ -88,13 +88,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			info(`Found "${name}" on jack cloud, linking locally...`);
 		}
 
-
 		// Guard against mismatched resolutions when an explicit name is provided
 		if (hasExplicitName && resolved) {
 			const matches =
-				name === resolved.slug ||
-				name === resolved.name ||
-				name === resolved.remote?.projectId;
+				name === resolved.slug || name === resolved.name || name === resolved.remote?.projectId;
 			if (!matches) {
 				error(`Refusing to undeploy '${name}' because it resolves to '${resolved.slug}'.`);
 				info("Use the exact slug/name shown by 'jack info' and try again.");

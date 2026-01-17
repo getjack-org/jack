@@ -1140,7 +1140,12 @@ api.delete("/projects/:projectId", async (c) => {
 	// Delete KV cache entries
 	try {
 		const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
-		await cacheService.invalidateProject(projectId, project.slug, project.org_id, project.owner_username);
+		await cacheService.invalidateProject(
+			projectId,
+			project.slug,
+			project.org_id,
+			project.owner_username,
+		);
 		deletionResults.push({ resource: "kv_cache", success: true });
 	} catch (error) {
 		deletionResults.push({ resource: "kv_cache", success: false, error: String(error) });
@@ -2104,11 +2109,11 @@ type AnalyticsRange = {
 	to: string;
 };
 
-type AnalyticsRangeResult =
-	| { ok: true; range: AnalyticsRange }
-	| { ok: false; message: string };
+type AnalyticsRangeResult = { ok: true; range: AnalyticsRange } | { ok: false; message: string };
 
-function resolveAnalyticsRange(c: { req: { query: (key: string) => string | undefined } }): AnalyticsRangeResult {
+function resolveAnalyticsRange(c: {
+	req: { query: (key: string) => string | undefined };
+}): AnalyticsRangeResult {
 	const fromParam = c.req.query("from");
 	const toParam = c.req.query("to");
 	const preset = c.req.query("preset") ?? "last_7d";

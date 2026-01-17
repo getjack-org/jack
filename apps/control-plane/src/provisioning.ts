@@ -587,7 +587,9 @@ export class ProvisioningService {
 			}
 
 			const workerResource = await this.db
-				.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'worker'")
+				.prepare(
+					"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'worker'",
+				)
 				.bind(projectId)
 				.first<{ provider_id: string }>();
 
