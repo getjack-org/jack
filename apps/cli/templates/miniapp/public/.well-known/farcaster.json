@@ -4,7 +4,7 @@
 		"payload": "",
 		"signature": ""
 	},
-	"miniapp": {
+	"frame": {
 		"version": "1",
 		"name": "jack-template",
 		"iconUrl": "https://example.com/icon.png",
