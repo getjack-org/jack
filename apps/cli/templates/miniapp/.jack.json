@@ -50,11 +50,11 @@
 				"path": "public/.well-known/farcaster.json",
 				"successMessage": "Updated manifest URLs to {{url}}",
 				"set": {
-					"miniapp.name": "{{name}}",
-					"miniapp.homeUrl": "{{url}}",
-					"miniapp.iconUrl": "{{url}}/icon.png",
-					"miniapp.imageUrl": "{{url}}/og.png",
-					"miniapp.splashImageUrl": "{{url}}/icon.png"
+					"frame.name": "{{name}}",
+					"frame.homeUrl": "{{url}}",
+					"frame.iconUrl": "{{url}}/icon.png",
+					"frame.imageUrl": "{{url}}/og.png",
+					"frame.splashImageUrl": "{{url}}/icon.png"
 				}
 			},
 			{

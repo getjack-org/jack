@@ -84,7 +84,16 @@ export async function uploadDeployment(options: DeployUploadOptions): Promise<De
 	if (!response.ok) {
 		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
 			message?: string;
+			error?: string;
 		};
+
+		// Provide actionable error for orphaned local links
+		if (response.status === 404 && err.error === "not_found") {
+			throw new Error(
+				"Project not found in jack cloud. The local link may be orphaned.\nFix: jack unlink && jack ship",
+			);
+		}
+
 		throw new Error(err.message || `Upload failed: ${response.status}`);
 	}
 

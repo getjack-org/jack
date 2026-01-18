@@ -373,6 +373,18 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 					projectMap.set(managed.id, resolved);
 				}
 			}
+
+			// Mark orphaned local managed projects (not found on control plane) as errors
+			for (const [, project] of projectMap) {
+				if (
+					project.deployMode === "managed" &&
+					project.status === "syncing" &&
+					!project.sources.controlPlane
+				) {
+					project.status = "error";
+					project.errorMessage = "Project not found in jack cloud. Run: jack unlink && jack ship";
+				}
+			}
 		} catch {
 			// Control plane unavailable, use local-only data
 		}

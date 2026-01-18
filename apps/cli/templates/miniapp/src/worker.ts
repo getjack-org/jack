@@ -1,4 +1,5 @@
 // Server-side Worker - handles API routes, keeps secrets secure
+/// <reference types="@cloudflare/workers-types" />
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -622,6 +623,49 @@ app.get("/share", (c) => {
 	return c.html(html, 200, {
 		"Cache-Control": "public, max-age=86400",
 	});
+});
+
+// GET / - Inject fc:miniapp meta tags for Farcaster embeds on the main page
+// Without this, sharing the app URL in a cast won't render an embed card
+app.get("/", async (c) => {
+	// Fetch the static index.html from Vite build
+	const response = await c.env.ASSETS.fetch(c.req.raw);
+	const html = await response.text();
+
+	const baseUrl = getBaseUrl(c.env, c);
+
+	// Local dev - serve without meta tags (they require https URLs)
+	if (!baseUrl) {
+		return c.html(html);
+	}
+
+	// Build embed JSON (same structure as /share route)
+	const embedJson = JSON.stringify({
+		version: "1",
+		imageUrl: `${baseUrl}/og.png`,
+		button: {
+			title: "Open App",
+			action: {
+				type: "launch_miniapp",
+				name: "jack-template",
+				url: baseUrl,
+				splashImageUrl: `${baseUrl}/icon.png`,
+				splashBackgroundColor: "#0a0a0a",
+			},
+		},
+	});
+
+	// Meta tags to inject
+	const metaTags = `
+    <meta property="og:title" content="jack-template" />
+    <meta property="og:image" content="${baseUrl}/og.png" />
+    <meta name="fc:miniapp" content='${embedJson}' />
+    <meta name="fc:frame" content='${embedJson}' />
+  `;
+
+	// Inject before </head>
+	const injectedHtml = html.replace("</head>", `${metaTags}</head>`);
+	return c.html(injectedHtml);
 });
 
 // Serve React app for all other routes
