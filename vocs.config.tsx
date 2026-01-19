@@ -75,7 +75,7 @@ export default defineConfig({
 		},
 		{
 			icon: "discord",
-			link: "https://discord.gg/fb64krv48R",
+			link: "https://community.getjack.org",
 		},
 	],
 	vite: {
