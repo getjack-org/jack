@@ -25,6 +25,27 @@ export async function isWranglerAvailable(): Promise<boolean> {
 }
 
 /**
+ * Ensure wrangler is installed, auto-installing if needed.
+ *
+ * @param onInstalling - Optional callback when installation starts (for UI feedback)
+ * @returns true if wrangler is available, false if installation failed
+ */
+export async function ensureWranglerInstalled(onInstalling?: () => void): Promise<boolean> {
+	if (await isWranglerAvailable()) {
+		return true;
+	}
+
+	// Auto-install wrangler
+	onInstalling?.();
+	try {
+		await $`bun add -g wrangler`.quiet();
+		return await isWranglerAvailable();
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Determine deploy mode based on login status and flags.
  *
  * Omakase behavior:
@@ -71,14 +92,14 @@ export async function validateModeAvailability(mode: DeployMode): Promise<string
 		}
 		const hasWrangler = await isWranglerAvailable();
 		if (!hasWrangler) {
-			return "wrangler not found. Install wrangler or use --byo";
+			return "wrangler installation failed. Please install manually: bun add -g wrangler";
 		}
 	}
 
 	if (mode === "byo") {
 		const hasWrangler = await isWranglerAvailable();
 		if (!hasWrangler) {
-			return "wrangler not found. Install wrangler or run: jack login";
+			return "wrangler installation failed. Please install manually: bun add -g wrangler";
 		}
 	}
 
