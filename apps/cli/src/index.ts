@@ -35,6 +35,7 @@ const cli = meow(
     login               Sign in
     logout              Sign out
     whoami              Show current user
+    update              Update jack to latest version
 
   Project Management
     link [name]         Link directory to a project
@@ -167,6 +168,20 @@ identify({
 	is_ci: !!process.env.CI,
 	...getEnvironmentProps(),
 });
+
+// Start non-blocking version check (skip for update command, CI, and help)
+const skipVersionCheck =
+	!command ||
+	command === "update" ||
+	command === "upgrade" ||
+	process.env.CI ||
+	process.env.JACK_NO_UPDATE_CHECK;
+
+let updateCheckPromise: Promise<string | null> | null = null;
+if (!skipVersionCheck) {
+	const { checkForUpdate } = await import("./lib/version-check.ts");
+	updateCheckPromise = checkForUpdate().catch(() => null);
+}
 
 try {
 	switch (command) {
@@ -344,6 +359,12 @@ try {
 			await withTelemetry("whoami", whoami)();
 			break;
 		}
+		case "update":
+		case "upgrade": {
+			const { default: update } = await import("./commands/update.ts");
+			await withTelemetry("update", update)();
+			break;
+		}
 		case "feedback": {
 			const { default: feedback } = await import("./commands/feedback.ts");
 			await withTelemetry("feedback", feedback)();
@@ -361,6 +382,16 @@ try {
 		}
 		default:
 			cli.showHelp(command ? 1 : 0);
+	}
+
+	// Show update notification if available (non-blocking check completed)
+	if (updateCheckPromise) {
+		const latestVersion = await updateCheckPromise;
+		if (latestVersion) {
+			info("");
+			info(`Update available: v${pkg.version} → v${latestVersion}`);
+			info("Run: jack update");
+		}
 	}
 } catch (err) {
 	if (isJackError(err)) {
