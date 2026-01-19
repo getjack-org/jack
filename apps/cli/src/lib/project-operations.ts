@@ -477,13 +477,22 @@ async function runAutoDetectFlow(
 	}
 
 	// Interactive mode - prompt for project name
-	const { input } = await import("@inquirer/prompts");
+	const { isCancel, text } = await import("@clack/prompts");
 
 	console.error("");
-	const projectName = await input({
+	const projectNameInput = await text({
 		message: "Project name:",
-		default: defaultName,
+		defaultValue: defaultName,
 	});
+
+	if (isCancel(projectNameInput)) {
+		throw new JackError(JackErrorCode.VALIDATION_ERROR, "Deployment cancelled", undefined, {
+			exitCode: 0,
+			reported: true,
+		});
+	}
+
+	const projectName = projectNameInput;
 
 	const slugifiedName = slugify(projectName.trim());
 	const runjackUrl = ownerUsername
@@ -852,29 +861,28 @@ export async function createProject(
 
 			// Prompt user
 			reporter.stop();
-			const { input, select } = await import("@inquirer/prompts");
+			const { isCancel, select, text } = await import("@clack/prompts");
 			console.error("");
 			console.error(`  ${optionalSecret.description}`);
 			if (optionalSecret.setupUrl) {
 				console.error(`  Setup: ${optionalSecret.setupUrl}`);
 			}
 			console.error("");
-			console.error("  Esc to skip\n");
 
 			const choice = await select({
 				message: `Add ${optionalSecret.name}?`,
-				choices: [
-					{ name: "1. Yes", value: "yes" },
-					{ name: "2. Skip", value: "skip" },
+				options: [
+					{ label: "Yes", value: "yes" },
+					{ label: "Skip", value: "skip" },
 				],
 			});
 
-			if (choice === "yes") {
-				const value = await input({
+			if (!isCancel(choice) && choice === "yes") {
+				const value = await text({
 					message: `Enter ${optionalSecret.name}:`,
 				});
 
-				if (value.trim()) {
+				if (!isCancel(value) && value.trim()) {
 					secretsToUse[optionalSecret.name] = value.trim();
 					// Save to global secrets for reuse
 					await saveSecrets([

@@ -780,6 +780,66 @@ api.post("/projects/:projectId/content-bucket", async (c) => {
 	}
 });
 
+// Create resource for existing project
+api.post("/projects/:projectId/resources/:resourceType", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const resourceType = c.req.param("resourceType");
+
+	// Validate resourceType
+	if (resourceType !== "d1" && resourceType !== "kv" && resourceType !== "r2") {
+		return c.json(
+			{ error: "invalid_request", message: "resourceType must be one of: d1, kv, r2" },
+			400,
+		);
+	}
+
+	const provisioning = new ProvisioningService(c.env);
+
+	// Get project and verify it exists
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Parse optional body for name/bindingName
+	let options: { name?: string; bindingName?: string } = {};
+	try {
+		const body = await c.req.json<{ name?: string; binding_name?: string }>();
+		options = {
+			name: body.name,
+			bindingName: body.binding_name,
+		};
+	} catch {
+		// Empty body is OK, use defaults
+	}
+
+	try {
+		const resource = await provisioning.createResourceForProject(projectId, resourceType, options);
+		return c.json({ resource }, 201);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to create resource";
+
+		// Handle specific error cases
+		if (message.includes("not yet implemented")) {
+			return c.json({ error: "not_implemented", message }, 501);
+		}
+
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
 api.patch("/projects/:projectId", async (c) => {
 	const auth = c.get("auth");
 	const projectId = c.req.param("projectId");

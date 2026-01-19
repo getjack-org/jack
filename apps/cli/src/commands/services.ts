@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { fetchProjectResources } from "../lib/control-plane.ts";
 import { formatSize } from "../lib/format.ts";
-import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import { readProjectLink } from "../lib/project-link.ts";
 import { parseWranglerResources } from "../lib/resources.ts";
+import { createDatabase } from "../lib/services/db-create.ts";
+import { listDatabases } from "../lib/services/db-list.ts";
 import {
 	deleteDatabase,
 	exportDatabase,
@@ -12,6 +13,7 @@ import {
 	getDatabaseInfo as getWranglerDatabaseInfo,
 } from "../lib/services/db.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
+import { Events, track } from "../lib/telemetry.ts";
 
 /**
  * Database info from control plane or wrangler config
@@ -115,19 +117,45 @@ function showHelp(): void {
 	console.error("");
 }
 
+function showDbHelp(): void {
+	console.error("");
+	info("jack services db - Manage databases");
+	console.error("");
+	console.error("Actions:");
+	console.error("  info       Show database information (default)");
+	console.error("  create     Create a new database");
+	console.error("  list       List all databases in the project");
+	console.error("  export     Export database to SQL file");
+	console.error("  delete     Delete a database");
+	console.error("");
+	console.error("Examples:");
+	console.error("  jack services db          Show info about the default database");
+	console.error("  jack services db create   Create a new database");
+	console.error("  jack services db list     List all databases");
+	console.error("");
+}
+
 async function dbCommand(args: string[], options: ServiceOptions): Promise<void> {
 	const action = args[0] || "info"; // Default to info
 
 	switch (action) {
+		case "--help":
+		case "-h":
+		case "help":
+			return showDbHelp();
 		case "info":
 			return await dbInfo(options);
+		case "create":
+			return await dbCreate(args.slice(1), options);
+		case "list":
+			return await dbList(options);
 		case "export":
 			return await dbExport(options);
 		case "delete":
 			return await dbDelete(options);
 		default:
 			error(`Unknown action: ${action}`);
-			info("Available: info, export, delete");
+			info("Available: info, create, list, export, delete");
 			process.exit(1);
 	}
 }
@@ -263,10 +291,12 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 	console.error("");
 
 	// Confirm deletion
-	console.error(`  Delete database '${dbInfo.name}'?\n`);
-	const choice = await promptSelect(["Yes", "No"]);
+	const { confirm } = await import("@clack/prompts");
+	const shouldDelete = await confirm({
+		message: `Delete database '${dbInfo.name}'?`,
+	});
 
-	if (choice !== 0) {
+	if (shouldDelete !== true) {
 		info("Cancelled");
 		return;
 	}
@@ -284,6 +314,119 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 		outputSpinner.stop();
 		console.error("");
 		error(`Failed to delete: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * Parse --name flag from args
+ * Supports: --name foo, --name=foo
+ */
+function parseNameFlag(args: string[]): string | undefined {
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--name" && args[i + 1]) {
+			return args[i + 1];
+		}
+		if (arg.startsWith("--name=")) {
+			return arg.slice("--name=".length);
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Create a new database
+ */
+async function dbCreate(args: string[], options: ServiceOptions): Promise<void> {
+	// Parse --name flag
+	const name = parseNameFlag(args);
+
+	outputSpinner.start("Creating database...");
+	try {
+		const result = await createDatabase(process.cwd(), {
+			name,
+			interactive: true,
+		});
+		outputSpinner.stop();
+
+		// Track telemetry
+		track(Events.SERVICE_CREATED, {
+			service_type: "d1",
+			binding_name: result.bindingName,
+			created: result.created,
+		});
+
+		console.error("");
+		if (result.created) {
+			success(`Database created: ${result.databaseName}`);
+		} else {
+			success(`Using existing database: ${result.databaseName}`);
+		}
+		console.error("");
+		item(`Binding: ${result.bindingName}`);
+		item(`ID: ${result.databaseId}`);
+		console.error("");
+
+		// Prompt to deploy
+		const { confirm } = await import("@clack/prompts");
+		const shouldDeploy = await confirm({
+			message: "Deploy now?",
+		});
+
+		if (shouldDeploy === true) {
+			const { deployProject } = await import("../lib/project-operations.ts");
+			await deployProject(process.cwd(), { interactive: true });
+		} else {
+			console.error("");
+			info("Run 'jack ship' when ready to deploy");
+			console.error("");
+		}
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to create database: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * List all databases in the project
+ */
+async function dbList(options: ServiceOptions): Promise<void> {
+	outputSpinner.start("Fetching databases...");
+	try {
+		const databases = await listDatabases(process.cwd());
+		outputSpinner.stop();
+
+		if (databases.length === 0) {
+			console.error("");
+			info("No databases found in this project.");
+			console.error("");
+			info("Create one with: jack services db create");
+			console.error("");
+			return;
+		}
+
+		console.error("");
+		success(`Found ${databases.length} database${databases.length === 1 ? "" : "s"}:`);
+		console.error("");
+
+		for (const db of databases) {
+			item(`${db.name} (${db.binding})`);
+			if (db.sizeBytes !== undefined) {
+				item(`  Size: ${formatSize(db.sizeBytes)}`);
+			}
+			if (db.numTables !== undefined) {
+				item(`  Tables: ${db.numTables}`);
+			}
+			item(`  ID: ${db.id}`);
+			console.error("");
+		}
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to list databases: ${err instanceof Error ? err.message : String(err)}`);
 		process.exit(1);
 	}
 }

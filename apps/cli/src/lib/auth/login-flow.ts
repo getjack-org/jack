@@ -1,7 +1,7 @@
 /**
  * Shared login flow for CLI and programmatic use
  */
-import { input } from "@inquirer/prompts";
+import { isCancel, text } from "@clack/prompts";
 import {
 	checkUsernameAvailable,
 	getCurrentUserProfile,
@@ -189,10 +189,18 @@ async function promptForUsername(email: string, firstName: string | null): Promi
 
 			if (choice === options.length - 1) {
 				// User chose to type custom username
-				inputUsername = await input({
+				const customInput = await text({
 					message: "Username:",
-					validate: validateUsername,
+					validate: (value) => {
+						const result = validateUsername(value);
+						if (result !== true) return result;
+					},
 				});
+				if (isCancel(customInput)) {
+					warn("Skipped username setup. You can set it later.");
+					return true;
+				}
+				inputUsername = customInput;
 			} else {
 				// User picked a suggestion (choice is guaranteed to be valid index)
 				inputUsername = suggestions[choice] as string;

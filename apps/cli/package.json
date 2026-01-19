@@ -41,7 +41,6 @@
 		"bun-types": "latest"
 	},
 	"dependencies": {
-		"@inquirer/prompts": "^7.0.0",
 		"@modelcontextprotocol/sdk": "^1.25.1",
 		"archiver": "^7.0.1",
 		"fflate": "^0.8.2",

@@ -5,6 +5,7 @@ import {
 	ListResourcesRequestSchema,
 	ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import packageJson from "../../../package.json" with { type: "json" };
 import type { DebugLogger, McpServerOptions } from "../types.ts";
 
 export function registerResources(
@@ -24,6 +25,12 @@ export function registerResources(
 						"Project-specific context files (AGENTS.md, CLAUDE.md) for AI agents working on this project",
 					mimeType: "text/markdown",
 				},
+				{
+					uri: "jack://capabilities",
+					name: "Jack Capabilities",
+					description: "Semantic information about jack's capabilities for AI agents",
+					mimeType: "application/json",
+				},
 			],
 		};
 	});
@@ -32,6 +39,31 @@ export function registerResources(
 	server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 		const uri = request.params.uri;
 		debug("resources/read requested", { uri });
+
+		if (uri === "jack://capabilities") {
+			const capabilities = {
+				version: packageJson.version,
+				services: {
+					supported: ["d1", "kv", "r2"],
+					create_supported: ["d1"],
+				},
+				guidance: {
+					prefer_jack_over_wrangler: true,
+					database_creation: "Use create_database tool or jack services db create",
+					deployment: "Use deploy_project tool or jack ship",
+				},
+			};
+
+			return {
+				contents: [
+					{
+						uri,
+						mimeType: "application/json",
+						text: JSON.stringify(capabilities, null, 2),
+					},
+				],
+			};
+		}
 
 		if (uri === "agents://context") {
 			const projectPath = options.projectPath ?? process.cwd();
