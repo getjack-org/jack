@@ -33,6 +33,9 @@ export const Events = {
 	AUTO_DETECT_SUCCESS: "auto_detect_success",
 	AUTO_DETECT_FAILED: "auto_detect_failed",
 	AUTO_DETECT_REJECTED: "auto_detect_rejected",
+	// Service events
+	SERVICE_CREATED: "service_created",
+	SQL_EXECUTED: "sql_executed",
 } as const;
 
 type EventName = (typeof Events)[keyof typeof Events];

@@ -5,6 +5,12 @@ import { JackError, JackErrorCode } from "../../lib/errors.ts";
 import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
 import { listAllProjects } from "../../lib/project-resolver.ts";
 import { createDatabase } from "../../lib/services/db-create.ts";
+import {
+	DestructiveOperationError,
+	WriteNotAllowedError,
+	executeSql,
+	wrapResultsForMcp,
+} from "../../lib/services/db-execute.ts";
 import { listDatabases } from "../../lib/services/db-list.ts";
 import { Events, track, withTelemetry } from "../../lib/telemetry.ts";
 import type { DebugLogger, McpServerOptions } from "../types.ts";
@@ -51,6 +57,25 @@ const ListDatabasesSchema = z.object({
 		.string()
 		.optional()
 		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const ExecuteSqlSchema = z.object({
+	sql: z.string().describe("SQL query to execute"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+	allow_write: z
+		.boolean()
+		.optional()
+		.default(false)
+		.describe(
+			"Allow write operations (INSERT, UPDATE, DELETE). Required for any data modification. Destructive operations (DROP, TRUNCATE) are blocked and must be run via CLI.",
+		),
+	database_name: z
+		.string()
+		.optional()
+		.describe("Database name (auto-detect from wrangler.jsonc if not provided)"),
 });
 
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
@@ -153,6 +178,38 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 								description: "Path to project directory (defaults to current directory)",
 							},
 						},
+					},
+				},
+				{
+					name: "execute_sql",
+					description:
+						"Execute SQL against the project's D1 database. Read-only by default for safety. " +
+						"Set allow_write=true for INSERT, UPDATE, DELETE operations. " +
+						"Destructive operations (DROP, TRUNCATE, ALTER) are blocked and must be run via CLI with confirmation. " +
+						"Results are wrapped with anti-injection headers to prevent prompt injection from database content.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							sql: {
+								type: "string",
+								description: "SQL query to execute",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+							allow_write: {
+								type: "boolean",
+								default: false,
+								description:
+									"Allow write operations (INSERT, UPDATE, DELETE). Required for any data modification.",
+							},
+							database_name: {
+								type: "string",
+								description: "Database name (auto-detect from wrangler.jsonc if not provided)",
+							},
+						},
+						required: ["sql"],
 					},
 				},
 			],
@@ -378,6 +435,110 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					);
 
 					const result = await wrappedListDatabases(projectPath);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "execute_sql": {
+					const args = ExecuteSqlSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedExecuteSql = withTelemetry(
+						"execute_sql",
+						async (projectDir: string, sql: string, allowWrite: boolean, databaseName?: string) => {
+							try {
+								const result = await executeSql({
+									projectDir,
+									sql,
+									databaseName,
+									allowWrite,
+									interactive: false, // MCP is non-interactive
+									wrapResults: true,
+								});
+
+								// Track business event
+								track(Events.SQL_EXECUTED, {
+									risk_level: result.risk,
+									statement_count: result.statements.length,
+									platform: "mcp",
+								});
+
+								// Wrap results with anti-injection header for MCP
+								const wrappedContent = wrapResultsForMcp(result.results ?? [], sql, result.meta);
+
+								return {
+									success: result.success,
+									risk_level: result.risk,
+									results_wrapped: wrappedContent,
+									meta: result.meta,
+									warning: result.warning,
+								};
+							} catch (err) {
+								if (err instanceof WriteNotAllowedError) {
+									return {
+										success: false,
+										error: err.message,
+										suggestion: "Set allow_write=true to allow data modification",
+										risk_level: err.risk,
+									};
+								}
+								if (err instanceof DestructiveOperationError) {
+									return {
+										success: false,
+										error: err.message,
+										suggestion:
+											"Destructive operations (DROP, TRUNCATE, ALTER, DELETE without WHERE) " +
+											"must be run via CLI with explicit confirmation: " +
+											`jack services db execute "${sql.slice(0, 50)}..." --write`,
+										risk_level: "destructive",
+									};
+								}
+								throw err;
+							}
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedExecuteSql(
+						projectPath,
+						args.sql,
+						args.allow_write ?? false,
+						args.database_name,
+					);
+
+					// Check if the result indicates an error (e.g., WriteNotAllowedError, DestructiveOperationError)
+					// These are returned as objects with success: false instead of thrown
+					const resultObj = result as Record<string, unknown>;
+					if (resultObj?.success === false) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: JSON.stringify(
+										{
+											success: false,
+											error: resultObj.error,
+											suggestion: resultObj.suggestion,
+											risk_level: resultObj.risk_level,
+											meta: {
+												duration_ms: Date.now() - startTime,
+											},
+										},
+										null,
+										2,
+									),
+								},
+							],
+							isError: true,
+						};
+					}
 
 					return {
 						content: [
