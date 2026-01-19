@@ -87,10 +87,15 @@ export default defineConfig({
 					return html.replace(
 						"</head>",
 						`<meta name="fc:miniapp" content='${miniappMeta}' />
-<script type="module">
-  import('https://esm.sh/@farcaster/miniapp-sdk@0.2.1').then(({ sdk }) => {
-    sdk.actions.ready();
-  }).catch(() => {});
+<script src="https://cdn.jsdelivr.net/npm/@farcaster/miniapp-sdk@0.2.1/dist/index.min.js"></script>
+<script>
+  console.log('[fc] SDK loaded, miniapp object:', window.miniapp);
+  if (window.miniapp && window.miniapp.sdk && window.miniapp.sdk.actions) {
+    window.miniapp.sdk.actions.ready();
+    console.log('[fc] ready() called');
+  } else {
+    console.error('[fc] SDK not available on window.miniapp');
+  }
 </script>
 </head>`,
 					);
