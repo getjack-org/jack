@@ -1,6 +1,6 @@
 {
 	"name": "@getjack/jack",
-	"version": "0.1.15",
+	"version": "0.1.16",
 	"description": "Ship before you forget why you started. The vibecoder's deployment CLI.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -41,6 +41,7 @@
 		"bun-types": "latest"
 	},
 	"dependencies": {
+		"@clack/prompts": "^0.11.0",
 		"@modelcontextprotocol/sdk": "^1.25.1",
 		"archiver": "^7.0.1",
 		"fflate": "^0.8.2",

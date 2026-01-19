@@ -28,11 +28,12 @@
     },
     "apps/cli": {
       "name": "@getjack/jack",
-      "version": "0.1.14",
+      "version": "0.1.15",
       "bin": {
         "jack": "./src/index.ts",
       },
       "dependencies": {
+        "@clack/prompts": "^0.11.0",
         "@modelcontextprotocol/sdk": "^1.25.1",
         "archiver": "^7.0.1",
         "fflate": "^0.8.2",
