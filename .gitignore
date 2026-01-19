@@ -24,3 +24,9 @@ docs/internal/
 docs/dist/
 /beige-bugs-doubt
 /ten-tigers-attack
+
+# Temp test directories
+api-debug-*/
+api-profile-*/
+test-*/
+
