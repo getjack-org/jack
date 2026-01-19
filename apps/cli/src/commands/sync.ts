@@ -20,8 +20,8 @@ export default async function sync(flags: SyncFlags = {}): Promise<void> {
 
 	// Check for wrangler config
 	if (!hasWranglerConfig()) {
-		error("No wrangler config found in current directory");
-		error("Run: jack new <project-name>");
+		error("Not in a project directory");
+		info("Run jack new <name> to create a project");
 		process.exit(1);
 	}
 
@@ -39,10 +39,12 @@ export default async function sync(flags: SyncFlags = {}): Promise<void> {
 	const result = await syncToCloud(projectDir, { force, dryRun, verbose });
 
 	if (!result.success) {
-		syncSpin.error("Sync failed");
+		syncSpin.stop();
+		error("Sync failed");
 		if (result.error) {
-			error(result.error);
+			info(result.error);
 		}
+		info("Check your network connection and try again");
 		process.exit(1);
 	}
 

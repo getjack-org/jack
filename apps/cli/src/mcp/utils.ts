@@ -142,6 +142,6 @@ export function getSuggestionForError(code: McpErrorCode): string {
 			return "Review the error message and ensure all required fields are provided correctly.";
 
 		default:
-			return "An unexpected error occurred. Check the error message for details.";
+			return "Check the error message above for details. If the problem persists, try running the equivalent CLI command directly.";
 	}
 }

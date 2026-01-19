@@ -100,27 +100,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			}
 		}
 
+		// Track auth state for final messaging
+		let authState: Awaited<ReturnType<typeof getAuthState>> | null = null;
 		if (!resolved && !link) {
-			// Project not found - provide auth-aware messaging
-			const authState = await getAuthState();
-
-			if (authState === "logged-in") {
-				// We're logged in and control plane didn't find it - definitely not a managed project
-				warn(`Project '${name}' not tracked by jack`);
-				info("Checking your Cloudflare account...");
-			} else if (authState === "session-expired") {
-				// Session expired - can't verify if this is a managed project
-				warn(`Project '${name}' not found locally`);
-				info("Session expired - can't check jack cloud");
-				info("If this was deployed via jack, run: jack login");
-				info("Checking your Cloudflare account...");
-			} else {
-				// Not logged in - can't verify if this is a managed project
-				warn(`Project '${name}' not found locally`);
-				info("Not logged in - can't check jack cloud");
-				info("If this was deployed via jack, run: jack login");
-				info("Checking your Cloudflare account...");
-			}
+			authState = await getAuthState();
 		}
 
 		// Check if this is a managed project (from link or resolved data)
@@ -153,8 +136,14 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 
 		if (!workerExists) {
 			console.error("");
-			warn(`'${name}' is not deployed`);
-			info("Nothing to undeploy");
+			error(`Project '${name}' not found`);
+			if (authState === "session-expired") {
+				info("Session expired. Run: jack login");
+			} else if (authState === "not-logged-in") {
+				info("Not logged in. Run: jack login");
+			} else {
+				info("Run jack projects to see your projects");
+			}
 			return;
 		}
 

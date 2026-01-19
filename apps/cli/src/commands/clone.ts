@@ -72,7 +72,8 @@ export default async function clone(projectName?: string, flags: CloneFlags = {}
 
 	if (!result.success) {
 		downloadSpin.error("Clone failed");
-		error(result.error || "Unknown error");
+		error(result.error || "Could not download project files");
+		info("Check your network connection and try again");
 		process.exit(1);
 	}
 

@@ -186,9 +186,8 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 
 	if (!dbInfo) {
 		console.error("");
-		error("No database found for this project.");
-		info("For managed projects, create a database with: jack services db create");
-		info("For BYO projects, add d1_databases to your wrangler.jsonc");
+		error("No database found for this project");
+		info("Create one with: jack services db create");
 		console.error("");
 		return;
 	}
@@ -228,9 +227,8 @@ async function dbExport(options: ServiceOptions): Promise<void> {
 
 	if (!dbInfo) {
 		console.error("");
-		error("No database found for this project.");
-		info("For managed projects, create a database with: jack services db create");
-		info("For BYO projects, add d1_databases to your wrangler.jsonc");
+		error("No database found for this project");
+		info("Create one with: jack services db create");
 		console.error("");
 		return;
 	}
@@ -267,9 +265,8 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 
 	if (!dbInfo) {
 		console.error("");
-		error("No database found for this project.");
-		info("For managed projects, create a database with: jack services db create");
-		info("For BYO projects, add d1_databases to your wrangler.jsonc");
+		error("No database found for this project");
+		info("Create one with: jack services db create");
 		console.error("");
 		return;
 	}

@@ -448,7 +448,7 @@ async function removeProjectEntry(args: string[]): Promise<void> {
 	// Warn if still deployed
 	if (project.status === "live") {
 		console.error("");
-		warn("Project is still deployed; removal does not undeploy the worker");
+		warn("Project is still live; this only removes it from jack, not from Cloudflare");
 	}
 
 	console.error("");
@@ -496,7 +496,7 @@ async function removeProjectEntry(args: string[]): Promise<void> {
 	// Hint about undeploying
 	if (project.status === "live") {
 		console.error("");
-		info(`To undeploy the worker, run: jack down ${name}`);
+		info(`To take it offline: jack down ${name}`);
 	}
 }
 

@@ -12,8 +12,8 @@ export default async function publish(): Promise<void> {
 	}
 
 	if (link.deploy_mode !== "managed") {
-		output.error("Only managed projects can be published");
-		output.info("Projects deployed with BYOC (bring your own cloud) cannot be published");
+		output.error("Only jack cloud projects can be published");
+		output.info("Projects on your own Cloudflare account cannot be published");
 		process.exit(1);
 	}
 
