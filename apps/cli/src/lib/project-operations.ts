@@ -199,8 +199,35 @@ async function runWranglerDeploy(
 }
 
 /**
+ * Ensure Cloudflare authentication is in place before BYO operations.
+ * Checks wrangler auth and CLOUDFLARE_API_TOKEN env var.
+ */
+async function ensureCloudflareAuth(
+	interactive: boolean,
+	reporter: OperationReporter,
+): Promise<void> {
+	const { isAuthenticated, ensureAuth } = await import("./wrangler.ts");
+	const cfAuthenticated = await isAuthenticated();
+	const hasApiToken = Boolean(process.env.CLOUDFLARE_API_TOKEN);
+
+	if (!cfAuthenticated && !hasApiToken) {
+		if (interactive) {
+			reporter.info("Cloudflare authentication required");
+			await ensureAuth();
+		} else {
+			throw new JackError(
+				JackErrorCode.AUTH_FAILED,
+				"Not authenticated with Cloudflare",
+				"Run: wrangler login\nOr set CLOUDFLARE_API_TOKEN environment variable",
+			);
+		}
+	}
+}
+
+/**
  * Run bun install and managed project creation in parallel.
  * Handles partial failures with cleanup.
+ * Optionally reports URL early via onRemoteReady callback.
  */
 async function runParallelSetup(
 	targetDir: string,
@@ -208,32 +235,41 @@ async function runParallelSetup(
 	options: {
 		template?: string;
 		usePrebuilt?: boolean;
+		onRemoteReady?: (result: ManagedCreateResult) => void;
 	},
 ): Promise<{
 	installSuccess: boolean;
 	remoteResult: ManagedCreateResult;
 }> {
-	const [installResult, remoteResult] = await Promise.allSettled([
-		// Install dependencies
-		(async () => {
-			const install = Bun.spawn(["bun", "install"], {
-				cwd: targetDir,
-				stdout: "ignore",
-				stderr: "ignore",
-			});
-			await install.exited;
-			if (install.exitCode !== 0) {
-				throw new Error("Dependency installation failed");
-			}
-			return true;
-		})(),
+	// Start both operations
+	const installPromise = (async () => {
+		const install = Bun.spawn(["bun", "install", "--prefer-offline"], {
+			cwd: targetDir,
+			stdout: "ignore",
+			stderr: "ignore",
+		});
+		await install.exited;
+		if (install.exitCode !== 0) {
+			throw new Error("Dependency installation failed");
+		}
+		return true;
+	})();
 
-		// Create managed project remote (no reporter to avoid spinner conflicts)
-		createManagedProjectRemote(projectName, undefined, {
-			template: options.template || "hello",
-			usePrebuilt: options.usePrebuilt ?? true,
-		}),
-	]);
+	const remotePromise = createManagedProjectRemote(projectName, undefined, {
+		template: options.template || "hello",
+		usePrebuilt: options.usePrebuilt ?? true,
+	});
+
+	// Report URL as soon as remote is ready (don't wait for install)
+	remotePromise
+		.then((result) => {
+			if (result.status === "live" && options.onRemoteReady) {
+				options.onRemoteReady(result);
+			}
+		})
+		.catch(() => {}); // Errors handled below in allSettled
+
+	const [installResult, remoteResult] = await Promise.allSettled([installPromise, remotePromise]);
 
 	const installFailed = installResult.status === "rejected";
 	const remoteFailed = remoteResult.status === "rejected";
@@ -970,6 +1006,7 @@ export async function createProject(
 
 		// Parallel setup for managed mode: install + remote creation
 		let remoteResult: ManagedCreateResult | undefined;
+		let urlShownEarly = false;
 
 		if (deployMode === "managed") {
 			// Run install and remote creation in parallel
@@ -980,11 +1017,22 @@ export async function createProject(
 				const result = await runParallelSetup(targetDir, projectName, {
 					template: resolvedTemplate || "hello",
 					usePrebuilt: templateOrigin.type === "builtin", // Only builtin templates have prebuilt bundles
+					onRemoteReady: (remote) => {
+						// Show URL immediately when prebuilt succeeds
+						reporter.stop();
+						reporter.success(`Live: ${remote.runjackUrl}`);
+						reporter.start("Installing dependencies locally...");
+						urlShownEarly = true;
+					},
 				});
 				remoteResult = result.remoteResult;
 				timings.push({ label: "Parallel setup", duration: timerEnd("parallel-setup") });
 				reporter.stop();
-				reporter.success("Project setup complete");
+				if (urlShownEarly) {
+					reporter.success("Ready for local development");
+				} else {
+					reporter.success("Project setup complete");
+				}
 			} catch (err) {
 				timerEnd("parallel-setup");
 				reporter.stop();
@@ -995,11 +1043,11 @@ export async function createProject(
 				throw err;
 			}
 		} else {
-			// BYO mode: just install dependencies (unchanged from current)
+			// BYO mode: just install dependencies
 			timerStart("bun-install");
 			reporter.start("Installing dependencies...");
 
-			const install = Bun.spawn(["bun", "install"], {
+			const install = Bun.spawn(["bun", "install", "--prefer-offline"], {
 				cwd: targetDir,
 				stdout: "ignore",
 				stderr: "ignore",
@@ -1109,6 +1157,7 @@ export async function createProject(
 				await writeTemplateMetadata(targetDir, templateOrigin);
 				await registerPath(remoteResult.projectId, targetDir);
 			} catch (err) {
+				reporter.warn("Could not save project link (deploy still works)");
 				debug("Failed to link managed project:", err);
 			}
 
@@ -1116,7 +1165,10 @@ export async function createProject(
 			if (remoteResult.status === "live") {
 				// Prebuilt succeeded - skip the fresh build
 				workerUrl = remoteResult.runjackUrl;
-				reporter.success(`Deployed: ${workerUrl}`);
+				// Only show if not already shown by parallel setup
+				if (!urlShownEarly) {
+					reporter.success(`Deployed: ${workerUrl}`);
+				}
 			} else {
 				// Prebuilt not available - fall back to fresh build
 				if (remoteResult.prebuiltFailed) {
@@ -1226,6 +1278,7 @@ export async function createProject(
 				await writeTemplateMetadata(targetDir, templateOrigin);
 				await registerPath(byoProjectId, targetDir);
 			} catch (err) {
+				reporter.warn("Could not save project link (deploy still works)");
 				debug("Failed to link BYO project:", err);
 			}
 		}
@@ -1327,6 +1380,57 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 			"No wrangler config found in current directory",
 			"Run: jack new <project-name>",
 		);
+	} else if (hasWranglerConfig && !hasProjectLink) {
+		// Orphaned state: wrangler config exists but no project link
+		// This happens when: linking failed during jack new, user has existing wrangler project,
+		// or project was moved/copied without .jack directory
+		const { isLoggedIn } = await import("./auth/store.ts");
+		const loggedIn = await isLoggedIn();
+
+		if (loggedIn && !options.byo) {
+			// User is logged into Jack Cloud - create managed project
+			const orphanedProjectName = await getProjectNameFromDir(projectPath);
+
+			reporter.info(`Linking "${orphanedProjectName}" to jack cloud...`);
+
+			// Get username for URL construction
+			const { getCurrentUserProfile } = await import("./control-plane.ts");
+			const profile = await getCurrentUserProfile();
+			const ownerUsername = profile?.username ?? undefined;
+
+			// Create managed project on jack cloud
+			const remoteResult = await createManagedProjectRemote(orphanedProjectName, reporter, {
+				usePrebuilt: false,
+			});
+
+			// Link project locally
+			await linkProject(projectPath, remoteResult.projectId, "managed", ownerUsername);
+			await registerPath(remoteResult.projectId, projectPath);
+
+			// Set autoDetectResult so the rest of the flow uses managed mode
+			autoDetectResult = {
+				projectName: orphanedProjectName,
+				projectId: remoteResult.projectId,
+				deployMode: "managed",
+			};
+
+			reporter.success("Linked to jack cloud");
+		} else if (!options.managed) {
+			// BYO path - ensure wrangler auth before proceeding
+			await ensureCloudflareAuth(interactive, reporter);
+
+			// Create BYO link for tracking (non-blocking)
+			const orphanedProjectName = await getProjectNameFromDir(projectPath);
+			const byoProjectId = generateByoProjectId();
+
+			try {
+				await linkProject(projectPath, byoProjectId, "byo");
+				await registerPath(byoProjectId, projectPath);
+				debug("Created BYO project link for orphaned project");
+			} catch (err) {
+				debug("Failed to create BYO project link:", err);
+			}
+		}
 	}
 
 	// Get project name from directory (or auto-detect result)
@@ -1474,6 +1578,9 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 				}
 			}
 		}
+
+		// Ensure Cloudflare auth before BYO deploy
+		await ensureCloudflareAuth(interactive, reporter);
 
 		const spin = reporter.spinner("Deploying...");
 		const result = await runWranglerDeploy(projectPath);
