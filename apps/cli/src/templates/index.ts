@@ -73,6 +73,7 @@ async function loadTemplate(name: string): Promise<Template> {
 		description: string;
 		secrets: string[];
 		optionalSecrets?: Template["optionalSecrets"];
+		envVars?: Template["envVars"];
 		capabilities?: Template["capabilities"];
 		requires?: Template["requires"];
 		hooks?: Template["hooks"];
@@ -90,6 +91,7 @@ async function loadTemplate(name: string): Promise<Template> {
 		description: metadata.description,
 		secrets: metadata.secrets,
 		optionalSecrets: metadata.optionalSecrets,
+		envVars: metadata.envVars,
 		capabilities: metadata.capabilities,
 		requires: metadata.requires,
 		hooks: metadata.hooks,
@@ -165,6 +167,7 @@ async function fetchPublishedTemplate(username: string, slug: string): Promise<T
 		description: (metadata.description as string) || `Fork of ${username}/${slug}`,
 		secrets: (metadata.secrets as string[]) || [],
 		optionalSecrets: metadata.optionalSecrets as Template["optionalSecrets"],
+		envVars: metadata.envVars as Template["envVars"],
 		capabilities: metadata.capabilities as Template["capabilities"],
 		requires: metadata.requires as Template["requires"],
 		hooks: metadata.hooks as Template["hooks"],
@@ -200,6 +203,7 @@ async function fetchUserTemplate(slug: string): Promise<Template | null> {
 		description: (metadata.description as string) || `Your project: ${slug}`,
 		secrets: (metadata.secrets as string[]) || [],
 		optionalSecrets: metadata.optionalSecrets as Template["optionalSecrets"],
+		envVars: metadata.envVars as Template["envVars"],
 		capabilities: metadata.capabilities as Template["capabilities"],
 		requires: metadata.requires as Template["requires"],
 		hooks: metadata.hooks as Template["hooks"],

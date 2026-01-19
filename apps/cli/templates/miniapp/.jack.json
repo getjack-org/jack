@@ -39,10 +39,7 @@
 				"action": "box",
 				"title": "Deployed: {{name}}",
 				"lines": [
-					"URL: {{url}}",
-					"Manifest: {{url}}/.well-known/farcaster.json",
-					"",
-					"Next: Sign the manifest and paste accountAssociation when prompted"
+					"{{url}}"
 				]
 			},
 			{
@@ -72,7 +69,9 @@
 					"set": {
 						"accountAssociation": { "from": "input" }
 					}
-				}
+				},
+				"deployAfter": true,
+				"deployMessage": "Deploying manifest..."
 			},
 			{
 				"action": "url",

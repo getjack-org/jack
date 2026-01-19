@@ -14,7 +14,7 @@ import {
 	renderTemplate,
 	resolveTemplateWithOrigin,
 } from "../templates/index.ts";
-import type { Template } from "../templates/types.ts";
+import type { EnvVar, Template } from "../templates/types.ts";
 import { generateAgentFiles } from "./agent-files.ts";
 import {
 	getActiveAgents,
@@ -167,6 +167,129 @@ const noopReporter: OperationReporter = {
 	success() {},
 	box() {},
 };
+
+/**
+ * Check if an environment variable already exists in a .env file
+ * Returns the existing value if found, null otherwise
+ */
+async function checkEnvVarExists(envPath: string, key: string): Promise<string | null> {
+	if (!existsSync(envPath)) {
+		return null;
+	}
+
+	const content = await Bun.file(envPath).text();
+	for (const line of content.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) {
+			continue;
+		}
+
+		const eqIndex = trimmed.indexOf("=");
+		if (eqIndex === -1) {
+			continue;
+		}
+
+		const lineKey = trimmed.slice(0, eqIndex).trim();
+		if (lineKey === key) {
+			let value = trimmed.slice(eqIndex + 1).trim();
+			// Remove surrounding quotes
+			if (
+				(value.startsWith('"') && value.endsWith('"')) ||
+				(value.startsWith("'") && value.endsWith("'"))
+			) {
+				value = value.slice(1, -1);
+			}
+			return value;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Prompt for environment variables defined in a template
+ * Returns a record of env var name -> value for vars that were provided
+ */
+async function promptEnvVars(
+	envVars: EnvVar[],
+	targetDir: string,
+	reporter: OperationReporter,
+	interactive: boolean,
+): Promise<Record<string, string>> {
+	const result: Record<string, string> = {};
+	const envPath = join(targetDir, ".env");
+
+	for (const envVar of envVars) {
+		// Check if already exists in .env
+		const existingValue = await checkEnvVarExists(envPath, envVar.name);
+		if (existingValue) {
+			reporter.stop();
+			reporter.success(`${envVar.name}: already configured`);
+			reporter.start("Creating project...");
+			result[envVar.name] = existingValue;
+			continue;
+		}
+
+		if (!interactive) {
+			// Non-interactive mode: use default if available, otherwise warn
+			if (envVar.defaultValue !== undefined) {
+				result[envVar.name] = envVar.defaultValue;
+				reporter.stop();
+				reporter.info(`${envVar.name}: using default value`);
+				reporter.start("Creating project...");
+			} else if (envVar.required !== false) {
+				reporter.stop();
+				reporter.warn(`${envVar.name}: required but not set (no default available)`);
+				reporter.start("Creating project...");
+			}
+			continue;
+		}
+
+		// Interactive mode: prompt user
+		reporter.stop();
+		const { isCancel, text } = await import("@clack/prompts");
+
+		console.error("");
+		console.error(`  ${envVar.description}`);
+		if (envVar.setupUrl) {
+			console.error(`  Get it at: ${envVar.setupUrl}`);
+		}
+		if (envVar.example) {
+			console.error(`  Example: ${envVar.example}`);
+		}
+		console.error("");
+
+		const value = await text({
+			message: `${envVar.name}:`,
+			defaultValue: envVar.defaultValue,
+			placeholder: envVar.defaultValue ?? (envVar.example ? `e.g. ${envVar.example}` : undefined),
+		});
+
+		if (isCancel(value)) {
+			// User cancelled - skip this var
+			if (envVar.required !== false) {
+				reporter.warn(`Skipped required env var: ${envVar.name}`);
+			}
+			reporter.start("Creating project...");
+			continue;
+		}
+
+		const trimmedValue = value.trim();
+		if (trimmedValue) {
+			result[envVar.name] = trimmedValue;
+			reporter.success(`Set ${envVar.name}`);
+		} else if (envVar.defaultValue !== undefined) {
+			result[envVar.name] = envVar.defaultValue;
+			reporter.info(`${envVar.name}: using default value`);
+		} else if (envVar.required !== false) {
+			reporter.warn(`Skipped required env var: ${envVar.name}`);
+		}
+
+		reporter.start("Creating project...");
+	}
+
+	return result;
+}
 
 /**
  * Get the wrangler config file path for a project
@@ -936,6 +1059,12 @@ export async function createProject(
 		}
 	}
 
+	// Handle environment variables (non-secret configuration)
+	let envVarsToUse: Record<string, string> = {};
+	if (template.envVars?.length) {
+		envVarsToUse = await promptEnvVars(template.envVars, targetDir, reporter, interactive);
+	}
+
 	// Track if we created the directory (for cleanup on failure)
 	let directoryCreated = false;
 
@@ -954,13 +1083,24 @@ export async function createProject(
 		}
 		reporter.start("Creating project...");
 
-		// Write secrets files (.env for Vite, .dev.vars for wrangler local, .secrets.json for wrangler bulk)
-		if (Object.keys(secretsToUse).length > 0) {
-			const envContent = generateEnvFile(secretsToUse);
-			const jsonContent = generateSecretsJson(secretsToUse);
+		// Write secrets and env vars files
+		// - Secrets go to: .env, .dev.vars, .secrets.json (for wrangler bulk upload)
+		// - Env vars go to: .env, .dev.vars only (not secrets.json - they're not secrets)
+		const hasSecrets = Object.keys(secretsToUse).length > 0;
+		const hasEnvVars = Object.keys(envVarsToUse).length > 0;
+
+		if (hasSecrets || hasEnvVars) {
+			// Combine secrets and env vars for .env and .dev.vars
+			const allEnvVars = { ...secretsToUse, ...envVarsToUse };
+			const envContent = generateEnvFile(allEnvVars);
 			await Bun.write(join(targetDir, ".env"), envContent);
 			await Bun.write(join(targetDir, ".dev.vars"), envContent);
-			await Bun.write(join(targetDir, ".secrets.json"), jsonContent);
+
+			// Only write secrets to .secrets.json (for wrangler secret bulk)
+			if (hasSecrets) {
+				const jsonContent = generateSecretsJson(secretsToUse);
+				await Bun.write(join(targetDir, ".secrets.json"), jsonContent);
+			}
 
 			const gitignorePath = join(targetDir, ".gitignore");
 			const gitignoreExists = existsSync(gitignorePath);
@@ -1302,7 +1442,7 @@ export async function createProject(
 
 			// Show final celebration if there were interactive prompts (URL might have scrolled away)
 			if (hookResult.hadInteractiveActions && reporter.celebrate) {
-				reporter.celebrate("You're live!", [domain]);
+				reporter.celebrate("You're live!", [workerUrl]);
 			}
 		}
 
