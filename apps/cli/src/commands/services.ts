@@ -1,10 +1,17 @@
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fetchProjectResources } from "../lib/control-plane.ts";
 import { formatSize } from "../lib/format.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import { readProjectLink } from "../lib/project-link.ts";
 import { parseWranglerResources } from "../lib/resources.ts";
 import { createDatabase } from "../lib/services/db-create.ts";
+import {
+	DestructiveOperationError,
+	WriteNotAllowedError,
+	executeSql,
+	executeSqlFile,
+} from "../lib/services/db-execute.ts";
 import { listDatabases } from "../lib/services/db-list.ts";
 import {
 	deleteDatabase,
@@ -12,6 +19,7 @@ import {
 	generateExportFilename,
 	getDatabaseInfo as getWranglerDatabaseInfo,
 } from "../lib/services/db.ts";
+import { getRiskDescription } from "../lib/services/sql-classifier.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 import { Events, track } from "../lib/telemetry.ts";
 
@@ -125,13 +133,19 @@ function showDbHelp(): void {
 	console.error("  info       Show database information (default)");
 	console.error("  create     Create a new database");
 	console.error("  list       List all databases in the project");
+	console.error("  execute    Execute SQL against the database");
 	console.error("  export     Export database to SQL file");
 	console.error("  delete     Delete a database");
 	console.error("");
 	console.error("Examples:");
-	console.error("  jack services db          Show info about the default database");
-	console.error("  jack services db create   Create a new database");
-	console.error("  jack services db list     List all databases");
+	console.error(
+		"  jack services db                                   Show info about the default database",
+	);
+	console.error("  jack services db create                            Create a new database");
+	console.error("  jack services db list                              List all databases");
+	console.error('  jack services db execute "SELECT * FROM users"     Run a read query');
+	console.error('  jack services db execute "INSERT..." --write       Run a write query');
+	console.error("  jack services db execute --file schema.sql --write Run SQL from file");
 	console.error("");
 }
 
@@ -149,13 +163,15 @@ async function dbCommand(args: string[], options: ServiceOptions): Promise<void>
 			return await dbCreate(args.slice(1), options);
 		case "list":
 			return await dbList(options);
+		case "execute":
+			return await dbExecute(args.slice(1), options);
 		case "export":
 			return await dbExport(options);
 		case "delete":
 			return await dbDelete(options);
 		default:
 			error(`Unknown action: ${action}`);
-			info("Available: info, create, list, export, delete");
+			info("Available: info, create, list, execute, export, delete");
 			process.exit(1);
 	}
 }
@@ -424,6 +440,254 @@ async function dbList(options: ServiceOptions): Promise<void> {
 		outputSpinner.stop();
 		console.error("");
 		error(`Failed to list databases: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * Parse execute command arguments
+ * Supports:
+ *   jack services db execute "SELECT * FROM users"
+ *   jack services db execute "INSERT..." --write
+ *   jack services db execute --file schema.sql --write
+ *   jack services db execute --db my-other-db "SELECT..."
+ */
+interface ExecuteArgs {
+	sql?: string;
+	filePath?: string;
+	allowWrite: boolean;
+	databaseName?: string;
+}
+
+function parseExecuteArgs(args: string[]): ExecuteArgs {
+	const result: ExecuteArgs = {
+		allowWrite: false,
+	};
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (!arg) continue;
+
+		if (arg === "--write" || arg === "-w") {
+			result.allowWrite = true;
+			continue;
+		}
+
+		if (arg === "--file" || arg === "-f") {
+			result.filePath = args[i + 1];
+			i++; // Skip the next arg
+			continue;
+		}
+
+		if (arg.startsWith("--file=")) {
+			result.filePath = arg.slice("--file=".length);
+			continue;
+		}
+
+		if (arg === "--db" || arg === "--database") {
+			result.databaseName = args[i + 1];
+			i++; // Skip the next arg
+			continue;
+		}
+
+		if (arg.startsWith("--db=")) {
+			result.databaseName = arg.slice("--db=".length);
+			continue;
+		}
+
+		if (arg.startsWith("--database=")) {
+			result.databaseName = arg.slice("--database=".length);
+			continue;
+		}
+
+		// Any other non-flag argument is the SQL query
+		if (!arg.startsWith("-")) {
+			result.sql = arg;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * Execute SQL against the database
+ */
+async function dbExecute(args: string[], _options: ServiceOptions): Promise<void> {
+	const execArgs = parseExecuteArgs(args);
+
+	// Validate input
+	if (!execArgs.sql && !execArgs.filePath) {
+		console.error("");
+		error("No SQL provided");
+		info('Usage: jack services db execute "SELECT * FROM users"');
+		info("       jack services db execute --file schema.sql --write");
+		console.error("");
+		process.exit(1);
+	}
+
+	// Cannot specify both SQL and file
+	if (execArgs.sql && execArgs.filePath) {
+		console.error("");
+		error("Cannot specify both inline SQL and --file");
+		info("Use either inline SQL or --file, not both");
+		console.error("");
+		process.exit(1);
+	}
+
+	// If using --file, verify file exists
+	if (execArgs.filePath) {
+		const absPath = resolve(process.cwd(), execArgs.filePath);
+		if (!existsSync(absPath)) {
+			console.error("");
+			error(`File not found: ${execArgs.filePath}`);
+			console.error("");
+			process.exit(1);
+		}
+		execArgs.filePath = absPath;
+	}
+
+	const projectDir = process.cwd();
+
+	try {
+		outputSpinner.start("Executing SQL...");
+
+		let result;
+		if (execArgs.filePath) {
+			result = await executeSqlFile({
+				projectDir,
+				filePath: execArgs.filePath,
+				databaseName: execArgs.databaseName,
+				allowWrite: execArgs.allowWrite,
+				interactive: true,
+			});
+		} else {
+			result = await executeSql({
+				projectDir,
+				sql: execArgs.sql!,
+				databaseName: execArgs.databaseName,
+				allowWrite: execArgs.allowWrite,
+				interactive: true,
+			});
+		}
+
+		// Handle destructive operations - need confirmation BEFORE execution
+		if (result.requiresConfirmation) {
+			outputSpinner.stop();
+
+			// Find the destructive statements
+			const destructiveStmts = result.statements.filter((s) => s.risk === "destructive");
+
+			console.error("");
+			warn("This SQL contains destructive operations:");
+			for (const stmt of destructiveStmts) {
+				item(`${stmt.operation}: ${stmt.sql.slice(0, 60)}${stmt.sql.length > 60 ? "..." : ""}`);
+			}
+			console.error("");
+
+			// Require typed confirmation
+			const { text } = await import("@clack/prompts");
+			const confirmText = destructiveStmts
+				.map((s) => s.operation)
+				.join(" ")
+				.toUpperCase();
+
+			const userInput = await text({
+				message: `Type "${confirmText}" to confirm:`,
+				validate: (value) => {
+					if (value.toUpperCase() !== confirmText) {
+						return `Please type "${confirmText}" exactly to confirm`;
+					}
+				},
+			});
+
+			if (typeof userInput !== "string") {
+				info("Cancelled");
+				return;
+			}
+
+			// NOW execute with confirmation (interactive: false means "already confirmed")
+			outputSpinner.start("Executing SQL...");
+			if (execArgs.filePath) {
+				result = await executeSqlFile({
+					projectDir,
+					filePath: execArgs.filePath,
+					databaseName: execArgs.databaseName,
+					allowWrite: true,
+					interactive: false, // Already confirmed, execute now
+				});
+			} else {
+				result = await executeSql({
+					projectDir,
+					sql: execArgs.sql!,
+					databaseName: execArgs.databaseName,
+					allowWrite: true,
+					interactive: false, // Already confirmed, execute now
+				});
+			}
+		}
+
+		outputSpinner.stop();
+
+		if (!result.success) {
+			console.error("");
+			error(result.error || "SQL execution failed");
+			console.error("");
+			process.exit(1);
+		}
+
+		// Show results
+		console.error("");
+		success(`SQL executed (${getRiskDescription(result.risk)})`);
+
+		if (result.meta?.changes !== undefined && result.meta.changes > 0) {
+			item(`Rows affected: ${result.meta.changes}`);
+		}
+
+		if (result.meta?.duration_ms !== undefined) {
+			item(`Duration: ${result.meta.duration_ms}ms`);
+		}
+
+		if (result.warning) {
+			console.error("");
+			warn(result.warning);
+		}
+
+		// Output query results
+		if (result.results && result.results.length > 0) {
+			console.error("");
+			console.log(JSON.stringify(result.results, null, 2));
+		}
+		console.error("");
+
+		// Track telemetry
+		track(Events.SQL_EXECUTED, {
+			risk_level: result.risk,
+			statement_count: result.statements.length,
+			from_file: !!execArgs.filePath,
+		});
+	} catch (err) {
+		outputSpinner.stop();
+
+		if (err instanceof WriteNotAllowedError) {
+			console.error("");
+			error(err.message);
+			info("Add the --write flag to allow data modification:");
+			info(`  jack services db execute "${execArgs.sql || `--file ${execArgs.filePath}`}" --write`);
+			console.error("");
+			process.exit(1);
+		}
+
+		if (err instanceof DestructiveOperationError) {
+			console.error("");
+			error(err.message);
+			info("Destructive operations require confirmation via CLI.");
+			console.error("");
+			process.exit(1);
+		}
+
+		console.error("");
+		error(`SQL execution failed: ${err instanceof Error ? err.message : String(err)}`);
+		console.error("");
 		process.exit(1);
 	}
 }
