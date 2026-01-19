@@ -87,9 +87,17 @@ export default defineConfig({
 						"</head>",
 						`<meta name="fc:miniapp" content='${miniappMeta}' />
 <script type="module">
-  import('https://esm.sh/@farcaster/miniapp-sdk@0.2.1').then(({ sdk }) => {
-    sdk.actions.ready();
-  }).catch(() => {});
+  import('https://esm.sh/@farcaster/miniapp-sdk@0.2.1').then((mod) => {
+    console.log('[fc-debug] SDK module loaded:', mod);
+    const sdk = mod.sdk || mod.default?.sdk || mod.default;
+    console.log('[fc-debug] SDK object:', sdk);
+    if (sdk?.actions?.ready) {
+      sdk.actions.ready();
+      console.log('[fc-debug] ready() called');
+    } else {
+      console.error('[fc-debug] sdk.actions.ready not found');
+    }
+  }).catch((err) => console.error('[fc-debug] SDK load failed:', err));
 </script>
 </head>`,
 					);
