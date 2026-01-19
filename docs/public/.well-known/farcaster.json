@@ -4,7 +4,7 @@
 		"payload": "eyJkb21haW4iOiJkb2NzLmdldGphY2sub3JnIn0",
 		"signature": "NTriUPOX/Z8B6qdc7EMjV3+vEs4f2ULdbW42kkT+K0lpwavaEHBlyf5/8H3OUIuUL5SwzN9jMuiccDRsoe0QgBw="
 	},
-	"miniapp": {
+	"frame": {
 		"version": "1",
 		"name": "jack",
 		"iconUrl": "https://docs.getjack.org/icon.png",
