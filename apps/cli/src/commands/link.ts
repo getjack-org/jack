@@ -46,11 +46,11 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 	// BYO mode - generate local ID
 	if (flags.byo) {
 		const projectId = generateByoProjectId();
-		output.start("Creating BYO link...");
+		output.start("Linking to your Cloudflare account...");
 		await linkProject(process.cwd(), projectId, "byo");
 		await registerPath(projectId, process.cwd());
 		output.stop();
-		success("Linked as BYO project");
+		success("Linked to your Cloudflare account");
 		info(`Project ID: ${projectId}`);
 		return;
 	}
@@ -62,7 +62,7 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 		// Not logged in and no project name - suggest options
 		error("Not logged in to jack cloud");
 		info("Login with: jack login");
-		info("Or create a BYO link: jack link --byo");
+		info("Or link to your Cloudflare account: jack link --byo");
 		process.exit(1);
 	}
 
@@ -118,9 +118,9 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 	output.stop();
 
 	if (projects.length === 0) {
-		error("No managed projects found");
+		error("No projects found");
 		info("Create one with: jack new");
-		info("Or link as BYO: jack link --byo");
+		info("Or link to your Cloudflare account: jack link --byo");
 		process.exit(1);
 	}
 

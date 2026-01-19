@@ -217,11 +217,11 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 
 	if (dryRunResult.exitCode !== 0) {
 		reporter?.stop();
-		reporter?.error("Worker build failed");
+		reporter?.error("Build failed");
 		throw new JackError(
 			JackErrorCode.BUILD_FAILED,
-			"Worker build failed",
-			"Check your wrangler.jsonc and worker code for errors",
+			"Build failed",
+			"Check your code for syntax errors",
 			{
 				exitCode: dryRunResult.exitCode,
 				stderr: dryRunResult.stderr.toString(),

@@ -32,6 +32,7 @@ export async function ensureWrangler(): Promise<void> {
 
 		if (install.exitCode !== 0) {
 			spin.error("Failed to install wrangler");
+			error("Try manually: bun add -g wrangler");
 			process.exit(1);
 		}
 		spin.success("Installed wrangler");
@@ -53,6 +54,7 @@ export async function ensureAuth(): Promise<void> {
 
 		if (login.exitCode !== 0) {
 			error("Failed to authenticate with Cloudflare");
+			error("Try manually: wrangler login");
 			process.exit(1);
 		}
 	}
