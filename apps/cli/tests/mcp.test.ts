@@ -21,21 +21,27 @@ test("jack mcp serve exposes tools without deploying", async () => {
 		JACK_CONFIG_DIR: configDir,
 	};
 
-	const client = await openMcpTestClient({
-		command: "bun",
-		args: ["run", "src/index.ts", "mcp", "serve", "--project", projectDir],
-		cwd: cliRoot,
-		env: clientEnv,
-	});
-
+	let client: Awaited<ReturnType<typeof openMcpTestClient>> | null = null;
 	try {
+		client = await openMcpTestClient({
+			command: "bun",
+			args: ["run", "src/index.ts", "mcp", "serve", "--project", projectDir],
+			cwd: cliRoot,
+			env: clientEnv,
+		});
+
 		await verifyMcpToolsAndResources(client.client);
 		const projects = await callMcpListProjects(client.client, "local");
 		if (!Array.isArray(projects)) {
 			throw new Error("list_projects returned unexpected data");
 		}
+	} catch (err) {
+		// Log stderr to help debug CI failures
+		const stderr = client?.getStderr() ?? "(no client)";
+		console.error("MCP test failed. Server stderr:", stderr);
+		throw err;
 	} finally {
-		await client.close();
+		await client?.close();
 		await rm(projectDir, { recursive: true, force: true });
 		await rm(configDir, { recursive: true, force: true });
 	}
