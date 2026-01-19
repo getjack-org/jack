@@ -1,13 +1,16 @@
 {
 	"name": "@getjack/jack",
-	"version": "0.1.16",
+	"version": "0.1.17",
 	"description": "Ship before you forget why you started. The vibecoder's deployment CLI.",
 	"license": "Apache-2.0",
 	"type": "module",
 	"bin": {
 		"jack": "./src/index.ts"
 	},
-	"files": ["src", "templates"],
+	"files": [
+		"src",
+		"templates"
+	],
 	"engines": {
 		"bun": ">=1.0.0"
 	},
