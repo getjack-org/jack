@@ -8,6 +8,7 @@ const miniappMeta = JSON.stringify({
 		action: {
 			type: "launch_miniapp",
 			name: "jack",
+			url: "https://docs.getjack.org",
 			splashImageUrl: "https://docs.getjack.org/icon.png",
 			splashBackgroundColor: "#0a0a0a",
 		},
