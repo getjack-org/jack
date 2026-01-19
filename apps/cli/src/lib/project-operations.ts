@@ -41,8 +41,8 @@ import {
 } from "./config-generator.ts";
 import { getSyncConfig } from "./config.ts";
 import { deleteManagedProject } from "./control-plane.ts";
-import { debug, isDebug } from "./debug.ts";
-import { validateModeAvailability } from "./deploy-mode.ts";
+import { debug, isDebug, printTimingSummary, timerEnd, timerStart } from "./debug.ts";
+import { ensureWranglerInstalled, validateModeAvailability } from "./deploy-mode.ts";
 import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parser.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { type HookOutput, runHook } from "./hooks.ts";
@@ -580,6 +580,18 @@ export async function createProject(
 		process.env.CI === "1";
 	const interactive = interactiveOption ?? !isCi;
 
+	// Track timings for each step (shown with --debug)
+	const timings: Array<{ label: string; duration: number }> = [];
+
+	// Fast local validation first - check directory before any network calls
+	const nameWasProvided = name !== undefined;
+	if (nameWasProvided) {
+		const targetDir = resolve(name);
+		if (existsSync(targetDir)) {
+			throw new JackError(JackErrorCode.VALIDATION_ERROR, `Directory ${name} already exists`);
+		}
+	}
+
 	// Check if jack init was run (throws if not)
 	const { isInitialized } = await import("../commands/init.ts");
 	const initialized = await isInitialized();
@@ -588,44 +600,58 @@ export async function createProject(
 	}
 
 	// Auth gate - check/prompt for authentication before any work
+	timerStart("auth-gate");
 	const { ensureAuthForCreate } = await import("./auth/ensure-auth.ts");
 	const authResult = await ensureAuthForCreate({
 		interactive,
 		forceManaged: options.managed,
 		forceByo: options.byo,
 	});
+	timings.push({ label: "Auth gate", duration: timerEnd("auth-gate") });
 
 	// Use authResult.mode (auth gate handles mode resolution)
 	const deployMode = authResult.mode;
 
 	// Close the "Starting..." spinner from new.ts
 	reporter.stop();
-	reporter.success("Initialized");
+	if (deployMode === "managed") {
+		reporter.success("Connected to jack cloud");
+	} else {
+		reporter.success("Ready");
+	}
 
 	// Generate or use provided name
-	const nameWasProvided = name !== undefined;
 	const projectName = name ?? generateProjectName();
 	const targetDir = resolve(projectName);
 
-	// Check directory doesn't exist
-	if (existsSync(targetDir)) {
+	// Check directory doesn't exist (only needed for auto-generated names now)
+	if (!nameWasProvided && existsSync(targetDir)) {
 		throw new JackError(JackErrorCode.VALIDATION_ERROR, `Directory ${projectName} already exists`);
 	}
 
 	// Early slug availability check for managed mode (only if user provided explicit name)
 	// Skip for auto-generated names - collision is rare, control plane will catch it anyway
 	if (deployMode === "managed" && nameWasProvided) {
+		timerStart("slug-check");
 		reporter.start("Checking name availability...");
-		const { checkAvailability } = await import("./project-resolver.ts");
-		const { available, existingProject } = await checkAvailability(projectName);
-		reporter.stop();
-		if (available) {
-			reporter.success("Name available");
-		}
 
-		if (!available && existingProject) {
-			// Project exists remotely but not locally - offer to link
-			if (existingProject.sources.controlPlane && !existingProject.sources.filesystem) {
+		// First check if the slug is available globally (includes system-reserved names)
+		const { checkSlugAvailability } = await import("./control-plane.ts");
+		const slugCheck = await checkSlugAvailability(projectName);
+
+		if (slugCheck.available) {
+			timings.push({ label: "Slug check", duration: timerEnd("slug-check") });
+			reporter.stop();
+			reporter.success("Name available");
+		} else {
+			// Slug not available - check if it's the user's own project (for linking flow)
+			const { checkAvailability } = await import("./project-resolver.ts");
+			const { existingProject } = await checkAvailability(projectName);
+			timings.push({ label: "Slug check", duration: timerEnd("slug-check") });
+			reporter.stop();
+
+			if (existingProject?.sources.controlPlane && !existingProject.sources.filesystem) {
+				// It's the user's project on jack cloud but not locally - offer to link
 				if (interactive) {
 					const { promptSelect } = await import("./hooks.ts");
 					console.error("");
@@ -636,7 +662,6 @@ export async function createProject(
 
 					if (choice === 0) {
 						// User chose to link - proceed with project creation
-						// The project will be linked locally when files are created
 						reporter.success(`Linking to existing project: ${existingProject.url || projectName}`);
 						// Continue with project creation - user wants to link
 					} else {
@@ -656,11 +681,18 @@ export async function createProject(
 						`Try a different name: jack new ${projectName}-2`,
 					);
 				}
-			} else {
-				// Project exists in registry with local path - it's truly taken
+			} else if (existingProject) {
+				// Project exists in registry with local path - it's truly taken by user
 				throw new JackError(
 					JackErrorCode.VALIDATION_ERROR,
 					`Project "${projectName}" already exists`,
+					`Try a different name: jack new ${projectName}-2`,
+				);
+			} else {
+				// Slug taken but not by this user (reserved or another user's project)
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					`Name "${projectName}" is not available`,
 					`Try a different name: jack new ${projectName}-2`,
 				);
 			}
@@ -756,6 +788,7 @@ export async function createProject(
 	}
 
 	// Load template with origin tracking for lineage
+	timerStart("template-load");
 	let template: Template;
 	let templateOrigin: TemplateOrigin;
 	try {
@@ -763,12 +796,14 @@ export async function createProject(
 		template = resolved.template;
 		templateOrigin = resolved.origin;
 	} catch (err) {
+		timerEnd("template-load");
 		reporter.stop();
 		const message = err instanceof Error ? err.message : String(err);
 		throw new JackError(JackErrorCode.TEMPLATE_NOT_FOUND, message);
 	}
 
 	const rendered = renderTemplate(template, { name: projectName });
+	timings.push({ label: "Template load", duration: timerEnd("template-load") });
 
 	// Handle template-specific secrets
 	const secretsToUse: Record<string, string> = {};
@@ -857,348 +892,380 @@ export async function createProject(
 		}
 	}
 
-	// Write all template files
-	for (const [filePath, content] of Object.entries(rendered.files)) {
-		await Bun.write(join(targetDir, filePath), content);
-	}
+	// Track if we created the directory (for cleanup on failure)
+	let directoryCreated = false;
 
-	// Preflight: check D1 capacity before spending time on installs (BYO only)
-	reporter.stop();
-	if (deployMode === "byo") {
-		await preflightD1Capacity(targetDir, reporter, interactive);
-	}
-	reporter.start("Creating project...");
-
-	// Write secrets files (.env for Vite, .dev.vars for wrangler local, .secrets.json for wrangler bulk)
-	if (Object.keys(secretsToUse).length > 0) {
-		const envContent = generateEnvFile(secretsToUse);
-		const jsonContent = generateSecretsJson(secretsToUse);
-		await Bun.write(join(targetDir, ".env"), envContent);
-		await Bun.write(join(targetDir, ".dev.vars"), envContent);
-		await Bun.write(join(targetDir, ".secrets.json"), jsonContent);
-
-		const gitignorePath = join(targetDir, ".gitignore");
-		const gitignoreExists = existsSync(gitignorePath);
-
-		if (!gitignoreExists) {
-			await Bun.write(gitignorePath, ".env\n.env.*\n.dev.vars\n.secrets.json\nnode_modules/\n");
-		} else {
-			const existingContent = await Bun.file(gitignorePath).text();
-			if (!existingContent.includes(".env")) {
-				await Bun.write(
-					gitignorePath,
-					`${existingContent}\n.env\n.env.*\n.dev.vars\n.secrets.json\n`,
-				);
-			}
-		}
-	}
-
-	// Generate agent context files
-	let activeAgents = await getActiveAgents();
-	if (activeAgents.length > 0) {
-		const validation = await validateAgentPaths();
-
-		if (validation.invalid.length > 0) {
-			// Silently filter out agents with missing paths
-			// User can run 'jack agents scan' to see/fix agent config
-			activeAgents = activeAgents.filter(
-				({ id }) => !validation.invalid.some((inv) => inv.id === id),
-			);
+	try {
+		// Write all template files
+		timerStart("file-write");
+		for (const [filePath, content] of Object.entries(rendered.files)) {
+			await Bun.write(join(targetDir, filePath), content);
+			directoryCreated = true; // Directory now exists
 		}
 
-		if (activeAgents.length > 0) {
-			await generateAgentFiles(targetDir, projectName, template, activeAgents);
-			const agentNames = activeAgents.map(({ definition }) => definition.name).join(", ");
-			reporter.stop();
-			reporter.success(`Generated context for: ${agentNames}`);
-			reporter.start("Creating project...");
-		}
-	}
-
-	reporter.stop();
-	reporter.success(`Created ${projectName}/`);
-
-	// Parallel setup for managed mode: install + remote creation
-	let remoteResult: ManagedCreateResult | undefined;
-
-	if (deployMode === "managed") {
-		// Run install and remote creation in parallel
-		reporter.start("Setting up project...");
-
-		try {
-			const result = await runParallelSetup(targetDir, projectName, {
-				template: resolvedTemplate || "hello",
-				usePrebuilt: templateOrigin.type === "builtin", // Only builtin templates have prebuilt bundles
-			});
-			remoteResult = result.remoteResult;
-			reporter.stop();
-			reporter.success("Project setup complete");
-		} catch (err) {
-			reporter.stop();
-			if (err instanceof JackError) {
-				reporter.warn(err.suggestion ?? err.message);
-				throw err;
-			}
-			throw err;
-		}
-	} else {
-		// BYO mode: just install dependencies (unchanged from current)
-		reporter.start("Installing dependencies...");
-
-		const install = Bun.spawn(["bun", "install"], {
-			cwd: targetDir,
-			stdout: "ignore",
-			stderr: "ignore",
-		});
-		await install.exited;
-
-		if (install.exitCode !== 0) {
-			reporter.stop();
-			reporter.warn("Failed to install dependencies, run: bun install");
-			throw new JackError(
-				JackErrorCode.BUILD_FAILED,
-				"Dependency installation failed",
-				"Run: bun install",
-				{ exitCode: 0, reported: hasReporter },
-			);
-		}
-
+		// Preflight: check D1 capacity before spending time on installs (BYO only)
 		reporter.stop();
-		reporter.success("Dependencies installed");
-	}
-
-	// Run pre-deploy hooks
-	if (template.hooks?.preDeploy?.length) {
-		const hookContext = { projectName, projectDir: targetDir };
-		const hookResult = await runHook(template.hooks.preDeploy, hookContext, {
-			interactive,
-			output: reporter,
-		});
-		if (!hookResult.success) {
-			reporter.error("Pre-deploy checks failed");
-			throw new JackError(JackErrorCode.VALIDATION_ERROR, "Pre-deploy checks failed", undefined, {
-				exitCode: 0,
-				reported: hasReporter,
-			});
+		if (deployMode === "byo") {
+			await preflightD1Capacity(targetDir, reporter, interactive);
 		}
-	}
+		reporter.start("Creating project...");
 
-	// One-shot agent customization if intent was provided
-	if (intentPhrase) {
-		const oneShotAgent = await getOneShotAgent();
+		// Write secrets files (.env for Vite, .dev.vars for wrangler local, .secrets.json for wrangler bulk)
+		if (Object.keys(secretsToUse).length > 0) {
+			const envContent = generateEnvFile(secretsToUse);
+			const jsonContent = generateSecretsJson(secretsToUse);
+			await Bun.write(join(targetDir, ".env"), envContent);
+			await Bun.write(join(targetDir, ".dev.vars"), envContent);
+			await Bun.write(join(targetDir, ".secrets.json"), jsonContent);
 
-		if (oneShotAgent) {
-			const agentDefinition = getAgentDefinition(oneShotAgent);
-			const agentLabel = agentDefinition?.name ?? oneShotAgent;
-			reporter.info(`Customizing with ${agentLabel}`);
-			reporter.info(`Intent: ${intentPhrase}`);
-			const debugEnabled = isDebug();
-			const customizationSpinner = debugEnabled ? null : reporter.spinner("Customizing...");
+			const gitignorePath = join(targetDir, ".gitignore");
+			const gitignoreExists = existsSync(gitignorePath);
 
-			// Track customization start
-			track(Events.INTENT_CUSTOMIZATION_STARTED, { agent: oneShotAgent });
-
-			const result = await runAgentOneShot(oneShotAgent, targetDir, intentPhrase, {
-				info: reporter.info,
-				warn: reporter.warn,
-				status: customizationSpinner
-					? (message) => {
-							customizationSpinner.text = message;
-						}
-					: undefined,
-			});
-
-			if (customizationSpinner) {
-				customizationSpinner.stop();
-			}
-			if (result.success) {
-				reporter.success("Project customized");
-				// Track successful customization
-				track(Events.INTENT_CUSTOMIZATION_COMPLETED, { agent: oneShotAgent });
+			if (!gitignoreExists) {
+				await Bun.write(gitignorePath, ".env\n.env.*\n.dev.vars\n.secrets.json\nnode_modules/\n");
 			} else {
-				reporter.warn(`Customization skipped: ${result.error ?? "unknown error"}`);
-				// Track failed customization
-				track(Events.INTENT_CUSTOMIZATION_FAILED, {
-					agent: oneShotAgent,
-					error_type: "agent_error",
-				});
-			}
-		} else {
-			reporter.info?.("No compatible agent for customization (Claude Code or Codex required)");
-		}
-	}
-
-	let workerUrl: string | null = null;
-
-	// Deploy based on mode
-	if (deployMode === "managed") {
-		// Managed mode: remote was already created in parallel setup
-		if (!remoteResult) {
-			throw new JackError(
-				JackErrorCode.VALIDATION_ERROR,
-				"Managed project was not created",
-				"This is an internal error - please report it",
-			);
-		}
-
-		// Fetch username for link storage
-		const { getCurrentUserProfile } = await import("./control-plane.ts");
-		const profile = await getCurrentUserProfile();
-		const ownerUsername = profile?.username ?? undefined;
-
-		// Link project locally and register path
-		try {
-			await linkProject(targetDir, remoteResult.projectId, "managed", ownerUsername);
-			await writeTemplateMetadata(targetDir, templateOrigin);
-			await registerPath(remoteResult.projectId, targetDir);
-		} catch (err) {
-			debug("Failed to link managed project:", err);
-		}
-
-		// Check if prebuilt deployment succeeded
-		if (remoteResult.status === "live") {
-			// Prebuilt succeeded - skip the fresh build
-			workerUrl = remoteResult.runjackUrl;
-			reporter.success(`Deployed: ${workerUrl}`);
-		} else {
-			// Prebuilt not available - fall back to fresh build
-			if (remoteResult.prebuiltFailed) {
-				// Show debug info about why prebuilt failed
-				const errorDetail = remoteResult.prebuiltError ? ` (${remoteResult.prebuiltError})` : "";
-				debug(`Prebuilt failed${errorDetail}`);
-				reporter.info("Pre-built not available, building fresh...");
-			}
-
-			await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
-			workerUrl = remoteResult.runjackUrl;
-			reporter.success(`Created: ${workerUrl}`);
-		}
-	} else {
-		// BYO mode: deploy via wrangler
-
-		// Build first if needed (wrangler needs built assets)
-		if (await needsOpenNextBuild(targetDir)) {
-			reporter.start("Building assets...");
-			try {
-				await runOpenNextBuild(targetDir);
-				reporter.stop();
-				reporter.success("Built assets");
-			} catch (err) {
-				reporter.stop();
-				reporter.error("Build failed");
-				throw err;
-			}
-		} else if (await needsViteBuild(targetDir)) {
-			reporter.start("Building assets...");
-			try {
-				await runViteBuild(targetDir);
-				reporter.stop();
-				reporter.success("Built assets");
-			} catch (err) {
-				reporter.stop();
-				reporter.error("Build failed");
-				throw err;
-			}
-		}
-
-		reporter.start("Deploying...");
-
-		const deployResult = await runWranglerDeploy(targetDir);
-
-		if (deployResult.exitCode !== 0) {
-			reporter.stop();
-			reporter.error("Deploy failed");
-			throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
-				exitCode: 0,
-				stderr: deployResult.stderr.toString(),
-				reported: hasReporter,
-			});
-		}
-
-		// Apply schema.sql after deploy
-		if (await hasD1Config(targetDir)) {
-			const dbName = await getD1DatabaseName(targetDir);
-			if (dbName) {
-				try {
-					await applySchema(dbName, targetDir);
-				} catch (err) {
-					reporter.warn(`Schema application failed: ${err}`);
-					reporter.info("Run manually: bun run db:migrate");
+				const existingContent = await Bun.file(gitignorePath).text();
+				if (!existingContent.includes(".env")) {
+					await Bun.write(
+						gitignorePath,
+						`${existingContent}\n.env\n.env.*\n.dev.vars\n.secrets.json\n`,
+					);
 				}
 			}
 		}
+		timings.push({ label: "File write", duration: timerEnd("file-write") });
 
-		// Push secrets to Cloudflare
-		const secretsJsonPath = join(targetDir, ".secrets.json");
-		if (existsSync(secretsJsonPath)) {
-			reporter.start("Configuring secrets...");
+		// Generate agent context files
+		let activeAgents = await getActiveAgents();
+		if (activeAgents.length > 0) {
+			const validation = await validateAgentPaths();
 
-			const secretsResult = await $`wrangler secret bulk .secrets.json`
-				.cwd(targetDir)
-				.nothrow()
-				.quiet();
+			if (validation.invalid.length > 0) {
+				// Silently filter out agents with missing paths
+				// User can run 'jack agents scan' to see/fix agent config
+				activeAgents = activeAgents.filter(
+					({ id }) => !validation.invalid.some((inv) => inv.id === id),
+				);
+			}
 
-			if (secretsResult.exitCode !== 0) {
+			if (activeAgents.length > 0) {
+				await generateAgentFiles(targetDir, projectName, template, activeAgents);
+				const agentNames = activeAgents.map(({ definition }) => definition.name).join(", ");
 				reporter.stop();
-				reporter.warn("Failed to push secrets to Cloudflare");
-				reporter.info("Run manually: wrangler secret bulk .secrets.json");
-			} else {
-				reporter.stop();
-				reporter.success("Secrets configured");
+				reporter.success(`Generated context for: ${agentNames}`);
+				reporter.start("Creating project...");
 			}
 		}
 
-		// Parse URL from output
-		const deployOutput = deployResult.stdout.toString();
-		const urlMatch = deployOutput.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
-		workerUrl = urlMatch ? urlMatch[0] : null;
-
 		reporter.stop();
-		if (workerUrl) {
-			reporter.success(`Live: ${workerUrl}`);
+		reporter.success(`Created ${projectName}/`);
+
+		// Parallel setup for managed mode: install + remote creation
+		let remoteResult: ManagedCreateResult | undefined;
+
+		if (deployMode === "managed") {
+			// Run install and remote creation in parallel
+			timerStart("parallel-setup");
+			reporter.start("Setting up project...");
+
+			try {
+				const result = await runParallelSetup(targetDir, projectName, {
+					template: resolvedTemplate || "hello",
+					usePrebuilt: templateOrigin.type === "builtin", // Only builtin templates have prebuilt bundles
+				});
+				remoteResult = result.remoteResult;
+				timings.push({ label: "Parallel setup", duration: timerEnd("parallel-setup") });
+				reporter.stop();
+				reporter.success("Project setup complete");
+			} catch (err) {
+				timerEnd("parallel-setup");
+				reporter.stop();
+				if (err instanceof JackError) {
+					reporter.warn(err.suggestion ?? err.message);
+					throw err;
+				}
+				throw err;
+			}
 		} else {
-			reporter.success("Deployed");
+			// BYO mode: just install dependencies (unchanged from current)
+			timerStart("bun-install");
+			reporter.start("Installing dependencies...");
+
+			const install = Bun.spawn(["bun", "install"], {
+				cwd: targetDir,
+				stdout: "ignore",
+				stderr: "ignore",
+			});
+			await install.exited;
+
+			if (install.exitCode !== 0) {
+				timerEnd("bun-install");
+				reporter.stop();
+				reporter.warn("Failed to install dependencies, run: bun install");
+				throw new JackError(
+					JackErrorCode.BUILD_FAILED,
+					"Dependency installation failed",
+					"Run: bun install",
+					{ exitCode: 0, reported: hasReporter },
+				);
+			}
+
+			timings.push({ label: "Bun install", duration: timerEnd("bun-install") });
+			reporter.stop();
+			reporter.success("Dependencies installed");
 		}
 
-		// Generate BYO project ID and link locally
-		const byoProjectId = generateByoProjectId();
-
-		// Link project locally and register path
-		try {
-			await linkProject(targetDir, byoProjectId, "byo");
-			await writeTemplateMetadata(targetDir, templateOrigin);
-			await registerPath(byoProjectId, targetDir);
-		} catch (err) {
-			debug("Failed to link BYO project:", err);
+		// Run pre-deploy hooks
+		if (template.hooks?.preDeploy?.length) {
+			const hookContext = { projectName, projectDir: targetDir };
+			const hookResult = await runHook(template.hooks.preDeploy, hookContext, {
+				interactive,
+				output: reporter,
+			});
+			if (!hookResult.success) {
+				reporter.error("Pre-deploy checks failed");
+				throw new JackError(JackErrorCode.VALIDATION_ERROR, "Pre-deploy checks failed", undefined, {
+					exitCode: 0,
+					reported: hasReporter,
+				});
+			}
 		}
+
+		// One-shot agent customization if intent was provided
+		if (intentPhrase) {
+			const oneShotAgent = await getOneShotAgent();
+
+			if (oneShotAgent) {
+				const agentDefinition = getAgentDefinition(oneShotAgent);
+				const agentLabel = agentDefinition?.name ?? oneShotAgent;
+				reporter.info(`Customizing with ${agentLabel}`);
+				reporter.info(`Intent: ${intentPhrase}`);
+				const debugEnabled = isDebug();
+				const customizationSpinner = debugEnabled ? null : reporter.spinner("Customizing...");
+
+				// Track customization start
+				track(Events.INTENT_CUSTOMIZATION_STARTED, { agent: oneShotAgent });
+
+				const result = await runAgentOneShot(oneShotAgent, targetDir, intentPhrase, {
+					info: reporter.info,
+					warn: reporter.warn,
+					status: customizationSpinner
+						? (message) => {
+								customizationSpinner.text = message;
+							}
+						: undefined,
+				});
+
+				if (customizationSpinner) {
+					customizationSpinner.stop();
+				}
+				if (result.success) {
+					reporter.success("Project customized");
+					// Track successful customization
+					track(Events.INTENT_CUSTOMIZATION_COMPLETED, { agent: oneShotAgent });
+				} else {
+					reporter.warn(`Customization skipped: ${result.error ?? "unknown error"}`);
+					// Track failed customization
+					track(Events.INTENT_CUSTOMIZATION_FAILED, {
+						agent: oneShotAgent,
+						error_type: "agent_error",
+					});
+				}
+			} else {
+				reporter.info?.("No compatible agent for customization (Claude Code or Codex required)");
+			}
+		}
+
+		let workerUrl: string | null = null;
+
+		// Deploy based on mode
+		timerStart("deploy");
+		if (deployMode === "managed") {
+			// Managed mode: remote was already created in parallel setup
+			if (!remoteResult) {
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					"Managed project was not created",
+					"This is an internal error - please report it",
+				);
+			}
+
+			// Fetch username for link storage
+			const { getCurrentUserProfile } = await import("./control-plane.ts");
+			const profile = await getCurrentUserProfile();
+			const ownerUsername = profile?.username ?? undefined;
+
+			// Link project locally and register path
+			try {
+				await linkProject(targetDir, remoteResult.projectId, "managed", ownerUsername);
+				await writeTemplateMetadata(targetDir, templateOrigin);
+				await registerPath(remoteResult.projectId, targetDir);
+			} catch (err) {
+				debug("Failed to link managed project:", err);
+			}
+
+			// Check if prebuilt deployment succeeded
+			if (remoteResult.status === "live") {
+				// Prebuilt succeeded - skip the fresh build
+				workerUrl = remoteResult.runjackUrl;
+				reporter.success(`Deployed: ${workerUrl}`);
+			} else {
+				// Prebuilt not available - fall back to fresh build
+				if (remoteResult.prebuiltFailed) {
+					// Show debug info about why prebuilt failed
+					const errorDetail = remoteResult.prebuiltError ? ` (${remoteResult.prebuiltError})` : "";
+					debug(`Prebuilt failed${errorDetail}`);
+					reporter.info("Pre-built not available, building fresh...");
+				}
+
+				await deployToManagedProject(remoteResult.projectId, targetDir, reporter);
+				workerUrl = remoteResult.runjackUrl;
+				reporter.success(`Created: ${workerUrl}`);
+			}
+		} else {
+			// BYO mode: deploy via wrangler
+
+			// Build first if needed (wrangler needs built assets)
+			if (await needsOpenNextBuild(targetDir)) {
+				reporter.start("Building assets...");
+				try {
+					await runOpenNextBuild(targetDir);
+					reporter.stop();
+					reporter.success("Built assets");
+				} catch (err) {
+					reporter.stop();
+					reporter.error("Build failed");
+					throw err;
+				}
+			} else if (await needsViteBuild(targetDir)) {
+				reporter.start("Building assets...");
+				try {
+					await runViteBuild(targetDir);
+					reporter.stop();
+					reporter.success("Built assets");
+				} catch (err) {
+					reporter.stop();
+					reporter.error("Build failed");
+					throw err;
+				}
+			}
+
+			reporter.start("Deploying...");
+
+			const deployResult = await runWranglerDeploy(targetDir);
+
+			if (deployResult.exitCode !== 0) {
+				reporter.stop();
+				reporter.error("Deploy failed");
+				throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
+					exitCode: 0,
+					stderr: deployResult.stderr.toString(),
+					reported: hasReporter,
+				});
+			}
+
+			// Apply schema.sql after deploy
+			if (await hasD1Config(targetDir)) {
+				const dbName = await getD1DatabaseName(targetDir);
+				if (dbName) {
+					try {
+						await applySchema(dbName, targetDir);
+					} catch (err) {
+						reporter.warn(`Schema application failed: ${err}`);
+						reporter.info("Run manually: bun run db:migrate");
+					}
+				}
+			}
+
+			// Push secrets to Cloudflare
+			const secretsJsonPath = join(targetDir, ".secrets.json");
+			if (existsSync(secretsJsonPath)) {
+				reporter.start("Configuring secrets...");
+
+				const secretsResult = await $`wrangler secret bulk .secrets.json`
+					.cwd(targetDir)
+					.nothrow()
+					.quiet();
+
+				if (secretsResult.exitCode !== 0) {
+					reporter.stop();
+					reporter.warn("Failed to push secrets to Cloudflare");
+					reporter.info("Run manually: wrangler secret bulk .secrets.json");
+				} else {
+					reporter.stop();
+					reporter.success("Secrets configured");
+				}
+			}
+
+			// Parse URL from output
+			const deployOutput = deployResult.stdout.toString();
+			const urlMatch = deployOutput.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
+			workerUrl = urlMatch ? urlMatch[0] : null;
+
+			reporter.stop();
+			if (workerUrl) {
+				reporter.success(`Live: ${workerUrl}`);
+			} else {
+				reporter.success("Deployed");
+			}
+
+			// Generate BYO project ID and link locally
+			const byoProjectId = generateByoProjectId();
+
+			// Link project locally and register path
+			try {
+				await linkProject(targetDir, byoProjectId, "byo");
+				await writeTemplateMetadata(targetDir, templateOrigin);
+				await registerPath(byoProjectId, targetDir);
+			} catch (err) {
+				debug("Failed to link BYO project:", err);
+			}
+		}
+		timings.push({ label: "Deploy", duration: timerEnd("deploy") });
+
+		// Run post-deploy hooks (for both modes)
+		if (template.hooks?.postDeploy?.length && workerUrl) {
+			timerStart("post-deploy-hooks");
+			const domain = workerUrl.replace(/^https?:\/\//, "");
+			const hookResult = await runHook(
+				template.hooks.postDeploy,
+				{
+					domain,
+					url: workerUrl,
+					projectName,
+					projectDir: targetDir,
+				},
+				{ interactive, output: reporter },
+			);
+			timings.push({ label: "Post-deploy hooks", duration: timerEnd("post-deploy-hooks") });
+
+			// Show final celebration if there were interactive prompts (URL might have scrolled away)
+			if (hookResult.hadInteractiveActions && reporter.celebrate) {
+				reporter.celebrate("You're live!", [domain]);
+			}
+		}
+
+		// Print timing summary (only shown with --debug)
+		printTimingSummary(timings);
+
+		return {
+			projectName,
+			targetDir,
+			workerUrl,
+			deployMode,
+		};
+	} catch (error) {
+		// Clean up directory if we created it
+		if (directoryCreated && existsSync(targetDir)) {
+			try {
+				const { rm } = await import("node:fs/promises");
+				await rm(targetDir, { recursive: true, force: true });
+			} catch {
+				// Ignore cleanup errors - user will see directory exists on retry
+			}
+		}
+		throw error;
 	}
-
-	// Run post-deploy hooks (for both modes)
-	if (template.hooks?.postDeploy?.length && workerUrl) {
-		const domain = workerUrl.replace(/^https?:\/\//, "");
-		const hookResult = await runHook(
-			template.hooks.postDeploy,
-			{
-				domain,
-				url: workerUrl,
-				projectName,
-				projectDir: targetDir,
-			},
-			{ interactive, output: reporter },
-		);
-
-		// Show final celebration if there were interactive prompts (URL might have scrolled away)
-		if (hookResult.hadInteractiveActions && reporter.celebrate) {
-			reporter.celebrate("You're live!", [domain]);
-		}
-	}
-
-	return {
-		projectName,
-		targetDir,
-		workerUrl,
-		deployMode,
-	};
 }
 
 // ============================================================================
@@ -1272,8 +1339,21 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		deployMode = link?.deploy_mode ?? "byo";
 	}
 
-	// Validate mode availability
+	// Ensure wrangler is installed (auto-install if needed)
 	if (!dryRun) {
+		let installSpinner: OperationSpinner | null = null;
+		const wranglerReady = await ensureWranglerInstalled(() => {
+			installSpinner = reporter.spinner("Installing dependencies...");
+		});
+		if (installSpinner) {
+			if (wranglerReady) {
+				(installSpinner as OperationSpinner).success("Dependencies installed");
+			} else {
+				(installSpinner as OperationSpinner).error("Failed to install dependencies");
+			}
+		}
+
+		// Validate mode availability
 		const modeError = await validateModeAvailability(deployMode);
 		if (modeError) {
 			throw new JackError(JackErrorCode.VALIDATION_ERROR, modeError);
