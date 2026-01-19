@@ -83,50 +83,30 @@ const noopOutput: HookOutput = {
  */
 
 /**
- * Prompt user with numbered options (Claude Code style)
+ * Prompt user with numbered options
+ * Uses @clack/prompts selectKey for reliable input handling
  * Returns the selected option index (0-based) or -1 if cancelled
  */
 export async function promptSelect(options: string[]): Promise<number> {
-	// Display options
-	for (let i = 0; i < options.length; i++) {
-		console.error(`  ${i + 1}. ${options[i]}`);
-	}
-	console.error("");
-	console.error("  Esc to skip");
+	const { selectKey, isCancel } = await import("@clack/prompts");
 
-	// Read single keypress
-	if (process.stdin.isTTY) {
-		process.stdin.setRawMode(true);
-	}
-	process.stdin.resume();
+	// Build options with number keys (1, 2, 3, ...)
+	const clackOptions = options.map((label, index) => ({
+		value: String(index + 1),
+		label,
+	}));
 
-	return new Promise((resolve) => {
-		const onData = (key: Buffer) => {
-			const char = key.toString();
-
-			// Esc or q to cancel
-			if (char === "\x1b" || char === "q") {
-				cleanup();
-				resolve(-1);
-				return;
-			}
-
-			// Number keys
-			const num = Number.parseInt(char, 10);
-			if (num >= 1 && num <= options.length) {
-				cleanup();
-				resolve(num - 1);
-				return;
-			}
-		};
-
-		const cleanup = () => {
-			process.stdin.removeListener("data", onData);
-			restoreTty();
-		};
-
-		process.stdin.on("data", onData);
+	const result = await selectKey({
+		message: "",
+		options: clackOptions,
 	});
+
+	if (isCancel(result)) {
+		return -1;
+	}
+
+	// Convert "1", "2", etc. back to 0-based index
+	return Number.parseInt(result as string, 10) - 1;
 }
 
 /**
@@ -446,15 +426,12 @@ const actionHandlers: {
 		if (action.validate === "json" || action.validate === "accountAssociation") {
 			rawValue = await readMultilineJson(action.message);
 		} else {
-			const { input } = await import("@inquirer/prompts");
-			try {
-				rawValue = await input({ message: action.message });
-			} catch (err) {
-				if (err instanceof Error && err.name === "ExitPromptError") {
-					return true;
-				}
-				throw err;
+			const { isCancel, text } = await import("@clack/prompts");
+			const result = await text({ message: action.message });
+			if (isCancel(result)) {
+				return true;
 			}
+			rawValue = result;
 		}
 
 		if (!rawValue.trim()) {

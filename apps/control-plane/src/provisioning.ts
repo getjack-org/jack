@@ -558,6 +558,104 @@ export class ProvisioningService {
 	}
 
 	/**
+	 * Create a resource for an existing project.
+	 * Supports D1 databases (KV and R2 planned for future).
+	 */
+	async createResourceForProject(
+		projectId: string,
+		resourceType: "d1" | "kv" | "r2",
+		options: { name?: string; bindingName?: string } = {},
+	): Promise<Resource> {
+		const project = await this.getProject(projectId);
+		if (!project) {
+			throw new Error(`Project ${projectId} not found`);
+		}
+
+		const resourceNames = this.getResourceNames(projectId);
+
+		switch (resourceType) {
+			case "d1": {
+				// Count existing D1 databases for this project
+				const existingD1s = await this.db
+					.prepare(
+						"SELECT COUNT(*) as count FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+					)
+					.bind(projectId)
+					.first<{ count: number }>();
+
+				const d1Count = existingD1s?.count ?? 0;
+
+				// Generate resource name with suffix for additional DBs
+				const suffix = options.name
+					? `-${this.sanitizeBucketName(options.name)}`
+					: `-db${d1Count + 1}`;
+				const dbName = `${resourceNames.worker}${suffix}`;
+
+				// Determine binding name: first DB uses "DB", others use SCREAMING_SNAKE_CASE of name or numbered
+				let bindingName: string;
+				if (options.bindingName) {
+					bindingName = options.bindingName;
+				} else if (d1Count === 0) {
+					bindingName = "DB";
+				} else if (options.name) {
+					// Convert name to SCREAMING_SNAKE_CASE
+					bindingName = options.name
+						.toUpperCase()
+						.replace(/[^A-Z0-9]+/g, "_")
+						.replace(/^_|_$/g, "");
+				} else {
+					bindingName = `DB_${d1Count + 1}`;
+				}
+
+				this.validateBindingName(bindingName);
+
+				// Create the D1 database
+				const d1Database = await this.cfClient.createD1Database(dbName);
+
+				// Register resource with binding name
+				const resourceId = `res_${crypto.randomUUID()}`;
+				await this.db
+					.prepare(
+						`INSERT INTO resources (id, project_id, resource_type, binding_name, resource_name, provider_id, status)
+						 VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+					)
+					.bind(resourceId, projectId, "d1", bindingName, dbName, d1Database.uuid)
+					.run();
+
+				const resource = await this.db
+					.prepare("SELECT * FROM resources WHERE id = ?")
+					.bind(resourceId)
+					.first<Resource>();
+
+				if (!resource) {
+					throw new Error("Failed to retrieve created resource");
+				}
+
+				return resource;
+			}
+
+			case "kv": {
+				// TODO: Implement KV namespace creation
+				throw new Error(
+					"KV namespace creation not yet implemented. Use provisionKVBinding() for now.",
+				);
+			}
+
+			case "r2": {
+				// TODO: Implement R2 bucket creation
+				throw new Error(
+					"R2 bucket creation not yet implemented. Use provisionR2Binding() for now.",
+				);
+			}
+
+			default: {
+				const _exhaustive: never = resourceType;
+				throw new Error(`Unknown resource type: ${resourceType}`);
+			}
+		}
+	}
+
+	/**
 	 * Update project limits
 	 */
 	async updateProjectLimits(

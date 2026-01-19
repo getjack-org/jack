@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { getAuthState } from "../lib/auth/index.ts";
 import {
 	checkWorkerExists,
 	deleteDatabase,
@@ -100,9 +101,26 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		}
 
 		if (!resolved && !link) {
-			// Not found anywhere
-			warn(`Project '${name}' not found`);
-			info("Will attempt to undeploy if deployed");
+			// Project not found - provide auth-aware messaging
+			const authState = await getAuthState();
+
+			if (authState === "logged-in") {
+				// We're logged in and control plane didn't find it - definitely not a managed project
+				warn(`Project '${name}' not tracked by jack`);
+				info("Checking your Cloudflare account...");
+			} else if (authState === "session-expired") {
+				// Session expired - can't verify if this is a managed project
+				warn(`Project '${name}' not found locally`);
+				info("Session expired - can't check jack cloud");
+				info("If this was deployed via jack, run: jack login");
+				info("Checking your Cloudflare account...");
+			} else {
+				// Not logged in - can't verify if this is a managed project
+				warn(`Project '${name}' not found locally`);
+				info("Not logged in - can't check jack cloud");
+				info("If this was deployed via jack, run: jack login");
+				info("Checking your Cloudflare account...");
+			}
 		}
 
 		// Check if this is a managed project (from link or resolved data)

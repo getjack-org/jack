@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { select } from "@inquirer/prompts";
+import { isCancel, select } from "@clack/prompts";
 import { isLoggedIn } from "../lib/auth/index.ts";
 import {
 	type ManagedProject,
@@ -127,11 +127,16 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 	console.error("");
 	const choice = await select({
 		message: "Select a project to link:",
-		choices: projects.map((p) => ({
+		options: projects.map((p) => ({
 			value: p.id,
-			name: `${p.slug} (${p.status})`,
+			label: `${p.slug} (${p.status})`,
 		})),
 	});
+
+	if (isCancel(choice)) {
+		info("Cancelled");
+		process.exit(0);
+	}
 
 	const selected = projects.find((p) => p.id === choice);
 	if (!selected) {

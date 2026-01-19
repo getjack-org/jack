@@ -1,4 +1,4 @@
-import { input, select } from "@inquirer/prompts";
+import { isCancel, select, text } from "@clack/prompts";
 import type { DetectedSecret } from "./env-parser.ts";
 import { info, success, warn } from "./output.ts";
 import { getSavedSecrets, getSecretsPath, maskSecret, saveSecrets } from "./secrets.ts";
@@ -25,14 +25,14 @@ export async function promptSaveSecrets(detected: DetectedSecret[]): Promise<voi
 
 	const action = await select({
 		message: "What would you like to do?",
-		choices: [
-			{ value: "save", name: "Save to jack for future projects" },
-			{ value: "paste", name: "Paste additional secrets" },
-			{ value: "skip", name: "Skip for now" },
+		options: [
+			{ value: "save", label: "Save to jack for future projects" },
+			{ value: "paste", label: "Paste additional secrets" },
+			{ value: "skip", label: "Skip for now" },
 		],
 	});
 
-	if (action === "skip") {
+	if (isCancel(action) || action === "skip") {
 		return;
 	}
 
@@ -65,17 +65,21 @@ async function promptAdditionalSecrets(): Promise<
 	const secrets: Array<{ key: string; value: string; source: string }> = [];
 
 	while (true) {
-		const key = await input({
+		const key = await text({
 			message: "Enter secret name (or press enter to finish):",
 		});
 
-		if (!key.trim()) {
+		if (isCancel(key) || !key.trim()) {
 			break;
 		}
 
-		const value = await input({
+		const value = await text({
 			message: `Enter value for ${key}:`,
 		});
+
+		if (isCancel(value)) {
+			break;
+		}
 
 		if (value.trim()) {
 			secrets.push({ key: key.trim(), value: value.trim(), source: "manual" });
@@ -107,20 +111,19 @@ export async function promptUseSecrets(): Promise<Record<string, string> | null>
 	}
 	console.error("");
 
-	console.error("  Esc to skip\n");
 	const action = await select({
 		message: "Use them for this project?",
-		choices: [
-			{ name: "1. Yes", value: "yes" },
-			{ name: "2. No", value: "no" },
+		options: [
+			{ label: "Yes", value: "yes" },
+			{ label: "No", value: "no" },
 		],
 	});
 
-	if (action === "yes") {
-		return saved;
+	if (isCancel(action) || action !== "yes") {
+		return null;
 	}
 
-	return null;
+	return saved;
 }
 
 /**
@@ -151,14 +154,13 @@ export async function promptUseSecretsFromList(
 		return false;
 	}
 
-	console.error("  Esc to skip\n");
 	const action = await select({
 		message: "Use saved secrets for this project?",
-		choices: [
-			{ name: "1. Yes", value: "yes" },
-			{ name: "2. No", value: "no" },
+		options: [
+			{ label: "Yes", value: "yes" },
+			{ label: "No", value: "no" },
 		],
 	});
 
-	return action === "yes";
+	return !isCancel(action) && action === "yes";
 }

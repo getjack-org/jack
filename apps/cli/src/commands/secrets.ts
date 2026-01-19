@@ -6,7 +6,7 @@
  * For BYO projects: uses wrangler secret commands.
  */
 
-import { password as passwordPrompt } from "@inquirer/prompts";
+import { isCancel, password as passwordPrompt } from "@clack/prompts";
 import { $ } from "bun";
 import { getControlApiUrl } from "../lib/control-plane.ts";
 import { JackError, JackErrorCode } from "../lib/errors.ts";
@@ -96,22 +96,19 @@ async function resolveProjectContext(options: SecretsOptions): Promise<{
 
 /**
  * Read a secret value interactively without echoing
- * Uses @inquirer/prompts password for robust handling of typing, pasting, and TTY
+ * Uses @clack/prompts password for robust handling of typing, pasting, and TTY
  */
 async function readSecretInteractive(keyName: string): Promise<string> {
-	try {
-		const value = await passwordPrompt({
-			message: `Enter value for ${keyName}`,
-			mask: "*",
-		});
-		return value;
-	} catch (err) {
-		// Handle Ctrl+C / Escape - inquirer throws ExitPromptError
-		if (err instanceof Error && err.name === "ExitPromptError") {
-			throw new Error("Cancelled");
-		}
-		throw err;
+	const value = await passwordPrompt({
+		message: `Enter value for ${keyName}`,
+		mask: "*",
+	});
+
+	if (isCancel(value)) {
+		throw new Error("Cancelled");
 	}
+
+	return value;
 }
 
 /**

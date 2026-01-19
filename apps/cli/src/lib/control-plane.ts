@@ -300,8 +300,16 @@ export interface ProjectResource {
 	resource_type: string;
 	resource_name: string;
 	provider_id: string;
+	binding_name: string;
 	status: string;
 	created_at: string;
+}
+
+export interface CreateResourceResponse {
+	resource_type: string;
+	resource_name: string;
+	provider_id: string;
+	binding_name: string;
 }
 
 /**
@@ -322,6 +330,45 @@ export async function fetchProjectResources(projectId: string): Promise<ProjectR
 
 	const data = (await response.json()) as { resources: ProjectResource[] };
 	return data.resources;
+}
+
+/**
+ * Create a resource for a managed project.
+ * Uses POST /v1/projects/:id/resources/:type endpoint.
+ */
+export async function createProjectResource(
+	projectId: string,
+	resourceType: "d1" | "kv" | "r2",
+	options?: { name?: string; bindingName?: string },
+): Promise<CreateResourceResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const body: Record<string, string> = {};
+	if (options?.name) {
+		body.name = options.name;
+	}
+	if (options?.bindingName) {
+		body.binding_name = options.bindingName;
+	}
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${projectId}/resources/${resourceType}`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		},
+	);
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to create ${resourceType} resource: ${response.status}`);
+	}
+
+	const data = (await response.json()) as { resource: CreateResourceResponse };
+	return data.resource;
 }
 
 /**

@@ -4,6 +4,8 @@ import { z } from "zod";
 import { JackError, JackErrorCode } from "../../lib/errors.ts";
 import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
 import { listAllProjects } from "../../lib/project-resolver.ts";
+import { createDatabase } from "../../lib/services/db-create.ts";
+import { listDatabases } from "../../lib/services/db-list.ts";
 import { Events, track, withTelemetry } from "../../lib/telemetry.ts";
 import type { DebugLogger, McpServerOptions } from "../types.ts";
 import { formatErrorResponse, formatSuccessResponse } from "../utils.ts";
@@ -34,6 +36,21 @@ const ListProjectsSchema = z.object({
 		.enum(["all", "local", "deployed", "cloud"])
 		.optional()
 		.describe("Filter projects by status (defaults to 'all')"),
+});
+
+const CreateDatabaseSchema = z.object({
+	name: z.string().optional().describe("Database name (auto-generated if not provided)"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const ListDatabasesSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
 });
 
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
@@ -103,6 +120,37 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 								type: "string",
 								enum: ["all", "local", "deployed", "cloud"],
 								description: "Filter projects by status (defaults to 'all')",
+							},
+						},
+					},
+				},
+				{
+					name: "create_database",
+					description:
+						"Create a D1 database for a project. Returns deploy_required=true since binding needs deploy to activate.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							name: {
+								type: "string",
+								description: "Database name (auto-generated if not provided)",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "list_databases",
+					description: "List all D1 databases for a project.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
 							},
 						},
 					},
@@ -195,7 +243,15 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					const wrappedGetProjectStatus = withTelemetry(
 						"get_project_status",
 						async (name?: string, projectPath?: string) => {
-							return await getProjectStatus(name, projectPath);
+							const status = await getProjectStatus(name, projectPath);
+							if (status === null) {
+								return null;
+							}
+							// Add available_services to tell agents what services can be created
+							return {
+								...status,
+								available_services: ["d1", "kv", "r2"],
+							};
 						},
 						{ platform: "mcp" },
 					);
@@ -248,6 +304,80 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					);
 
 					const result = await wrappedListProjects(args.filter);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "create_database": {
+					const args = CreateDatabaseSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedCreateDatabase = withTelemetry(
+						"create_database",
+						async (projectDir: string, name?: string) => {
+							const result = await createDatabase(projectDir, {
+								name,
+								interactive: false,
+							});
+
+							// Track business event
+							track(Events.SERVICE_CREATED, {
+								service_type: "d1",
+								platform: "mcp",
+							});
+
+							return {
+								database_name: result.databaseName,
+								database_id: result.databaseId,
+								binding_name: result.bindingName,
+								created: result.created,
+								deploy_required: true,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedCreateDatabase(projectPath, args.name);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "list_databases": {
+					const args = ListDatabasesSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedListDatabases = withTelemetry(
+						"list_databases",
+						async (projectDir: string) => {
+							const databases = await listDatabases(projectDir);
+							return {
+								databases: databases.map((db) => ({
+									name: db.name,
+									binding: db.binding,
+									id: db.id,
+									size_bytes: db.sizeBytes,
+									num_tables: db.numTables,
+								})),
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedListDatabases(projectPath);
 
 					return {
 						content: [
