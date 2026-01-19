@@ -5,6 +5,22 @@
 - **Don't release without asking.** Never bump versions, create tags, or push releases unless the user explicitly requests it.
 - Commits and pushes are fine when asked, but releasing to npm is a separate decision.
 
+## Dependency Management
+
+**Runtime deps go in `apps/cli/package.json`, not the workspace root.**
+
+- Root `package.json` is for shared dev tooling (biome, typescript, etc.)
+- When the CLI is published to npm, only `apps/cli/package.json` dependencies are included
+- If you add an import like `import { foo } from "some-package"`, add `some-package` to `apps/cli/package.json`
+
+**Before committing new features:**
+
+1. Check for untracked files that are imported: `git status`
+2. Verify CLI can start: `./src/index.ts --help`
+3. Run tests: `bun test`
+
+This prevents "works locally, fails in CI/npm" issues where files exist locally but weren't committed.
+
 ## Project Overview
 
 jack is a CLI tool for vibecoders to rapidly deploy to Cloudflare Workers. Read `docs/internal/SPIRIT.md` for the philosophy.
