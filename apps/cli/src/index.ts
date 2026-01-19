@@ -49,6 +49,7 @@ const cli = meow(
     mcp                 MCP server for AI agents
     telemetry           Usage data settings
     feedback            Share feedback or report issues
+    community           Join the jack Discord
 
   Run 'jack <command> --help' for command-specific options.
 
@@ -368,6 +369,12 @@ try {
 		case "feedback": {
 			const { default: feedback } = await import("./commands/feedback.ts");
 			await withTelemetry("feedback", feedback)();
+			break;
+		}
+		case "community":
+		case "discord": {
+			const { default: community } = await import("./commands/community.ts");
+			await withTelemetry("community", community)();
 			break;
 		}
 		case "link": {
