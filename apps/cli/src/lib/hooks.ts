@@ -478,6 +478,26 @@ const actionHandlers: {
 			if (action.successMessage) {
 				ui.success(substituteVars(action.successMessage, context));
 			}
+
+			// Redeploy if deployAfter is set and we have a valid project directory
+			if (action.deployAfter && context.projectDir) {
+				const deployMsg = action.deployMessage || "Deploying...";
+				ui.info(deployMsg);
+
+				const proc = Bun.spawn(["wrangler", "deploy"], {
+					cwd: context.projectDir,
+					stdout: "ignore",
+					stderr: "pipe",
+				});
+				await proc.exited;
+
+				if (proc.exitCode === 0) {
+					ui.success("Deployed");
+				} else {
+					const stderr = await new Response(proc.stderr).text();
+					ui.warn(`Deploy failed: ${stderr.slice(0, 200)}`);
+				}
+			}
 		}
 
 		return true;

@@ -16,6 +16,8 @@ export type HookAction =
 				path: string;
 				set: Record<string, string | { from: "input" }>;
 			};
+			deployAfter?: boolean; // Redeploy after successful input (only if user provided input)
+			deployMessage?: string; // Message to show during deploy (default: "Deploying...")
 	  }
 	| {
 			action: "writeJson";
@@ -53,6 +55,15 @@ export interface OptionalSecret {
 	setupUrl?: string;
 }
 
+export interface EnvVar {
+	name: string;
+	description: string;
+	required?: boolean;
+	defaultValue?: string;
+	example?: string;
+	setupUrl?: string;
+}
+
 export interface IntentMetadata {
 	keywords: string[];
 	examples?: string[]; // For future telemetry/docs
@@ -62,6 +73,7 @@ export interface Template {
 	files: Record<string, string>; // path -> content
 	secrets?: string[]; // required secret keys (e.g., ["NEYNAR_API_KEY"])
 	optionalSecrets?: OptionalSecret[]; // optional secret configurations
+	envVars?: EnvVar[]; // environment variables (non-secret config)
 	capabilities?: Capability[]; // infrastructure requirements (deprecated, use requires)
 	requires?: ServiceTypeKey[]; // service requirements (DB, KV, CRON, QUEUE, STORAGE)
 	description?: string; // for help text
