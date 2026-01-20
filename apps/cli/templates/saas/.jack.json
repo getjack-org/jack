@@ -1,0 +1,154 @@
+{
+	"name": "saas",
+	"description": "SaaS starter (Auth + Payments + React)",
+	"secrets": ["STRIPE_SECRET_KEY", "BETTER_AUTH_SECRET", "STRIPE_PRO_PRICE_ID", "STRIPE_ENTERPRISE_PRICE_ID"],
+	"capabilities": ["db"],
+	"requires": ["DB"],
+	"intent": {
+		"keywords": ["saas", "subscription", "auth", "payment", "stripe", "membership"],
+		"examples": ["subscription app", "paid membership site", "saas product"]
+	},
+	"agentContext": {
+		"summary": "A SaaS starter with Better Auth authentication, Stripe payments, React + Vite frontend, and Hono API on Cloudflare Workers with D1 SQLite database.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` - Hono API entry point with auth and payment routes\n- `src/auth.ts` - Better Auth configuration with Stripe plugin\n- `src/client/App.tsx` - React application entry point\n- `src/client/lib/auth-client.ts` - Better Auth client\n- `src/client/hooks/` - useAuth, useSubscription hooks\n- `src/client/pages/` - Page components (HomePage, DashboardPage, etc.)\n- `src/client/components/ui/` - shadcn/ui components\n- `schema.sql` - D1 database schema (user, session, account, subscription)\n- `wrangler.jsonc` - Cloudflare Workers configuration\n\n## Authentication\n\nUses Better Auth with email/password. Auth routes are handled at `/api/auth/*`.\n\n### Client-side\n```tsx\nimport { authClient } from './lib/auth-client';\n\n// Sign up\nawait authClient.signUp.email({ email, password, name });\n\n// Sign in\nawait authClient.signIn.email({ email, password });\n\n// Get session\nconst { data: session } = await authClient.getSession();\n```\n\n## Payments (Stripe)\n\nUses Better Auth Stripe plugin for subscription management.\n\n### Upgrade Flow\n```tsx\nimport { authClient } from './lib/auth-client';\n\nasync function handleUpgrade(plan: 'pro' | 'enterprise') {\n  const { data, error } = await authClient.subscription.upgrade({\n    plan,\n    successUrl: '/dashboard?upgraded=true',\n    cancelUrl: '/pricing',\n  });\n\n  if (data?.url) {\n    window.location.href = data.url;  // Redirect to Stripe Checkout\n  }\n}\n```\n\n### Check Subscription\n```tsx\nconst { data: subscriptions } = await authClient.subscription.list();\nconst activeSubscription = subscriptions?.find(s =>\n  s.status === 'active' || s.status === 'trialing'\n);\nconst plan = activeSubscription?.plan || 'free';\n```\n\n## Webhook Setup\n\nStripe webhooks are handled at `/api/auth/stripe/webhook`. Required events:\n- `checkout.session.completed`\n- `customer.subscription.created`\n- `customer.subscription.updated`\n- `customer.subscription.deleted`\n\n## Database Schema\n\nUses Better Auth's default schema (singular table names, camelCase columns):\n- `user` - User accounts\n- `session` - Active sessions\n- `account` - OAuth/password credentials\n- `verification` - Email verification tokens\n- `subscription` - Stripe subscriptions\n\n## Environment Variables\n\n- `BETTER_AUTH_SECRET` - Random secret for auth tokens (generate with: openssl rand -base64 32)\n- `STRIPE_SECRET_KEY` - Stripe API secret key\n- `STRIPE_WEBHOOK_SECRET` - Stripe webhook signing secret (whsec_...)\n- `STRIPE_PRO_PRICE_ID` - Stripe price ID for Pro plan\n- `STRIPE_ENTERPRISE_PRICE_ID` - Stripe price ID for Enterprise plan\n\n## Resources\n\n- [Better Auth Docs](https://www.betterauth.com/docs)\n- [Better Auth Stripe Plugin](https://www.betterauth.com/docs/plugins/stripe)\n- [Stripe Subscriptions](https://docs.stripe.com/billing/subscriptions)\n- [Hono Documentation](https://hono.dev)\n- [Cloudflare D1 Docs](https://developers.cloudflare.com/d1)"
+	},
+	"hooks": {
+		"preCreate": [
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "STRIPE_SECRET_KEY",
+				"message": "Stripe API key required for payments",
+				"setupUrl": "https://dashboard.stripe.com/apikeys",
+				"onMissing": "prompt",
+				"promptMessage": "Enter your Stripe Secret Key (sk_test_... or sk_live_...):"
+			},
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "BETTER_AUTH_SECRET",
+				"message": "Generating authentication secret...",
+				"onMissing": "generate",
+				"generateCommand": "openssl rand -base64 32"
+			},
+			{
+				"action": "stripe-setup",
+				"message": "Setting up Stripe subscription plans...",
+				"plans": [
+					{
+						"name": "Pro",
+						"priceKey": "STRIPE_PRO_PRICE_ID",
+						"amount": 1900,
+						"interval": "month",
+						"description": "Pro monthly subscription"
+					},
+					{
+						"name": "Enterprise",
+						"priceKey": "STRIPE_ENTERPRISE_PRICE_ID",
+						"amount": 9900,
+						"interval": "month",
+						"description": "Enterprise monthly subscription"
+					}
+				]
+			}
+		],
+		"preDeploy": [
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "STRIPE_SECRET_KEY"
+			}
+		],
+		"postDeploy": [
+			{
+				"action": "box",
+				"title": "Your SaaS is live!",
+				"lines": ["{{url}}"]
+			},
+			{
+				"action": "clipboard",
+				"text": "{{url}}/api/auth/stripe/webhook",
+				"message": "Webhook URL copied to clipboard"
+			},
+			{
+				"action": "message",
+				"text": ""
+			},
+			{
+				"action": "message",
+				"text": "━━━ Stripe Webhook Setup ━━━"
+			},
+			{
+				"action": "message",
+				"text": ""
+			},
+			{
+				"action": "message",
+				"text": "1. Create webhook endpoint in Stripe"
+			},
+			{
+				"action": "message",
+				"text": "2. Set endpoint URL to: {{url}}/api/auth/stripe/webhook"
+			},
+			{
+				"action": "message",
+				"text": "3. Select these events:"
+			},
+			{
+				"action": "message",
+				"text": "   • checkout.session.completed"
+			},
+			{
+				"action": "message",
+				"text": "   • customer.subscription.created"
+			},
+			{
+				"action": "message",
+				"text": "   • customer.subscription.updated"
+			},
+			{
+				"action": "message",
+				"text": "   • customer.subscription.deleted"
+			},
+			{
+				"action": "message",
+				"text": ""
+			},
+			{
+				"action": "url",
+				"url": "https://dashboard.stripe.com/webhooks",
+				"label": "Open Stripe webhooks",
+				"prompt": true
+			},
+			{
+				"action": "prompt",
+				"message": "Paste your webhook signing secret (whsec_...):",
+				"required": false,
+				"secret": true,
+				"successMessage": "Webhook secret saved!",
+				"deployAfter": true,
+				"deployMessage": "Deploying with webhook support...",
+				"writeJson": {
+					"path": ".secrets.json",
+					"set": { "STRIPE_WEBHOOK_SECRET": { "from": "input" } }
+				}
+			},
+			{
+				"action": "message",
+				"text": ""
+			},
+			{
+				"action": "message",
+				"text": "━━━ Next Steps ━━━"
+			},
+			{
+				"action": "message",
+				"text": "• Test card: 4242 4242 4242 4242 (any future date, any CVC)"
+			},
+			{
+				"action": "message",
+				"text": "• Customize theme: https://ui.shadcn.com/create"
+			}
+		]
+	}
+}
