@@ -457,3 +457,193 @@ function findLineCommentStart(line: string): number {
 
 	return -1;
 }
+
+/**
+ * Remove a D1 database binding from wrangler.jsonc by database_name.
+ * Preserves comments and formatting.
+ *
+ * @returns true if binding was found and removed, false if not found
+ */
+export async function removeD1Binding(configPath: string, databaseName: string): Promise<boolean> {
+	if (!existsSync(configPath)) {
+		throw new Error(`wrangler.jsonc not found at ${configPath}. Cannot remove binding.`);
+	}
+
+	const content = await Bun.file(configPath).text();
+
+	// Parse to understand existing structure
+	const config = parseJsonc<WranglerConfig>(content);
+
+	// Check if d1_databases exists and has entries
+	if (!config.d1_databases || !Array.isArray(config.d1_databases)) {
+		return false;
+	}
+
+	// Find the binding to remove
+	const bindingIndex = config.d1_databases.findIndex((db) => db.database_name === databaseName);
+
+	if (bindingIndex === -1) {
+		return false; // Binding not found
+	}
+
+	// Use text manipulation to remove the binding while preserving formatting
+	const newContent = removeD1DatabaseEntryFromContent(content, databaseName);
+
+	if (newContent === content) {
+		return false; // Nothing changed
+	}
+
+	await Bun.write(configPath, newContent);
+	return true;
+}
+
+/**
+ * Remove a specific D1 database entry from the d1_databases array in content.
+ * Handles comma placement and preserves comments.
+ */
+function removeD1DatabaseEntryFromContent(content: string, databaseName: string): string {
+	// Find the d1_databases array
+	const d1Match = content.match(/"d1_databases"\s*:\s*\[/);
+	if (!d1Match || d1Match.index === undefined) {
+		return content;
+	}
+
+	const arrayStartIndex = d1Match.index + d1Match[0].length;
+	const closingBracketIndex = findMatchingBracket(content, arrayStartIndex - 1, "[", "]");
+
+	if (closingBracketIndex === -1) {
+		return content;
+	}
+
+	const arrayContent = content.slice(arrayStartIndex, closingBracketIndex);
+
+	// Find the object containing this database_name
+	const escapedName = databaseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const dbNamePattern = new RegExp(`"database_name"\\s*:\\s*"${escapedName}"`);
+
+	const match = dbNamePattern.exec(arrayContent);
+	if (!match) {
+		return content;
+	}
+
+	// Find the enclosing object boundaries
+	const matchPosInArray = match.index;
+	const objectStart = findObjectStartBefore(arrayContent, matchPosInArray);
+	const objectEnd = findObjectEndAfter(arrayContent, matchPosInArray);
+
+	if (objectStart === -1 || objectEnd === -1) {
+		return content;
+	}
+
+	// Determine comma handling
+	let removeStart = objectStart;
+	let removeEnd = objectEnd + 1;
+
+	// Check for trailing comma after the object
+	const afterObject = arrayContent.slice(objectEnd + 1);
+	const trailingCommaMatch = afterObject.match(/^\s*,/);
+
+	// Check for leading comma before the object
+	const beforeObject = arrayContent.slice(0, objectStart);
+	const leadingCommaMatch = beforeObject.match(/,\s*$/);
+
+	if (trailingCommaMatch) {
+		// Remove trailing comma
+		removeEnd = objectEnd + 1 + trailingCommaMatch[0].length;
+	} else if (leadingCommaMatch) {
+		// Remove leading comma
+		removeStart = objectStart - leadingCommaMatch[0].length;
+	}
+
+	// Build new array content
+	const newArrayContent = arrayContent.slice(0, removeStart) + arrayContent.slice(removeEnd);
+
+	// Check if array is now effectively empty (only whitespace/comments)
+	const trimmedArray = newArrayContent.replace(/\/\/[^\n]*/g, "").trim();
+	if (trimmedArray === "" || trimmedArray === "[]") {
+		// Remove the entire d1_databases property
+		return removeD1DatabasesProperty(content, d1Match.index, closingBracketIndex);
+	}
+
+	return content.slice(0, arrayStartIndex) + newArrayContent + content.slice(closingBracketIndex);
+}
+
+/**
+ * Find the start of the object (opening brace) before the given position.
+ */
+function findObjectStartBefore(content: string, fromPos: number): number {
+	let depth = 0;
+	for (let i = fromPos; i >= 0; i--) {
+		const char = content[i];
+		if (char === "}") depth++;
+		if (char === "{") {
+			if (depth === 0) return i;
+			depth--;
+		}
+	}
+	return -1;
+}
+
+/**
+ * Find the end of the object (closing brace) after the given position.
+ */
+function findObjectEndAfter(content: string, fromPos: number): number {
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = fromPos; i < content.length; i++) {
+		const char = content[i];
+
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (char === "\\") {
+				escaped = true;
+			} else if (char === '"') {
+				inString = false;
+			}
+			continue;
+		}
+
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+
+		if (char === "{") depth++;
+		if (char === "}") {
+			if (depth === 0) return i;
+			depth--;
+		}
+	}
+	return -1;
+}
+
+/**
+ * Remove the entire d1_databases property when it becomes empty.
+ */
+function removeD1DatabasesProperty(
+	content: string,
+	propertyStart: number,
+	arrayEnd: number,
+): string {
+	let removeStart = propertyStart;
+	let removeEnd = arrayEnd + 1;
+
+	// Look backward for a comma to remove
+	const beforeProperty = content.slice(0, propertyStart);
+	const leadingCommaMatch = beforeProperty.match(/,\s*$/);
+
+	// Look forward for a trailing comma
+	const afterProperty = content.slice(arrayEnd + 1);
+	const trailingCommaMatch = afterProperty.match(/^\s*,/);
+
+	if (leadingCommaMatch) {
+		removeStart = propertyStart - leadingCommaMatch[0].length;
+	} else if (trailingCommaMatch) {
+		removeEnd = arrayEnd + 1 + trailingCommaMatch[0].length;
+	}
+
+	return content.slice(0, removeStart) + content.slice(removeEnd);
+}

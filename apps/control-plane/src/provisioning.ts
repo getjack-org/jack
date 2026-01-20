@@ -101,14 +101,13 @@ export class ProvisioningService {
 		const projectId = `proj_${crypto.randomUUID()}`;
 		const projectSlug = slug || this.generateSlug(name);
 
-		// Check slug uniqueness globally (routing uses {slug}.runjack.xyz)
 		const existingSlug = await this.db
-			.prepare("SELECT id FROM projects WHERE slug = ? AND status != 'deleted'")
-			.bind(projectSlug)
+			.prepare("SELECT id FROM projects WHERE slug = ? AND org_id = ? AND status != 'deleted'")
+			.bind(projectSlug, orgId)
 			.first<{ id: string }>();
 
 		if (existingSlug) {
-			throw new Error(`Project with slug "${projectSlug}" already exists`);
+			throw new Error(`You already have a project with slug "${projectSlug}"`);
 		}
 
 		const resourceNames = this.getResourceNames(projectId);
@@ -140,6 +139,7 @@ export class ProvisioningService {
 				"d1",
 				resourceNames.d1,
 				d1Database.uuid,
+				"DB", // Default binding name for initial D1
 			);
 			resources.push(d1Resource);
 
@@ -359,17 +359,20 @@ export class ProvisioningService {
 
 				const d1ResourceRecord = await this.db
 					.prepare(
-						"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1'",
+						"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
 					)
 					.bind(projectId)
 					.first<{ provider_id: string }>();
+
+				// Get existing cache to preserve d1_database_id if lookup returns nothing
+				const existingCache = await this.cacheService.getProjectConfig(projectId);
 
 				const projectConfig: ProjectConfig = {
 					project_id: projectId,
 					org_id: projectRecord.org_id,
 					slug: projectRecord.slug,
 					worker_name: workerResource?.provider_id || "",
-					d1_database_id: d1ResourceRecord?.provider_id || "",
+					d1_database_id: d1ResourceRecord?.provider_id || existingCache?.d1_database_id || "",
 					content_bucket_name: resourceNames.r2Content,
 					owner_username: projectRecord.owner_username,
 					status: "active",
@@ -390,16 +393,27 @@ export class ProvisioningService {
 		type: "worker" | "d1" | "r2_content",
 		name: string,
 		providerId: string,
+		bindingName?: string,
 	): Promise<Resource> {
 		const resourceId = `res_${crypto.randomUUID()}`;
 
-		await this.db
-			.prepare(
-				`INSERT INTO resources (id, project_id, resource_type, resource_name, provider_id, status)
+		if (bindingName) {
+			await this.db
+				.prepare(
+					`INSERT INTO resources (id, project_id, resource_type, binding_name, resource_name, provider_id, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+				)
+				.bind(resourceId, projectId, type, bindingName, name, providerId)
+				.run();
+		} else {
+			await this.db
+				.prepare(
+					`INSERT INTO resources (id, project_id, resource_type, resource_name, provider_id, status)
          VALUES (?, ?, ?, ?, ?, 'active')`,
-			)
-			.bind(resourceId, projectId, type, name, providerId)
-			.run();
+				)
+				.bind(resourceId, projectId, type, name, providerId)
+				.run();
+		}
 
 		const resource = await this.db
 			.prepare("SELECT * FROM resources WHERE id = ?")
@@ -692,7 +706,9 @@ export class ProvisioningService {
 				.first<{ provider_id: string }>();
 
 			const d1Resource = await this.db
-				.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1'")
+				.prepare(
+					"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+				)
 				.bind(projectId)
 				.first<{ provider_id: string }>();
 
