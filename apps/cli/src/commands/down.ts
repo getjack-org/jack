@@ -10,7 +10,8 @@ import { fetchProjectResources } from "../lib/control-plane.ts";
 import { promptSelect } from "../lib/hooks.ts";
 import { managedDown } from "../lib/managed-down.ts";
 import { error, info, item, output, success, warn } from "../lib/output.ts";
-import { type LocalProjectLink, readProjectLink } from "../lib/project-link.ts";
+import { unregisterPath } from "../lib/paths-index.ts";
+import { type LocalProjectLink, readProjectLink, unlinkProject } from "../lib/project-link.ts";
 import { resolveProject } from "../lib/project-resolver.ts";
 import { parseWranglerResources } from "../lib/resources.ts";
 import { deleteCloudProject, getProjectNameFromDir } from "../lib/storage/index.ts";
@@ -123,6 +124,15 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			const deleteSuccess = await managedDown({ projectId, runjackUrl }, name, flags);
 			if (!deleteSuccess) {
 				process.exit(0); // User cancelled
+			}
+
+			// Clean up local tracking state
+			const localPath = resolved?.localPath || process.cwd();
+			try {
+				await unlinkProject(localPath);
+				await unregisterPath(projectId, localPath);
+			} catch {
+				// Non-fatal: local cleanup failed but cloud deletion succeeded
 			}
 			return;
 		}

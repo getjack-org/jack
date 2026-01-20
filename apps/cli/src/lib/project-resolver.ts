@@ -382,7 +382,7 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 					!project.sources.controlPlane
 				) {
 					project.status = "error";
-					project.errorMessage = "Project not found in jack cloud. Run: jack unlink && jack ship";
+					project.errorMessage = "Project not found in jack cloud";
 				}
 			}
 		} catch {
