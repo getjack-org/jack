@@ -76,9 +76,12 @@ export async function managedDown(
 	}
 	console.error("");
 
-	// Confirm undeploy
+	// Single confirmation with clear description
 	console.error("");
-	info("Undeploy this project?");
+	const confirmMsg = hasDatabase
+		? "Undeploy this project? All resources will be deleted."
+		: "Undeploy this project?";
+	info(confirmMsg);
 	const action = await promptSelect(["Yes", "No"]);
 
 	if (action !== 0) {
@@ -86,77 +89,51 @@ export async function managedDown(
 		return false;
 	}
 
-	// Ask about database export (only if database exists)
+	// Auto-export database if it exists (no prompt)
+	let exportPath: string | null = null;
 	if (hasDatabase) {
-		console.error("");
-		info("Database will be deleted with the project");
+		exportPath = join(process.cwd(), `${projectName}-backup.sql`);
+		output.start(`Exporting database to ${exportPath}...`);
 
-		console.error("");
-		info("Export database before deleting?");
-		const exportAction = await promptSelect(["Yes", "No"]);
+		try {
+			const exportResult = await exportManagedDatabase(projectId);
 
-		if (exportAction === 0) {
-			const exportPath = join(process.cwd(), `${projectName}-backup.sql`);
-			output.start(`Exporting database to ${exportPath}...`);
-
-			try {
-				const exportResult = await exportManagedDatabase(projectId);
-
-				// Download the SQL file
-				const response = await fetch(exportResult.download_url);
-				if (!response.ok) {
-					throw new Error(`Failed to download export: ${response.statusText}`);
-				}
-
-				const sqlContent = await response.text();
-				await writeFile(exportPath, sqlContent, "utf-8");
-
-				output.stop();
-				success(`Database exported to ${exportPath}`);
-			} catch (err) {
-				output.stop();
-				error(`Failed to export database: ${err instanceof Error ? err.message : String(err)}`);
-
-				// If export times out, abort
-				if (err instanceof Error && err.message.includes("timed out")) {
-					error("Export timeout - deletion aborted");
-					return false;
-				}
-
-				console.error("");
-				info("Continue without exporting?");
-				const continueAction = await promptSelect(["Yes", "No"]);
-
-				if (continueAction !== 0) {
-					info("Cancelled");
-					return false;
-				}
+			// Download the SQL file
+			const response = await fetch(exportResult.download_url);
+			if (!response.ok) {
+				throw new Error(`Failed to download export: ${response.statusText}`);
 			}
+
+			const sqlContent = await response.text();
+			await writeFile(exportPath, sqlContent, "utf-8");
+
+			output.stop();
+		} catch (err) {
+			output.stop();
+			warn(`Could not export database: ${err instanceof Error ? err.message : String(err)}`);
+			exportPath = null;
 		}
 	}
 
 	// Execute deletion
-	console.error("");
-	info("Executing cleanup...");
-	console.error("");
-
 	output.start("Undeploying from jack cloud...");
 	try {
 		const result = await deleteManagedProject(projectId);
 		output.stop();
-		success(`'${projectName}' undeployed`);
 
-		// Report resource results
+		// Report any resource deletion failures
 		for (const resource of result.resources) {
-			if (resource.success) {
-				success(`Deleted ${resource.resource}`);
-			} else {
+			if (!resource.success) {
 				warn(`Failed to delete ${resource.resource}: ${resource.error}`);
 			}
 		}
 
+		// Final success message
 		console.error("");
-		success(`Project '${projectName}' undeployed`);
+		success(`Undeployed '${projectName}'`);
+		if (exportPath) {
+			info(`Backup saved to ./${projectName}-backup.sql`);
+		}
 		console.error("");
 		return true;
 	} catch (err) {

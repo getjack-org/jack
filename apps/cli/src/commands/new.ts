@@ -1,13 +1,6 @@
-import {
-	getAgentDefinition,
-	getPreferredLaunchAgent,
-	launchAgent,
-	scanAgents,
-	updateAgent,
-} from "../lib/agents.ts";
+import { getPreferredLaunchAgent, launchAgent, scanAgents, updateAgent } from "../lib/agents.ts";
 import { debug } from "../lib/debug.ts";
 import { getErrorDetails } from "../lib/errors.ts";
-import { promptSelect } from "../lib/hooks.ts";
 import { isIntentPhrase } from "../lib/intent.ts";
 import { output, spinner } from "../lib/output.ts";
 import { createProject } from "../lib/project-operations.ts";
@@ -20,6 +13,8 @@ export default async function newProject(
 		managed?: boolean;
 		byo?: boolean;
 		ci?: boolean;
+		open?: boolean;
+		noOpen?: boolean;
 	} = {},
 ): Promise<void> {
 	// Immediate feedback
@@ -104,77 +99,60 @@ export default async function newProject(
 	console.error("");
 	output.info(`Project: ${result.targetDir}`);
 
-	// Prompt to open preferred agent (only in interactive TTY, skip in CI mode)
-	if (process.stdout.isTTY && !isCi) {
-		const preferred = await getPreferredLaunchAgent();
-		if (preferred) {
-			console.error("");
-			console.error(`  Open project in ${preferred.definition.name}?`);
-			console.error("");
-			const choice = await promptSelect(["Yes", "No"]);
+	// Skip agent section entirely if --no-open or env var
+	if (options.noOpen || process.env.JACK_NO_OPEN === "1") {
+		return;
+	}
 
-			if (choice === 0) {
-				const launchResult = await launchAgent(preferred.launch, result.targetDir, {
-					projectName: result.projectName,
-					url: result.workerUrl,
+	// Skip in CI mode
+	if (!process.stdout.isTTY || isCi) {
+		return;
+	}
+
+	// Get preferred agent
+	let preferred = await getPreferredLaunchAgent();
+
+	// If no preferred agent, scan and auto-enable detected agents
+	if (!preferred) {
+		const detectionResult = await scanAgents();
+
+		if (detectionResult.detected.length > 0) {
+			// Auto-enable newly detected agents
+			for (const { id, path, launch } of detectionResult.detected) {
+				await updateAgent(id, {
+					active: true,
+					path,
+					detectedAt: new Date().toISOString(),
+					launch,
 				});
-				if (!launchResult.success) {
-					output.warn(`Failed to launch ${preferred.definition.name}`);
-					if (launchResult.command?.length) {
-						output.info(`Run manually: ${launchResult.command.join(" ")}`);
-					}
-				}
 			}
-		} else {
-			// No agents configured - auto-scan and offer to open in detected agents
-			const detectionResult = await scanAgents();
+			// Use the first detected agent as preferred
+			preferred = await getPreferredLaunchAgent();
+		}
+	}
 
-			if (detectionResult.detected.length > 0) {
-				// Auto-enable newly detected agents
-				for (const { id, path, launch } of detectionResult.detected) {
-					await updateAgent(id, {
-						active: true,
-						path,
-						detectedAt: new Date().toISOString(),
-						launch,
-					});
-				}
-
-				// Build menu options: detected agents + Skip
-				const menuOptions = detectionResult.detected.map(({ id }) => {
-					const definition = getAgentDefinition(id);
-					return definition?.name ?? id;
-				});
-				menuOptions.push("Skip");
-
-				console.error("");
-				console.error("  Open project in:");
-				console.error("");
-				const choice = await promptSelect(menuOptions);
-
-				// Launch selected agent (unless Skip or cancelled)
-				if (choice >= 0 && choice < detectionResult.detected.length) {
-					const selected = detectionResult.detected[choice];
-					const launchConfig = selected.launch;
-					if (launchConfig) {
-						const launchResult = await launchAgent(launchConfig, result.targetDir, {
-							projectName: result.projectName,
-							url: result.workerUrl,
-						});
-						if (!launchResult.success) {
-							const definition = getAgentDefinition(selected.id);
-							output.warn(`Failed to launch ${definition?.name ?? selected.id}`);
-							if (launchResult.command?.length) {
-								output.info(`Run manually: ${launchResult.command.join(" ")}`);
-							}
-						}
-					}
-				}
-			} else {
-				console.error("");
-				output.info("No AI agents detected");
-				output.info("Install Claude Code or Codex, then run: jack agents scan");
+	// Auto-open if --open flag
+	if (options.open && preferred) {
+		const launchResult = await launchAgent(preferred.launch, result.targetDir, {
+			projectName: result.projectName,
+			url: result.workerUrl,
+		});
+		if (!launchResult.success) {
+			output.warn(`Failed to launch ${preferred.definition.name}`);
+			if (launchResult.command?.length) {
+				output.info(`Run manually: ${launchResult.command.join(" ")}`);
 			}
 		}
+		return;
+	}
+
+	// Default: show next steps (no prompt)
+	if (preferred) {
+		console.error("");
+		output.info(`Next: cd ${result.targetDir} && ${preferred.launch.command}`);
+	} else {
+		console.error("");
+		output.info("No AI agents detected");
+		output.info("Install Claude Code or Codex, then run: jack agents scan");
 	}
 }

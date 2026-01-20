@@ -59,6 +59,7 @@ async function resolveDatabaseName(
 
 export interface DownFlags {
 	force?: boolean;
+	includeBackup?: boolean;
 }
 
 export default async function down(projectName?: string, flags: DownFlags = {}): Promise<void> {
@@ -186,9 +187,12 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		}
 		console.error("");
 
-		// Confirm undeploy
+		// Single confirmation with clear description
 		console.error("");
-		info("Undeploy this project?");
+		const confirmMsg = dbName
+			? "Undeploy this project? Worker and database will be deleted."
+			: "Undeploy this project?";
+		info(confirmMsg);
 		const action = await promptSelect(["Yes", "No"]);
 
 		if (action !== 0) {
@@ -196,77 +200,38 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			return;
 		}
 
-		// Handle database if it exists
-		let shouldDeleteDb = false;
-
+		// Auto-export database if it exists (no prompt)
+		let exportPath: string | null = null;
 		if (dbName) {
-			console.error("");
-			info(`Found database: ${dbName}`);
-
-			// Ask if they want to export first
-			console.error("");
-			info(`Export database '${dbName}' before deleting?`);
-			const exportAction = await promptSelect(["Yes", "No"]);
-
-			if (exportAction === 0) {
-				const exportPath = join(process.cwd(), `${dbName}-backup.sql`);
-				output.start(`Exporting database to ${exportPath}...`);
-				try {
-					await exportDatabase(dbName, exportPath);
-					output.stop();
-					success(`Database exported to ${exportPath}`);
-				} catch (err) {
-					output.stop();
-					error(`Failed to export database: ${err instanceof Error ? err.message : String(err)}`);
-					console.error("");
-					info("Continue without exporting?");
-					const continueAction = await promptSelect(["Yes", "No"]);
-					if (continueAction !== 0) {
-						info("Cancelled");
-						return;
-					}
-				}
+			exportPath = join(process.cwd(), `${dbName}-backup.sql`);
+			output.start(`Exporting database to ${exportPath}...`);
+			try {
+				await exportDatabase(dbName, exportPath);
+				output.stop();
+			} catch (err) {
+				output.stop();
+				warn(`Could not export database: ${err instanceof Error ? err.message : String(err)}`);
+				exportPath = null;
 			}
-
-			// Ask if they want to delete the database
-			console.error("");
-			info(`Delete database '${dbName}'?`);
-			const deleteAction = await promptSelect(["Yes", "No"]);
-
-			shouldDeleteDb = deleteAction === 0;
 		}
 
-		// Handle backup deletion
-		let shouldDeleteR2 = false;
-		console.error("");
-		info("Delete backup for this project?");
-		const deleteR2Action = await promptSelect(["Yes", "No"]);
-		shouldDeleteR2 = deleteR2Action === 0;
-
-		// Execute deletions
-		console.error("");
-		info("Executing cleanup...");
-		console.error("");
-
-		// Undeploy service
+		// Undeploy worker
 		output.start("Undeploying...");
 		try {
 			await deleteWorker(name);
 			output.stop();
-			success(`'${name}' undeployed`);
 		} catch (err) {
 			output.stop();
 			error(`Failed to undeploy: ${err instanceof Error ? err.message : String(err)}`);
 			process.exit(1);
 		}
 
-		// Delete database if requested
-		if (shouldDeleteDb && dbName) {
+		// Delete database if it exists
+		if (dbName) {
 			output.start(`Deleting database '${dbName}'...`);
 			try {
 				await deleteDatabase(dbName);
 				output.stop();
-				success(`Database '${dbName}' deleted`);
 			} catch (err) {
 				output.stop();
 				warn(
@@ -275,25 +240,35 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			}
 		}
 
-		// Delete backup if requested
-		if (shouldDeleteR2) {
-			output.start("Deleting backup...");
-			try {
-				const deleted = await deleteCloudProject(name);
-				output.stop();
-				if (deleted) {
-					success("Backup deleted");
-				} else {
-					warn("No backup found or already deleted");
+		// Only prompt for backup deletion if --include-backup flag is passed
+		if (flags.includeBackup) {
+			console.error("");
+			info("Also delete cloud backup?");
+			const deleteR2Action = await promptSelect(["Yes", "No"]);
+
+			if (deleteR2Action === 0) {
+				output.start("Deleting backup...");
+				try {
+					const deleted = await deleteCloudProject(name);
+					output.stop();
+					if (deleted) {
+						success("Backup deleted");
+					} else {
+						warn("No backup found or already deleted");
+					}
+				} catch (err) {
+					output.stop();
+					warn(`Failed to delete backup: ${err instanceof Error ? err.message : String(err)}`);
 				}
-			} catch (err) {
-				output.stop();
-				warn(`Failed to delete backup: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		}
 
+		// Final success message
 		console.error("");
-		success(`Project '${name}' undeployed`);
+		success(`Undeployed '${name}'`);
+		if (exportPath) {
+			info(`Backup saved to ./${dbName}-backup.sql`);
+		}
 		console.error("");
 	} catch (err) {
 		console.error("");

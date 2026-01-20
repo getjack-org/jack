@@ -460,20 +460,21 @@ async function dbCreate(args: string[], options: ServiceOptions): Promise<void> 
 		console.error("");
 		item(`Binding: ${result.bindingName}`);
 		item(`ID: ${result.databaseId}`);
+
+		// Auto-deploy to activate the database binding
 		console.error("");
-
-		// Prompt to deploy
-		const { confirm } = await import("@clack/prompts");
-		const shouldDeploy = await confirm({
-			message: "Deploy now?",
-		});
-
-		if (shouldDeploy === true) {
+		outputSpinner.start("Deploying to activate database binding...");
+		try {
 			const { deployProject } = await import("../lib/project-operations.ts");
 			await deployProject(process.cwd(), { interactive: true });
-		} else {
+			outputSpinner.stop();
 			console.error("");
-			info("Run 'jack ship' when ready to deploy");
+			success("Database ready");
+			console.error("");
+		} catch (err) {
+			outputSpinner.stop();
+			console.error("");
+			warn("Deploy failed - run 'jack ship' to activate the binding");
 			console.error("");
 		}
 	} catch (err) {
