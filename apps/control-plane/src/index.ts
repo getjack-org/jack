@@ -414,7 +414,7 @@ api.get("/orgs/:orgId", async (c) => {
 	return c.json({ org });
 });
 
-// Slug availability check
+// Slug availability check (per-org, not global)
 api.get("/slugs/:slug/available", async (c) => {
 	const auth = c.get("auth");
 	const slug = c.req.param("slug");
@@ -425,11 +425,12 @@ api.get("/slugs/:slug/available", async (c) => {
 		return c.json({ available: false, error: slugError }, 200);
 	}
 
-	// Check if slug exists globally
+	// Check if slug exists for this user's org (not globally)
+	// Each user can have their own "my-app" since URLs are namespaced: username-slug.runjack.xyz
 	const existing = await c.env.DB.prepare(
-		"SELECT id FROM projects WHERE slug = ? AND status != 'deleted'",
+		"SELECT id FROM projects WHERE slug = ? AND org_id = ? AND status != 'deleted'",
 	)
-		.bind(slug)
+		.bind(slug, auth.orgId)
 		.first<{ id: string }>();
 
 	return c.json({
