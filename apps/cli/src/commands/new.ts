@@ -1,4 +1,10 @@
-import { getPreferredLaunchAgent, launchAgent } from "../lib/agents.ts";
+import {
+	getAgentDefinition,
+	getPreferredLaunchAgent,
+	launchAgent,
+	scanAgents,
+	updateAgent,
+} from "../lib/agents.ts";
 import { debug } from "../lib/debug.ts";
 import { getErrorDetails } from "../lib/errors.ts";
 import { promptSelect } from "../lib/hooks.ts";
@@ -120,9 +126,55 @@ export default async function newProject(
 				}
 			}
 		} else {
-			console.error("");
-			output.info("No launchable AI agent detected");
-			output.info("Run: jack agents scan");
+			// No agents configured - auto-scan and offer to open in detected agents
+			const detectionResult = await scanAgents();
+
+			if (detectionResult.detected.length > 0) {
+				// Auto-enable newly detected agents
+				for (const { id, path, launch } of detectionResult.detected) {
+					await updateAgent(id, {
+						active: true,
+						path,
+						detectedAt: new Date().toISOString(),
+						launch,
+					});
+				}
+
+				// Build menu options: detected agents + Skip
+				const menuOptions = detectionResult.detected.map(({ id }) => {
+					const definition = getAgentDefinition(id);
+					return definition?.name ?? id;
+				});
+				menuOptions.push("Skip");
+
+				console.error("");
+				console.error("  Open project in:");
+				console.error("");
+				const choice = await promptSelect(menuOptions);
+
+				// Launch selected agent (unless Skip or cancelled)
+				if (choice >= 0 && choice < detectionResult.detected.length) {
+					const selected = detectionResult.detected[choice];
+					const launchConfig = selected.launch;
+					if (launchConfig) {
+						const launchResult = await launchAgent(launchConfig, result.targetDir, {
+							projectName: result.projectName,
+							url: result.workerUrl,
+						});
+						if (!launchResult.success) {
+							const definition = getAgentDefinition(selected.id);
+							output.warn(`Failed to launch ${definition?.name ?? selected.id}`);
+							if (launchResult.command?.length) {
+								output.info(`Run manually: ${launchResult.command.join(" ")}`);
+							}
+						}
+					}
+				}
+			} else {
+				console.error("");
+				output.info("No AI agents detected");
+				output.info("Install Claude Code or Codex, then run: jack agents scan");
+			}
 		}
 	}
 }
