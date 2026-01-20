@@ -39,7 +39,7 @@ export default async function publish(): Promise<void> {
 		output.success(`Published as ${result.published_as}`);
 
 		console.error("");
-		output.info("Others can now fork your project:");
+		output.info("Share this project:");
 		output.info(`  ${result.fork_command}`);
 	} catch (err) {
 		spin.stop();
