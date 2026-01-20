@@ -210,9 +210,9 @@ describe("ensureAuthForCreate", () => {
 		});
 
 		it("throws error when both forceManaged and forceByo are set", async () => {
-			await expect(
-				ensureAuthForCreate({ forceManaged: true, forceByo: true }),
-			).rejects.toThrow("Cannot use both --managed and --byo flags");
+			await expect(ensureAuthForCreate({ forceManaged: true, forceByo: true })).rejects.toThrow(
+				"Cannot use both --managed and --byo flags",
+			);
 		});
 	});
 

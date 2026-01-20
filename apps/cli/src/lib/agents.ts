@@ -434,7 +434,9 @@ export interface AgentLaunchContext {
 function buildInitialPrompt(context: AgentLaunchContext): string | null {
 	if (!context.url) return null;
 
-	return `[jack] Project "${context.projectName}" is live at ${context.url} - say hi and let's build!`;
+	return `Project "${context.projectName}" is live at ${context.url}
+
+Read CLAUDE.md and AGENTS.md for project context, then say hi and offer to help build.`;
 }
 
 function buildLaunchCommand(

@@ -38,9 +38,7 @@
 			{
 				"action": "box",
 				"title": "Deployed: {{name}}",
-				"lines": [
-					"{{url}}"
-				]
+				"lines": ["{{url}}"]
 			},
 			{
 				"action": "writeJson",
