@@ -6,6 +6,8 @@ import { join, relative } from "node:path";
 import archiver from "archiver";
 import { type AssetManifest, computeAssetHash } from "./asset-hash.ts";
 import type { BuildOutput, WranglerConfig } from "./build-helper.ts";
+import { debug } from "./debug.ts";
+import { formatSize } from "./format.ts";
 import { scanProjectFiles } from "./storage/file-filter.ts";
 
 export interface ZipPackageResult {
@@ -80,6 +82,42 @@ async function createZipArchive(
 
 		archive.finalize();
 	});
+}
+
+/**
+ * Creates source.zip from project files without building.
+ * Used for prebuilt deployments that skip the full package flow.
+ * @param projectPath - Absolute path to project directory
+ * @returns Path to the created source.zip (caller responsible for cleanup)
+ */
+export async function createSourceZip(projectPath: string): Promise<string> {
+	const packageDir = join(tmpdir(), `jack-source-${Date.now()}`);
+	await mkdir(packageDir, { recursive: true });
+
+	const sourceZipPath = join(packageDir, "source.zip");
+	const projectFiles = await scanProjectFiles(projectPath);
+
+	// Debug output for source file statistics
+	const totalSize = projectFiles.reduce((sum, f) => sum + f.size, 0);
+	const largest =
+		projectFiles.length > 0
+			? projectFiles.reduce((max, f) => (f.size > max.size ? f : max), projectFiles[0])
+			: null;
+
+	debug(`Source: ${projectFiles.length} files, ${formatSize(totalSize)} uncompressed`);
+	if (largest) {
+		debug(`Largest: ${largest.path} (${formatSize(largest.size)})`);
+	}
+
+	const sourceFiles = projectFiles.map((f) => f.path);
+	await createZipArchive(sourceZipPath, projectPath, sourceFiles);
+
+	// Debug output for compression statistics
+	const zipStats = await stat(sourceZipPath);
+	const ratio = totalSize > 0 ? ((1 - zipStats.size / totalSize) * 100).toFixed(0) : 0;
+	debug(`Compressed: ${formatSize(zipStats.size)} (${ratio}% reduction)`);
+
+	return sourceZipPath;
 }
 
 /**
