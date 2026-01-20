@@ -361,6 +361,14 @@ api.put("/me/username", async (c) => {
 			.bind(body.username, auth.userId)
 			.run();
 
+		// Backfill owner_username for existing projects in user's orgs that don't have one set
+		await c.env.DB.prepare(
+			`UPDATE projects SET owner_username = ?, updated_at = CURRENT_TIMESTAMP
+			 WHERE org_id = ? AND owner_username IS NULL AND status != 'deleted'`,
+		)
+			.bind(body.username, auth.orgId)
+			.run();
+
 		return c.json({ success: true, username: body.username });
 	} catch (error) {
 		// Handle UNIQUE constraint violation
@@ -555,7 +563,7 @@ api.get("/projects/by-slug/:slug", async (c) => {
 
 	// Find project by slug within user's orgs
 	const project = await c.env.DB.prepare(
-		`SELECT p.id, p.org_id, p.name, p.slug, p.status, p.created_at, p.updated_at
+		`SELECT p.id, p.org_id, p.name, p.slug, p.status, p.owner_username, p.tags, p.created_at, p.updated_at
 		 FROM projects p
 		 JOIN org_memberships om ON p.org_id = om.org_id
 		 WHERE p.slug = ? AND om.user_id = ? AND p.status != 'deleted'`,
@@ -1337,6 +1345,20 @@ api.post("/projects/:projectId/deployments", async (c) => {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
 	}
 
+	// Backfill owner_username if not set (for projects created before user set username)
+	if (!project.owner_username) {
+		const user = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
+			.bind(auth.userId)
+			.first<{ username: string | null }>();
+		if (user?.username) {
+			await c.env.DB.prepare(
+				"UPDATE projects SET owner_username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			)
+				.bind(user.username, projectId)
+				.run();
+		}
+	}
+
 	// Parse and validate request body
 	const body = await c.req.json<{ source: string }>();
 	if (!body.source) {
@@ -1381,6 +1403,20 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 
 	if (!membership) {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Backfill owner_username if not set (for projects created before user set username)
+	if (!project.owner_username) {
+		const user = await c.env.DB.prepare("SELECT username FROM users WHERE id = ?")
+			.bind(auth.userId)
+			.first<{ username: string | null }>();
+		if (user?.username) {
+			await c.env.DB.prepare(
+				"UPDATE projects SET owner_username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			)
+				.bind(user.username, projectId)
+				.run();
+		}
 	}
 
 	// Parse multipart form data
