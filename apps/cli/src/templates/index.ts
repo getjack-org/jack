@@ -10,7 +10,7 @@ import type { Template } from "./types";
 // Resolve templates directory relative to this file (src/templates -> templates)
 const TEMPLATES_DIR = join(dirname(dirname(import.meta.dir)), "templates");
 
-export const BUILTIN_TEMPLATES = ["hello", "miniapp", "api", "nextjs"];
+export const BUILTIN_TEMPLATES = ["hello", "miniapp", "api", "nextjs", "saas"];
 
 /**
  * Resolved template with origin tracking for lineage
