@@ -3,7 +3,7 @@ import { join } from "node:path";
 import * as readline from "node:readline";
 import type { HookAction } from "../templates/types";
 import { applyJsonWrite } from "./json-edit";
-import { getSavedSecrets } from "./secrets";
+import { getSavedSecrets, saveSecrets } from "./secrets";
 import { restoreTty } from "./tty";
 
 /**
@@ -379,9 +379,87 @@ const actionHandlers: {
 	require: async (action, context, options) => {
 		const ui = options.output ?? noopOutput;
 		const interactive = options.interactive !== false;
+		const onMissing = action.onMissing ?? "fail";
+
 		if (action.source === "secret") {
 			const result = await checkSecretExists(action.key, context.projectDir);
+			if (result.exists) {
+				// Found existing secret - show feedback for prompt/generate modes
+				if (onMissing === "prompt" || onMissing === "generate") {
+					ui.success(`Using saved ${action.key}`);
+				}
+				return true;
+			}
+
+			// Secret doesn't exist - handle based on onMissing mode
 			if (!result.exists) {
+				// Handle onMissing: "generate" - run command and save output
+				if (onMissing === "generate" && action.generateCommand) {
+					const message = action.message ?? `Generating ${action.key}...`;
+					ui.info(message);
+
+					try {
+						const proc = Bun.spawn(["sh", "-c", action.generateCommand], {
+							stdout: "pipe",
+							stderr: "pipe",
+						});
+						await proc.exited;
+
+						if (proc.exitCode === 0) {
+							const stdout = await new Response(proc.stdout).text();
+							const value = stdout.trim();
+							if (value) {
+								await saveSecrets([{ key: action.key, value, source: "generated" }]);
+								ui.success(`Generated ${action.key}`);
+								return true;
+							}
+						}
+						ui.error(`Failed to generate ${action.key}`);
+						return false;
+					} catch {
+						ui.error(`Failed to run: ${action.generateCommand}`);
+						return false;
+					}
+				}
+
+				// Handle onMissing: "prompt" - ask user for value
+				if (onMissing === "prompt") {
+					if (!interactive) {
+						// Fall back to fail behavior in non-interactive mode
+						const message = action.message ?? `Missing required secret: ${action.key}`;
+						ui.error(message);
+						ui.info(`Run: jack secrets add ${action.key}`);
+						if (action.setupUrl) {
+							ui.info(`Setup: ${action.setupUrl}`);
+						}
+						return false;
+					}
+
+					// Show setup info and go straight to prompt (URLs are clickable in most terminals)
+					const promptMsg = action.promptMessage ?? `${action.key}:`;
+					console.error("");
+					if (action.message) {
+						console.error(`  ${action.message}`);
+					}
+					if (action.setupUrl) {
+						console.error(`  Get it at: \x1b[36m${action.setupUrl}\x1b[0m`);
+					}
+					console.error("");
+
+					const { isCancel, text } = await import("@clack/prompts");
+					const value = await text({ message: promptMsg });
+
+					if (isCancel(value) || !value.trim()) {
+						ui.warn(`Skipped ${action.key}`);
+						return false;
+					}
+
+					await saveSecrets([{ key: action.key, value: value.trim(), source: "prompted" }]);
+					ui.success(`Saved ${action.key}`);
+					return true;
+				}
+
+				// Default: onMissing: "fail"
 				const message = action.message ?? `Missing required secret: ${action.key}`;
 				ui.error(message);
 				ui.info(`Run: jack secrets add ${action.key}`);
@@ -425,6 +503,14 @@ const actionHandlers: {
 		// Use multi-line input for JSON validation (handles paste from Farcaster etc.)
 		if (action.validate === "json" || action.validate === "accountAssociation") {
 			rawValue = await readMultilineJson(action.message);
+		} else if (action.secret) {
+			// Use password() for sensitive input (masks the value)
+			const { isCancel, password } = await import("@clack/prompts");
+			const result = await password({ message: action.message });
+			if (isCancel(result)) {
+				return true;
+			}
+			rawValue = result;
 		} else {
 			const { isCancel, text } = await import("@clack/prompts");
 			const result = await text({ message: action.message });
@@ -537,6 +623,151 @@ const actionHandlers: {
 		});
 		await proc.exited;
 		return proc.exitCode === 0;
+	},
+	"stripe-setup": async (action, context, options) => {
+		const ui = options.output ?? noopOutput;
+
+		// Get Stripe API key from saved secrets
+		const savedSecrets = await getSavedSecrets();
+		const stripeKey = savedSecrets.STRIPE_SECRET_KEY;
+
+		if (!stripeKey) {
+			ui.error("Missing STRIPE_SECRET_KEY - run the secret prompt first");
+			return false;
+		}
+
+		const message = action.message ?? "Setting up Stripe products and prices...";
+		ui.info(message);
+
+		// Helper to make Stripe API requests
+		async function stripeRequest(
+			method: string,
+			endpoint: string,
+			body?: Record<string, string>,
+		): Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }> {
+			const url = `https://api.stripe.com/v1${endpoint}`;
+			const headers: Record<string, string> = {
+				Authorization: `Bearer ${stripeKey}`,
+			};
+
+			const fetchOptions: RequestInit = { method, headers };
+			if (body) {
+				headers["Content-Type"] = "application/x-www-form-urlencoded";
+				fetchOptions.body = new URLSearchParams(body).toString();
+			}
+
+			try {
+				const response = await fetch(url, fetchOptions);
+				const data = (await response.json()) as Record<string, unknown>;
+
+				if (!response.ok) {
+					const error = data.error as { message?: string } | undefined;
+					return { ok: false, error: error?.message ?? "Stripe API error" };
+				}
+				return { ok: true, data };
+			} catch (err) {
+				return { ok: false, error: String(err) };
+			}
+		}
+
+		// Search for existing price by lookup_key
+		async function findPriceByLookupKey(lookupKey: string): Promise<string | null> {
+			const result = await stripeRequest(
+				"GET",
+				`/prices?lookup_keys[]=${encodeURIComponent(lookupKey)}&active=true`,
+			);
+			if (result.ok && result.data) {
+				const prices = result.data.data as Array<{ id: string }>;
+				if (prices.length > 0) {
+					return prices[0].id;
+				}
+			}
+			return null;
+		}
+
+		// Create a new product
+		async function createProduct(name: string, description?: string): Promise<string | null> {
+			const body: Record<string, string> = { name };
+			if (description) {
+				body.description = description;
+			}
+			const result = await stripeRequest("POST", "/products", body);
+			if (result.ok && result.data) {
+				return result.data.id as string;
+			}
+			return null;
+		}
+
+		// Create a new price with lookup_key
+		async function createPrice(
+			productId: string,
+			amount: number,
+			interval: "month" | "year",
+			lookupKey: string,
+		): Promise<string | null> {
+			const result = await stripeRequest("POST", "/prices", {
+				product: productId,
+				unit_amount: String(amount),
+				currency: "usd",
+				"recurring[interval]": interval,
+				lookup_key: lookupKey,
+			});
+			if (result.ok && result.data) {
+				return result.data.id as string;
+			}
+			return null;
+		}
+
+		const secretsToSave: Array<{ key: string; value: string; source: string }> = [];
+
+		for (const plan of action.plans) {
+			const lookupKey = `jack_${plan.name.toLowerCase()}_${plan.interval}`;
+
+			// Check if price key already exists in secrets (manual override)
+			if (savedSecrets[plan.priceKey]) {
+				ui.success(`Using existing ${plan.priceKey}`);
+				continue;
+			}
+
+			// Search for existing price by lookup_key
+			ui.info(`Checking for existing ${plan.name} price...`);
+			let priceId = await findPriceByLookupKey(lookupKey);
+
+			if (priceId) {
+				ui.success(`Found existing ${plan.name} price: ${priceId}`);
+			} else {
+				// Create product and price
+				ui.info(`Creating ${plan.name} product and price...`);
+
+				const productId = await createProduct(plan.name, plan.description ?? `${plan.name} plan`);
+				if (!productId) {
+					ui.error(`Failed to create ${plan.name} product`);
+					return false;
+				}
+
+				priceId = await createPrice(productId, plan.amount, plan.interval, lookupKey);
+				if (!priceId) {
+					ui.error(`Failed to create ${plan.name} price`);
+					return false;
+				}
+
+				ui.success(`Created ${plan.name}: ${priceId}`);
+			}
+
+			secretsToSave.push({
+				key: plan.priceKey,
+				value: priceId,
+				source: "stripe-setup",
+			});
+		}
+
+		// Save all price IDs to secrets
+		if (secretsToSave.length > 0) {
+			await saveSecrets(secretsToSave);
+			ui.success("Saved Stripe price IDs to secrets");
+		}
+
+		return true;
 	},
 };
 

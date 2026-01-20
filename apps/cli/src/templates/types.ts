@@ -11,6 +11,7 @@ export type HookAction =
 			message: string;
 			validate?: "json" | "accountAssociation";
 			required?: boolean;
+			secret?: boolean; // Mask input (for sensitive values like API keys)
 			successMessage?: string;
 			writeJson?: {
 				path: string;
@@ -31,9 +32,24 @@ export type HookAction =
 			key: string;
 			message?: string;
 			setupUrl?: string;
+			onMissing?: "fail" | "prompt" | "generate";
+			promptMessage?: string;
+			generateCommand?: string;
+	  }
+	| {
+			action: "stripe-setup";
+			message?: string;
+			plans: Array<{
+				name: string;
+				priceKey: string; // Secret key to store price ID (e.g., "STRIPE_PRO_PRICE_ID")
+				amount: number; // in cents
+				interval: "month" | "year";
+				description?: string;
+			}>;
 	  };
 
 export interface TemplateHooks {
+	preCreate?: HookAction[];
 	preDeploy?: HookAction[];
 	postDeploy?: HookAction[];
 }
