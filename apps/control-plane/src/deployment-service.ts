@@ -465,16 +465,26 @@ export class DeploymentService {
 
 		// Resolve D1 binding
 		if (intent.d1) {
-			const d1Resource = await this.db
+			let d1Resource = await this.db
 				.prepare(
-					"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+					"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1' AND binding_name = ? AND status != 'deleted'",
 				)
-				.bind(projectId)
+				.bind(projectId, intent.d1.binding)
 				.first<{ provider_id: string }>();
+
+			// Fallback for projects created before binding_name was set
+			if (!d1Resource) {
+				d1Resource = await this.db
+					.prepare(
+						"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted' ORDER BY created_at ASC LIMIT 1",
+					)
+					.bind(projectId)
+					.first<{ provider_id: string }>();
+			}
 
 			if (!d1Resource) {
 				throw new Error(
-					`D1 database not found for project ${projectId}. Ensure the project has a D1 resource provisioned.`,
+					`D1 database with binding "${intent.d1.binding}" not found for project ${projectId}. Create one with: jack services db create`,
 				);
 			}
 
