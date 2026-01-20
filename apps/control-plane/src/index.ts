@@ -884,10 +884,10 @@ api.delete("/projects/:projectId/resources/:resourceId", async (c) => {
 		return c.json({ error: "not_found", message: "Resource not found" }, 404);
 	}
 
-	try {
-		// Delete from Cloudflare based on resource type
-		const cfClient = new CloudflareClient(c.env);
+	const cfClient = new CloudflareClient(c.env);
+	let cloudflareDeleted = true;
 
+	try {
 		switch (resource.resource_type) {
 			case "d1":
 				await cfClient.deleteD1Database(resource.provider_id);
@@ -900,30 +900,31 @@ api.delete("/projects/:projectId/resources/:resourceId", async (c) => {
 				await cfClient.deleteR2Bucket(resource.resource_name);
 				break;
 			default:
-				// Worker resources should not be deleted via this endpoint
 				return c.json(
-					{
-						error: "invalid_request",
-						message: `Cannot delete resource type: ${resource.resource_type}`,
-					},
+					{ error: "invalid_request", message: `Cannot delete resource type: ${resource.resource_type}` },
 					400,
 				);
 		}
-
-		// Mark resource as deleted in DB (soft delete)
-		await c.env.DB.prepare("UPDATE resources SET status = 'deleted' WHERE id = ?")
-			.bind(resourceId)
-			.run();
-
-		return c.json({
-			success: true,
-			resource_id: resourceId,
-			deleted_at: new Date().toISOString(),
-		});
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Failed to delete resource";
-		return c.json({ error: "internal_error", message }, 500);
+		const message = error instanceof Error ? error.message : "Failed to delete from Cloudflare";
+		// Handle 404 - resource already gone from Cloudflare
+		if (message.includes("could not be found") || message.includes("not found")) {
+			cloudflareDeleted = false;
+		} else {
+			return c.json({ error: "internal_error", message }, 500);
+		}
 	}
+
+	await c.env.DB.prepare("UPDATE resources SET status = 'deleted' WHERE id = ?")
+		.bind(resourceId)
+		.run();
+
+	return c.json({
+		success: true,
+		resource_id: resourceId,
+		deleted_at: new Date().toISOString(),
+		cloudflare_deleted: cloudflareDeleted,
+	});
 });
 
 api.patch("/projects/:projectId", async (c) => {
