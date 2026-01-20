@@ -155,6 +155,8 @@ export async function createDatabase(
 	let databaseId: string;
 	let created = true;
 
+	let actualDatabaseName = databaseName;
+
 	if (link.deploy_mode === "managed") {
 		// Managed mode: call control plane
 		// Note: Control plane will reuse existing DB if name matches
@@ -163,7 +165,8 @@ export async function createDatabase(
 			bindingName,
 		});
 		databaseId = resource.provider_id;
-		// Control plane always creates for now; could add reuse logic there too
+		// Use the actual name from control plane (may differ from CLI-generated name)
+		actualDatabaseName = resource.resource_name;
 	} else {
 		// BYO mode: use wrangler d1 create (checks for existing first)
 		const result = await createDatabaseViaWrangler(databaseName);
@@ -174,12 +177,12 @@ export async function createDatabase(
 	// Update wrangler.jsonc with the new binding
 	await addD1Binding(wranglerPath, {
 		binding: bindingName,
-		database_name: databaseName,
+		database_name: actualDatabaseName,
 		database_id: databaseId,
 	});
 
 	return {
-		databaseName,
+		databaseName: actualDatabaseName,
 		databaseId,
 		bindingName,
 		created,
