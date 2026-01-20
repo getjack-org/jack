@@ -371,6 +371,46 @@ export async function createProjectResource(
 	return data.resource;
 }
 
+export interface DeleteResourceResponse {
+	success: boolean;
+	resource_id: string;
+	deleted_at: string;
+}
+
+/**
+ * Delete a resource from a managed project.
+ * Uses DELETE /v1/projects/:id/resources/:id endpoint.
+ */
+export async function deleteProjectResource(
+	projectId: string,
+	resourceId: string,
+): Promise<DeleteResourceResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${projectId}/resources/${resourceId}`,
+		{ method: "DELETE" },
+	);
+
+	// Handle 404 gracefully - resource may already be deleted
+	if (response.status === 404) {
+		return {
+			success: true,
+			resource_id: resourceId,
+			deleted_at: new Date().toISOString(),
+		};
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to delete resource: ${response.status}`);
+	}
+
+	return response.json() as Promise<DeleteResourceResponse>;
+}
+
 /**
  * Sync project tags to the control plane.
  * Fire-and-forget: errors are logged but not thrown.
@@ -579,4 +619,26 @@ export async function publishProject(projectId: string): Promise<PublishProjectR
 	}
 
 	return response.json() as Promise<PublishProjectResponse>;
+}
+
+/**
+ * Download the source snapshot for a project.
+ * Returns the zip file contents as a Buffer.
+ * Used by jack clone to restore managed projects.
+ */
+export async function downloadProjectSource(slug: string): Promise<Buffer> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/by-slug/${encodeURIComponent(slug)}/source`,
+	);
+
+	if (!response.ok) {
+		if (response.status === 404) {
+			throw new Error("Project source not found. Deploy first with 'jack ship'.");
+		}
+		throw new Error(`Failed to download source: ${response.status}`);
+	}
+
+	return Buffer.from(await response.arrayBuffer());
 }

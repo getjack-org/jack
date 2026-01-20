@@ -2,6 +2,19 @@ import yoctoSpinner from "yocto-spinner";
 
 const isColorEnabled = !process.env.NO_COLOR && process.stderr.isTTY !== false;
 
+/**
+ * ANSI color codes for terminal output
+ */
+export const colors = {
+	green: isColorEnabled ? "\x1b[32m" : "",
+	red: isColorEnabled ? "\x1b[31m" : "",
+	yellow: isColorEnabled ? "\x1b[33m" : "",
+	cyan: isColorEnabled ? "\x1b[36m" : "",
+	dim: isColorEnabled ? "\x1b[90m" : "",
+	bold: isColorEnabled ? "\x1b[1m" : "",
+	reset: isColorEnabled ? "\x1b[0m" : "",
+};
+
 let currentSpinner: ReturnType<typeof yoctoSpinner> | null = null;
 
 /**
@@ -95,8 +108,10 @@ export function item(message: string): void {
 	console.error(`  ${message}`);
 }
 
-// Random neon purple for cyberpunk styling
-function getRandomPurple(): string {
+/**
+ * Random neon purple for cyberpunk styling
+ */
+export function getRandomPurple(): string {
 	const purples = [177, 165, 141, 129];
 	const colorCode = purples[Math.floor(Math.random() * purples.length)];
 	return `\x1b[38;5;${colorCode}m`;
@@ -117,12 +132,15 @@ export function box(title: string, lines: string[]): void {
 	const fill = "▓".repeat(innerWidth);
 	const gradient = "░".repeat(innerWidth);
 
+	// Pad plain text first, then apply colors (ANSI codes break padEnd calculation)
 	const pad = (text: string) => `  ${text.padEnd(maxLen)}  `;
+	const padTitle = (text: string) =>
+		`  ${bold}${text}${reset}${purple}${" ".repeat(maxLen - text.length)}  `;
 
 	console.error("");
 	console.error(`  ${purple}╔${bar}╗${reset}`);
 	console.error(`  ${purple}║${fill}║${reset}`);
-	console.error(`  ${purple}║${pad(bold + title + reset + purple)}║${reset}`);
+	console.error(`  ${purple}║${padTitle(title)}║${reset}`);
 	console.error(`  ${purple}║${"─".repeat(innerWidth)}║${reset}`);
 	for (const line of lines) {
 		console.error(`  ${purple}║${pad(line)}║${reset}`);

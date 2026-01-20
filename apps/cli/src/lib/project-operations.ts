@@ -39,8 +39,7 @@ import {
 	slugify,
 	writeWranglerConfig,
 } from "./config-generator.ts";
-import { getSyncConfig } from "./config.ts";
-import { deleteManagedProject } from "./control-plane.ts";
+import { deleteManagedProject, listManagedProjects } from "./control-plane.ts";
 import { debug, isDebug, printTimingSummary, timerEnd, timerStart } from "./debug.ts";
 import { ensureWranglerInstalled, validateModeAvailability } from "./deploy-mode.ts";
 import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parser.ts";
@@ -67,7 +66,7 @@ import {
 import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
 import { applySchema, getD1Bindings, getD1DatabaseName, hasD1Config } from "./schema.ts";
 import { getSavedSecrets, saveSecrets } from "./secrets.ts";
-import { getProjectNameFromDir, getRemoteManifest, syncToCloud } from "./storage/index.ts";
+import { getProjectNameFromDir, getRemoteManifest } from "./storage/index.ts";
 import { Events, track } from "./telemetry.ts";
 
 // ============================================================================
@@ -973,6 +972,25 @@ export async function createProject(
 	const rendered = renderTemplate(template, { name: projectName });
 	timings.push({ label: "Template load", duration: timerEnd("template-load") });
 
+	// Run preCreate hooks (for interactive secret collection, auto-generation, etc.)
+	if (template.hooks?.preCreate?.length) {
+		timerStart("pre-create-hooks");
+		const hookContext = { projectName, projectDir: targetDir };
+		const hookResult = await runHook(template.hooks.preCreate, hookContext, {
+			interactive,
+			output: reporter,
+		});
+		timings.push({ label: "Pre-create hooks", duration: timerEnd("pre-create-hooks") });
+
+		if (!hookResult.success) {
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				"Project setup incomplete",
+				"Missing required configuration",
+			);
+		}
+	}
+
 	// Handle template-specific secrets
 	const secretsToUse: Record<string, string> = {};
 	if (template.secrets?.length) {
@@ -1018,41 +1036,34 @@ export async function createProject(
 				continue;
 			}
 
-			// Prompt user
+			// Prompt user - single text input, empty/Esc to skip
 			reporter.stop();
-			const { isCancel, select, text } = await import("@clack/prompts");
+			const { isCancel, text } = await import("@clack/prompts");
 			console.error("");
 			console.error(`  ${optionalSecret.description}`);
 			if (optionalSecret.setupUrl) {
-				console.error(`  Setup: ${optionalSecret.setupUrl}`);
+				console.error(`  Get it at: \x1b[36m${optionalSecret.setupUrl}\x1b[0m`);
 			}
 			console.error("");
 
-			const choice = await select({
-				message: `Add ${optionalSecret.name}?`,
-				options: [
-					{ label: "Yes", value: "yes" },
-					{ label: "Skip", value: "skip" },
-				],
+			const value = await text({
+				message: `${optionalSecret.name}:`,
+				placeholder: "paste value or press Esc to skip",
 			});
 
-			if (!isCancel(choice) && choice === "yes") {
-				const value = await text({
-					message: `Enter ${optionalSecret.name}:`,
-				});
-
-				if (!isCancel(value) && value.trim()) {
-					secretsToUse[optionalSecret.name] = value.trim();
-					// Save to global secrets for reuse
-					await saveSecrets([
-						{
-							key: optionalSecret.name,
-							value: value.trim(),
-							source: "optional-template",
-						},
-					]);
-					reporter.success(`Saved ${optionalSecret.name}`);
-				}
+			if (!isCancel(value) && value.trim()) {
+				secretsToUse[optionalSecret.name] = value.trim();
+				// Save to global secrets for reuse
+				await saveSecrets([
+					{
+						key: optionalSecret.name,
+						value: value.trim(),
+						source: "optional-template",
+					},
+				]);
+				reporter.success(`Saved ${optionalSecret.name}`);
+			} else {
+				reporter.info(`Skipped ${optionalSecret.name}`);
 			}
 
 			reporter.start("Creating project...");
@@ -1308,6 +1319,23 @@ export async function createProject(
 				// Only show if not already shown by parallel setup
 				if (!urlShownEarly) {
 					reporter.success(`Deployed: ${workerUrl}`);
+				}
+
+				// Upload source snapshot for forking (prebuilt path needs this too)
+				try {
+					const { createSourceZip } = await import("./zip-packager.ts");
+					const { uploadSourceSnapshot } = await import("./control-plane.ts");
+					const { rm } = await import("node:fs/promises");
+
+					const sourceZipPath = await createSourceZip(targetDir);
+					await uploadSourceSnapshot(remoteResult.projectId, sourceZipPath);
+					await rm(sourceZipPath, { force: true });
+					debug("Source snapshot uploaded for prebuilt project");
+				} catch (err) {
+					debug(
+						"Source snapshot upload failed (prebuilt):",
+						err instanceof Error ? err.message : String(err),
+					);
 				}
 			} else {
 				// Prebuilt not available - fall back to fresh build
@@ -1769,28 +1797,9 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 	}
 
-	if (includeSync && deployMode !== "byo") {
-		const syncConfig = await getSyncConfig();
-		if (syncConfig.enabled && syncConfig.autoSync) {
-			const syncSpin = reporter.spinner("Syncing source to jack storage...");
-			try {
-				const syncResult = await syncToCloud(projectPath);
-				if (syncResult.success) {
-					if (syncResult.filesUploaded > 0 || syncResult.filesDeleted > 0) {
-						syncSpin.success(
-							`Synced source to jack storage (${syncResult.filesUploaded} uploaded, ${syncResult.filesDeleted} removed)`,
-						);
-					} else {
-						syncSpin.success("Source already synced");
-					}
-				}
-			} catch {
-				syncSpin.stop();
-				reporter.warn("Cloud sync failed (deploy succeeded)");
-				reporter.info("Run: jack sync");
-			}
-		}
-	}
+	// Note: Auto-sync to User R2 was removed for managed mode.
+	// Managed projects use control-plane source.zip for clone instead.
+	// BYO users can run 'jack sync' manually if needed.
 
 	// Ensure project is linked locally for discovery
 	try {
@@ -1936,7 +1945,9 @@ export async function getProjectStatus(
 
 /**
  * Scan for stale project paths.
- * Checks for paths in the index that no longer exist on disk or don't have valid links.
+ * Checks for:
+ * 1. Paths in the index that no longer have wrangler config (dir deleted/moved)
+ * 2. Managed projects where the cloud project no longer exists (orphaned links)
  * Returns total project count and stale entries with reasons.
  */
 export async function scanStaleProjects(): Promise<StaleProjectScan> {
@@ -1945,31 +1956,61 @@ export async function scanStaleProjects(): Promise<StaleProjectScan> {
 	const stale: StaleProject[] = [];
 	let totalPaths = 0;
 
+	// Get list of valid managed project IDs (if logged in)
+	let validManagedIds: Set<string> = new Set();
+	try {
+		const { isLoggedIn } = await import("./auth/store.ts");
+		if (await isLoggedIn()) {
+			const managedProjects = await listManagedProjects();
+			validManagedIds = new Set(managedProjects.map((p) => p.id));
+		}
+	} catch {
+		// Control plane unavailable, skip orphan detection
+	}
+
 	for (const projectId of projectIds) {
 		const paths = allPaths[projectId] || [];
 		totalPaths += paths.length;
 
 		for (const projectPath of paths) {
-			// Check if path exists and has valid link
+			// Check if path exists and has valid wrangler config
 			const hasWranglerConfig =
 				existsSync(join(projectPath, "wrangler.jsonc")) ||
 				existsSync(join(projectPath, "wrangler.toml")) ||
 				existsSync(join(projectPath, "wrangler.json"));
 
 			if (!hasWranglerConfig) {
-				// Try to get project name from the path
-				let name = projectPath.split("/").pop() || projectId;
-				try {
-					name = await getProjectNameFromDir(projectPath);
-				} catch {
-					// Use path basename as fallback
-				}
-
+				// Type 1: No wrangler config at path (dir deleted/moved)
+				const name = projectPath.split("/").pop() || projectId;
 				stale.push({
 					name,
-					reason: "worker not deployed",
+					reason: "directory missing or no wrangler config",
 					workerUrl: null,
 				});
+				continue;
+			}
+
+			// Check for Type 2: Managed project link pointing to deleted cloud project
+			try {
+				const link = await readProjectLink(projectPath);
+				if (link?.deploy_mode === "managed" && validManagedIds.size > 0) {
+					if (!validManagedIds.has(link.project_id)) {
+						// Orphaned managed link - cloud project doesn't exist
+						let name = projectPath.split("/").pop() || projectId;
+						try {
+							name = await getProjectNameFromDir(projectPath);
+						} catch {
+							// Use path basename as fallback
+						}
+						stale.push({
+							name,
+							reason: "cloud project deleted",
+							workerUrl: null,
+						});
+					}
+				}
+			} catch {
+				// Can't read link, skip
 			}
 		}
 	}

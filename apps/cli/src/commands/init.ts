@@ -12,6 +12,12 @@ import { ensureAuth, ensureWrangler, isAuthenticated } from "../lib/wrangler.ts"
 export async function isInitialized(): Promise<boolean> {
 	const config = await readConfig();
 	if (!config?.initialized) return false;
+
+	// Check Jack Cloud auth first (most common path)
+	const { isLoggedIn } = await import("../lib/auth/store.ts");
+	if (await isLoggedIn()) return true;
+
+	// Fall back to wrangler/Cloudflare auth (BYO mode)
 	return await isAuthenticated();
 }
 
