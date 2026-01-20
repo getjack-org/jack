@@ -205,6 +205,109 @@ These variables are substituted at runtime (different from template placeholders
 }
 ```
 
+### Proposed Hook Extensions
+
+These extensions are planned to support more complex setup wizards (like SaaS templates with Stripe):
+
+#### 1. `require` + `onMissing: "prompt"`
+
+Currently `require` fails if a secret is missing. This extension allows prompting the user instead:
+
+```json
+{
+  "action": "require",
+  "source": "secret",
+  "key": "STRIPE_SECRET_KEY",
+  "onMissing": "prompt",
+  "promptMessage": "Enter your Stripe Secret Key (sk_test_...):",
+  "setupUrl": "https://dashboard.stripe.com/apikeys"
+}
+```
+
+**Behavior:**
+- If secret exists → continue (no change)
+- If secret missing + interactive → prompt user, save to `.secrets.json`
+- If secret missing + non-interactive → fail with setup instructions
+
+#### 2. `shell` + `captureAs`
+
+Run a command and save its output as a secret or variable:
+
+```json
+{
+  "action": "shell",
+  "command": "stripe listen --print-secret",
+  "captureAs": "secret:STRIPE_WEBHOOK_SECRET",
+  "message": "Starting Stripe webhook listener..."
+}
+```
+
+**Use cases:**
+- Capture Stripe CLI webhook signing secret
+- Capture generated API keys or tokens
+- Capture any CLI output needed for configuration
+
+**`captureAs` syntax:**
+- `secret:KEY_NAME` → saves to `.secrets.json`
+- `var:NAME` → saves to hook variables for later hooks
+
+#### 3. `prompt` + `saveAs`
+
+Currently `prompt` only writes to JSON files via `writeJson`. This extension allows saving input as a secret:
+
+```json
+{
+  "action": "prompt",
+  "message": "Enter your Stripe Webhook Secret (whsec_...):",
+  "saveAs": "secret:STRIPE_WEBHOOK_SECRET",
+  "validate": "startsWith:whsec_",
+  "successMessage": "Webhook secret saved"
+}
+```
+
+**Difference from `require+onMissing`:**
+- `require+onMissing` checks first, prompts only if missing
+- `prompt+saveAs` always prompts (for update flows or explicit input)
+
+### Design Principles for Hook Extensions
+
+When extending the hook system:
+
+1. **Extend existing actions** - prefer `require+onMissing` over a new `requireOrPrompt` action
+2. **Reusable primitives** - `captureAs` works on any action that produces output
+3. **Consistent syntax** - `secret:KEY` pattern for writing to `.secrets.json`
+4. **Non-interactive fallback** - every interactive feature must degrade gracefully in CI/MCP
+
+### Example: Complex Setup Wizard
+
+A SaaS template with Stripe might use these extensions:
+
+```json
+{
+  "hooks": {
+    "preDeploy": [
+      {"action": "require", "source": "secret", "key": "BETTER_AUTH_SECRET", "onMissing": "prompt", "promptMessage": "Enter a random secret (32+ chars):"},
+      {"action": "require", "source": "secret", "key": "STRIPE_SECRET_KEY", "onMissing": "prompt", "promptMessage": "Enter Stripe Secret Key:", "setupUrl": "https://dashboard.stripe.com/apikeys"}
+    ],
+    "postDeploy": [
+      {"action": "box", "title": "Stripe Webhook Setup", "lines": ["1. Go to Stripe Dashboard → Webhooks", "2. Add endpoint: {{url}}/api/auth/stripe/webhook", "3. Select events: checkout.session.completed, customer.subscription.*"]},
+      {"action": "url", "url": "https://dashboard.stripe.com/webhooks/create?endpoint_url={{url}}/api/auth/stripe/webhook", "label": "Create webhook"},
+      {"action": "prompt", "message": "Paste webhook signing secret (whsec_...):", "saveAs": "secret:STRIPE_WEBHOOK_SECRET", "validate": "startsWith:whsec_"},
+      {"action": "message", "text": "Re-deploying with webhook secret..."},
+      {"action": "shell", "command": "jack ship --quiet"}
+    ]
+  }
+}
+```
+
+This creates a guided wizard that:
+1. Ensures auth secret exists (prompts if missing)
+2. Ensures Stripe key exists (prompts if missing, with setup link)
+3. Deploys the app
+4. Guides user through webhook setup with direct link
+5. Captures webhook secret
+6. Re-deploys with complete configuration
+
 ## Farcaster Miniapp Embeds
 
 When a cast includes a URL, Farcaster scrapes it for `fc:miniapp` meta tags to render a rich embed.

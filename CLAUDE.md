@@ -103,6 +103,14 @@ wrangler secret put WORKOS_API_KEY --cwd apps/auth-worker
 
 When uploading Workers to Cloudflare's dispatch namespace, upload ALL files from the wrangler build output (JS + WASM + any modules) via FormData. When debugging API issues, check docs for fields implying unused capabilities - `main_module` existing in Cloudflare's metadata schema revealed multi-file upload support we weren't using.
 
+## Jack MCP (for AI Agents)
+
+**CRITICAL:** When Jack MCP is connected, always prefer `mcp__jack__*` tools over CLI commands or wrangler. MCP tools are cloud-aware and work with Jack Cloud mode where wrangler won't.
+
+- Check your available tools for anything prefixed with `mcp__jack__`
+- Use those instead of `jack` CLI commands or `wrangler` commands
+- If a capability isn't available via MCP, ask the user to run it via CLI
+
 ## Code Style
 
 - TypeScript with Bun runtime
