@@ -4,12 +4,15 @@
  * Isolates managed deployment logic from BYO (wrangler) path.
  */
 
+import { stat } from "node:fs/promises";
 import { validateBindings } from "./binding-validator.ts";
 import { buildProject, parseWranglerConfig } from "./build-helper.ts";
 import { createManagedProject, syncProjectTags, uploadSourceSnapshot } from "./control-plane.ts";
 import { debug } from "./debug.ts";
 import { uploadDeployment } from "./deploy-upload.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
+import { formatSize } from "./format.ts";
+import { createUploadProgress } from "./progress.ts";
 import type { OperationReporter } from "./project-operations.ts";
 import { getProjectTags } from "./tags.ts";
 import { Events, track } from "./telemetry.ts";
@@ -120,7 +123,28 @@ export async function deployCodeToManagedProject(
 		reporter?.success("Packaged artifacts");
 
 		// Step 4: Upload to control plane
-		reporter?.start("Uploading to jack cloud...");
+		// Calculate total upload size for progress display
+		const fileSizes = await Promise.all([
+			stat(pkg.bundleZipPath).then((s) => s.size),
+			stat(pkg.sourceZipPath).then((s) => s.size),
+			stat(pkg.manifestPath).then((s) => s.size),
+			pkg.schemaPath ? stat(pkg.schemaPath).then((s) => s.size) : Promise.resolve(0),
+			pkg.secretsPath ? stat(pkg.secretsPath).then((s) => s.size) : Promise.resolve(0),
+			pkg.assetsZipPath ? stat(pkg.assetsZipPath).then((s) => s.size) : Promise.resolve(0),
+		]);
+		const totalUploadSize = fileSizes.reduce((sum, size) => sum + size, 0);
+		debug(`Upload size: ${formatSize(totalUploadSize)}`);
+
+		// Stop the reporter spinner - we'll use our own progress display
+		reporter?.stop();
+
+		// Use custom progress with pulsing bar (since fetch doesn't support upload progress)
+		const uploadProgress = createUploadProgress({
+			totalSize: totalUploadSize,
+			label: "Uploading to jack cloud",
+		});
+		uploadProgress.start();
+
 		const result = await uploadDeployment({
 			projectId,
 			bundleZipPath: pkg.bundleZipPath,
@@ -132,7 +156,7 @@ export async function deployCodeToManagedProject(
 			assetManifest: pkg.assetManifest ?? undefined,
 		});
 
-		reporter?.stop();
+		uploadProgress.complete();
 		reporter?.success("Deployed to jack cloud");
 
 		// Track success
