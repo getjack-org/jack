@@ -48,17 +48,23 @@ export interface ManifestData {
 	};
 }
 
+export interface ZipProgressCallback {
+	(current: number, total: number): void;
+}
+
 /**
  * Creates a ZIP archive from source directory
  * @param outputPath - Absolute path for output ZIP file
  * @param sourceDir - Absolute path to directory to archive
  * @param files - Optional list of specific files to include (relative to sourceDir)
+ * @param onProgress - Optional callback for file-count progress updates
  * @returns Promise that resolves when ZIP is created
  */
 async function createZipArchive(
 	outputPath: string,
 	sourceDir: string,
 	files?: string[],
+	onProgress?: ZipProgressCallback,
 ): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const output = createWriteStream(outputPath);
@@ -70,13 +76,16 @@ async function createZipArchive(
 		archive.pipe(output);
 
 		if (files) {
-			// Add specific files
-			for (const file of files) {
+			// Add specific files with progress tracking
+			const total = files.length;
+			for (let i = 0; i < files.length; i++) {
+				const file = files[i];
 				const filePath = join(sourceDir, file);
 				archive.file(filePath, { name: file });
+				onProgress?.(i + 1, total);
 			}
 		} else {
-			// Add entire directory
+			// Add entire directory (no per-file progress available)
 			archive.directory(sourceDir, false);
 		}
 
@@ -219,18 +228,38 @@ function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindi
 	return Object.keys(bindings).length > 0 ? bindings : undefined;
 }
 
+export interface PackageOptions {
+	projectPath: string;
+	buildOutput: BuildOutput;
+	config?: WranglerConfig;
+	onProgress?: ZipProgressCallback;
+}
+
 /**
  * Packages a built project for deployment to jack cloud
- * @param projectPath - Absolute path to project directory
- * @param buildOutput - Build output from buildProject()
- * @param config - Optional wrangler config to extract binding intent
+ * @param options - Package options including paths, build output, config, and optional progress callback
  * @returns Package result with ZIP paths and cleanup function
+ */
+export async function packageForDeploy(options: PackageOptions): Promise<ZipPackageResult>;
+/**
+ * @deprecated Use options object instead
  */
 export async function packageForDeploy(
 	projectPath: string,
 	buildOutput: BuildOutput,
 	config?: WranglerConfig,
+): Promise<ZipPackageResult>;
+export async function packageForDeploy(
+	optionsOrPath: PackageOptions | string,
+	buildOutputArg?: BuildOutput,
+	configArg?: WranglerConfig,
 ): Promise<ZipPackageResult> {
+	// Support both old and new signatures
+	const options: PackageOptions =
+		typeof optionsOrPath === "string"
+			? { projectPath: optionsOrPath, buildOutput: buildOutputArg!, config: configArg }
+			: optionsOrPath;
+	const { projectPath, buildOutput, config, onProgress } = options;
 	// Create temp directory for package artifacts
 	const packageId = `jack-package-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 	const packageDir = join(tmpdir(), packageId);
@@ -247,7 +276,7 @@ export async function packageForDeploy(
 	// 2. Create source.zip from project files (filtered)
 	const projectFiles = await scanProjectFiles(projectPath);
 	const sourceFiles = projectFiles.map((f) => f.path);
-	await createZipArchive(sourceZipPath, projectPath, sourceFiles);
+	await createZipArchive(sourceZipPath, projectPath, sourceFiles, onProgress);
 
 	// 3. Create manifest.json
 	const manifest: ManifestData = {

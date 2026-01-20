@@ -12,7 +12,7 @@ import { debug } from "./debug.ts";
 import { uploadDeployment } from "./deploy-upload.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { formatSize } from "./format.ts";
-import { createUploadProgress } from "./progress.ts";
+import { createFileCountProgress, createUploadProgress } from "./progress.ts";
 import type { OperationReporter } from "./project-operations.ts";
 import { getProjectTags } from "./tags.ts";
 import { Events, track } from "./telemetry.ts";
@@ -116,10 +116,17 @@ export async function deployCodeToManagedProject(
 			);
 		}
 
-		// Step 3: Package artifacts
-		reporter?.start("Packaging artifacts...");
-		pkg = await packageForDeploy(projectPath, buildOutput, config);
-		reporter?.stop();
+		// Step 3: Package artifacts with file-count progress
+		reporter?.stop(); // Stop reporter spinner, we'll use our own progress
+		const packagingProgress = createFileCountProgress({ label: "Packaging" });
+		packagingProgress.start();
+		pkg = await packageForDeploy({
+			projectPath,
+			buildOutput,
+			config,
+			onProgress: (current, total) => packagingProgress.update(current, total),
+		});
+		packagingProgress.complete();
 		reporter?.success("Packaged artifacts");
 
 		// Step 4: Upload to control plane
@@ -141,7 +148,7 @@ export async function deployCodeToManagedProject(
 		// Use custom progress with pulsing bar (since fetch doesn't support upload progress)
 		const uploadProgress = createUploadProgress({
 			totalSize: totalUploadSize,
-			label: "Uploading to jack cloud",
+			label: "Deploying to jack cloud",
 		});
 		uploadProgress.start();
 
