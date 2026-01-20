@@ -338,8 +338,13 @@ export function formatErrorSection(
 	);
 
 	for (const item of items) {
-		lines.push(formatProjectLine(item, { indent: 4, tagColorMap }));
+		// Don't show errorMessage inline - we'll show a summary hint below
+		lines.push(formatProjectLine(item, { indent: 4, tagColorMap, showUrl: false }));
 	}
+
+	// Add hint for resolving errors
+	lines.push("");
+	lines.push(`    ${colors.dim}Run 'jack projects cleanup' to remove stale links${colors.reset}`);
 
 	return lines.join("\n");
 }
