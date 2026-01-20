@@ -363,7 +363,11 @@ async function runParallelSetup(
 	installSuccess: boolean;
 	remoteResult: ManagedCreateResult;
 }> {
+	const setupStart = Date.now();
+	debug("Parallel setup started", { template: options.template, usePrebuilt: options.usePrebuilt });
+
 	// Start both operations
+	const installStart = Date.now();
 	const installPromise = (async () => {
 		const install = Bun.spawn(["bun", "install", "--prefer-offline"], {
 			cwd: targetDir,
@@ -371,15 +375,22 @@ async function runParallelSetup(
 			stderr: "ignore",
 		});
 		await install.exited;
+		const duration = ((Date.now() - installStart) / 1000).toFixed(1);
+		debug(`bun install completed in ${duration}s (exit: ${install.exitCode})`);
 		if (install.exitCode !== 0) {
 			throw new Error("Dependency installation failed");
 		}
 		return true;
 	})();
 
+	const remoteStart = Date.now();
 	const remotePromise = createManagedProjectRemote(projectName, undefined, {
 		template: options.template || "hello",
 		usePrebuilt: options.usePrebuilt ?? true,
+	}).then((result) => {
+		const duration = ((Date.now() - remoteStart) / 1000).toFixed(1);
+		debug(`Remote project created in ${duration}s (status: ${result.status})`);
+		return result;
 	});
 
 	// Report URL as soon as remote is ready (don't wait for install)
@@ -433,6 +444,9 @@ async function runParallelSetup(
 		// Should never happen, but satisfies TypeScript
 		throw new Error("Unexpected state: remote result not fulfilled");
 	}
+
+	const totalDuration = ((Date.now() - setupStart) / 1000).toFixed(1);
+	debug(`Parallel setup completed in ${totalDuration}s`);
 
 	return {
 		installSuccess: true,
