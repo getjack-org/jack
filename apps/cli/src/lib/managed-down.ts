@@ -5,7 +5,11 @@
 
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { deleteManagedProject, exportManagedDatabase } from "./control-plane.ts";
+import {
+	deleteManagedProject,
+	exportManagedDatabase,
+	fetchProjectResources,
+} from "./control-plane.ts";
 import { promptSelect } from "./hooks.ts";
 import { error, info, item, output, success, warn } from "./output.ts";
 
@@ -47,14 +51,29 @@ export async function managedDown(
 		}
 	}
 
-	// Interactive mode
+	// Interactive mode - fetch actual resources
+	let hasDatabase = false;
+	let databaseName: string | null = null;
+	try {
+		const resources = await fetchProjectResources(projectId);
+		const d1Resource = resources.find((r) => r.resource_type === "d1");
+		if (d1Resource) {
+			hasDatabase = true;
+			databaseName = d1Resource.resource_name;
+		}
+	} catch {
+		// If fetch fails, assume no database (safer than showing wrong info)
+	}
+
 	console.error("");
 	info(`Project: ${projectName}`);
 	if (runjackUrl) {
 		item(`URL: ${runjackUrl}`);
 	}
 	item("Mode: jack cloud (managed)");
-	item("Database: managed D1");
+	if (hasDatabase) {
+		item(`Database: ${databaseName ?? "managed D1"}`);
+	}
 	console.error("");
 
 	// Confirm undeploy
@@ -67,49 +86,51 @@ export async function managedDown(
 		return false;
 	}
 
-	// Ask about database export
-	console.error("");
-	info("Database will be deleted with the project");
+	// Ask about database export (only if database exists)
+	if (hasDatabase) {
+		console.error("");
+		info("Database will be deleted with the project");
 
-	console.error("");
-	info("Export database before deleting?");
-	const exportAction = await promptSelect(["Yes", "No"]);
+		console.error("");
+		info("Export database before deleting?");
+		const exportAction = await promptSelect(["Yes", "No"]);
 
-	if (exportAction === 0) {
-		const exportPath = join(process.cwd(), `${projectName}-backup.sql`);
-		output.start(`Exporting database to ${exportPath}...`);
+		if (exportAction === 0) {
+			const exportPath = join(process.cwd(), `${projectName}-backup.sql`);
+			output.start(`Exporting database to ${exportPath}...`);
 
-		try {
-			const exportResult = await exportManagedDatabase(projectId);
+			try {
+				const exportResult = await exportManagedDatabase(projectId);
 
-			// Download the SQL file
-			const response = await fetch(exportResult.download_url);
-			if (!response.ok) {
-				throw new Error(`Failed to download export: ${response.statusText}`);
-			}
+				// Download the SQL file
+				const response = await fetch(exportResult.download_url);
+				if (!response.ok) {
+					throw new Error(`Failed to download export: ${response.statusText}`);
+				}
 
-			const sqlContent = await response.text();
-			await writeFile(exportPath, sqlContent, "utf-8");
+				const sqlContent = await response.text();
+				await writeFile(exportPath, sqlContent, "utf-8");
 
-			output.stop();
-			success(`Database exported to ${exportPath}`);
-		} catch (err) {
-			output.stop();
-			error(`Failed to export database: ${err instanceof Error ? err.message : String(err)}`);
+				output.stop();
+				success(`Database exported to ${exportPath}`);
+			} catch (err) {
+				output.stop();
+				error(`Failed to export database: ${err instanceof Error ? err.message : String(err)}`);
 
-			// If export times out, abort
-			if (err instanceof Error && err.message.includes("timed out")) {
-				error("Export timeout - deletion aborted");
-				return false;
-			}
+				// If export times out, abort
+				if (err instanceof Error && err.message.includes("timed out")) {
+					error("Export timeout - deletion aborted");
+					return false;
+				}
 
-			console.error("");
-			info("Continue without exporting?");
-			const continueAction = await promptSelect(["Yes", "No"]);
+				console.error("");
+				info("Continue without exporting?");
+				const continueAction = await promptSelect(["Yes", "No"]);
 
-			if (continueAction !== 0) {
-				info("Cancelled");
-				return false;
+				if (continueAction !== 0) {
+					info("Cancelled");
+					return false;
+				}
 			}
 		}
 	}
