@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { getSyncConfig } from "../lib/config.ts";
 import { error, info, spinner, success, warn } from "../lib/output.ts";
+import { readProjectLink } from "../lib/project-link.ts";
 import { syncToCloud } from "../lib/storage/index.ts";
 
 export interface SyncFlags {
@@ -23,6 +24,14 @@ export default async function sync(flags: SyncFlags = {}): Promise<void> {
 		error("Not in a project directory");
 		info("Run jack new <name> to create a project");
 		process.exit(1);
+	}
+
+	// Check if this is a managed project
+	const link = await readProjectLink(process.cwd());
+	if (link?.deploy_mode === "managed") {
+		info("Managed projects are automatically backed up to jack cloud during deploy.");
+		info("Use 'jack clone <project>' on another machine to restore.");
+		return;
 	}
 
 	// Check if sync is enabled
