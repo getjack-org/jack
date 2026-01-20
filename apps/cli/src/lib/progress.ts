@@ -14,6 +14,13 @@ export interface ProgressOptions {
 	label?: string;
 }
 
+export interface UploadProgressOptions {
+	totalSize: number;
+	delayMs?: number;
+	barWidth?: number;
+	label?: string;
+}
+
 const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /**
@@ -67,6 +74,73 @@ export function createProgressTracker(options: ProgressOptions) {
 
 		update(bytes: number) {
 			current = bytes;
+		},
+
+		complete() {
+			if (intervalId) {
+				clearInterval(intervalId);
+				intervalId = null;
+			}
+			clearLine();
+		},
+	};
+}
+
+/**
+ * Creates an upload progress indicator for operations where we know the total
+ * size but can't track byte-level progress (e.g., fetch uploads).
+ *
+ * Shows spinner first, then after delay shows an animated bar with size info.
+ * The bar pulses to indicate activity without false progress claims.
+ */
+export function createUploadProgress(options: UploadProgressOptions) {
+	const { totalSize, delayMs = 2000, barWidth = 25, label = "Uploading" } = options;
+	const startTime = Date.now();
+	let frame = 0;
+	let pulsePos = 0;
+	let intervalId: Timer | null = null;
+
+	function render() {
+		const elapsed = Date.now() - startTime;
+		const elapsedSec = (elapsed / 1000).toFixed(1);
+
+		clearLine();
+
+		if (elapsed < delayMs) {
+			// Just spinner for first N seconds
+			process.stderr.write(
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} ${label}...`,
+			);
+		} else {
+			// Show pulsing bar after delay (indicates activity without false progress)
+			const purple = getRandomPurple();
+
+			// Create pulsing effect - a bright section that moves across the bar
+			const pulseWidth = 5;
+			pulsePos = (pulsePos + 1) % (barWidth + pulseWidth);
+
+			let bar = "";
+			for (let i = 0; i < barWidth; i++) {
+				const distFromPulse = Math.abs(i - pulsePos);
+				if (distFromPulse < pulseWidth) {
+					bar += "▓";
+				} else {
+					bar += "░";
+				}
+			}
+
+			process.stderr.write(
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} ${label} ${purple}[${bar}]${colors.reset} ${colors.dim}${formatSize(totalSize)} • ${elapsedSec}s${colors.reset}`,
+			);
+		}
+	}
+
+	return {
+		start() {
+			if (process.stderr.isTTY) {
+				render();
+				intervalId = setInterval(render, 80);
+			}
 		},
 
 		complete() {
