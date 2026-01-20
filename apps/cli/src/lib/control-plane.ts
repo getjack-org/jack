@@ -2,6 +2,9 @@
  * Control Plane API client for jack cloud
  */
 
+import { debug } from "./debug.ts";
+import { formatSize } from "./format.ts";
+
 const DEFAULT_CONTROL_API_URL = "https://control.getjack.org";
 
 export function getControlApiUrl(): string {
@@ -109,6 +112,9 @@ export async function createManagedProject(
 		requestBody.use_prebuilt = options.usePrebuilt;
 	}
 
+	debug("Creating managed project", { name, template: options?.template, usePrebuilt: options?.usePrebuilt });
+	const start = Date.now();
+
 	const response = await authFetch(`${getControlApiUrl()}/v1/projects`, {
 		method: "POST",
 		headers: {
@@ -117,6 +123,9 @@ export async function createManagedProject(
 		},
 		body: JSON.stringify(requestBody),
 	});
+
+	const duration = ((Date.now() - start) / 1000).toFixed(1);
+	debug(`Control plane response: ${response.status} (${duration}s)`);
 
 	if (!response.ok) {
 		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
@@ -586,10 +595,15 @@ export async function uploadSourceSnapshot(
 	const sourceFile = Bun.file(sourceZipPath);
 	formData.append("source", sourceFile);
 
-	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/source`, {
+	const url = `${getControlApiUrl()}/v1/projects/${projectId}/source`;
+	debug(`Source snapshot: ${formatSize(sourceFile.size)}`);
+
+	const start = Date.now();
+	const response = await authFetch(url, {
 		method: "POST",
 		body: formData,
 	});
+	debug(`Source snapshot: ${response.status} (${((Date.now() - start) / 1000).toFixed(1)}s)`);
 
 	if (!response.ok) {
 		const error = (await response.json().catch(() => ({ message: "Upload failed" }))) as {
