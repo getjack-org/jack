@@ -825,43 +825,19 @@ export async function createProject(
 			reporter.stop();
 			reporter.success("Name available");
 		} else {
-			// Slug not available - check if it's the user's own project (for linking flow)
+			// Slug not available - check if it's the user's own project
 			const { checkAvailability } = await import("./project-resolver.ts");
 			const { existingProject } = await checkAvailability(projectName);
 			timings.push({ label: "Slug check", duration: timerEnd("slug-check") });
 			reporter.stop();
 
 			if (existingProject?.sources.controlPlane && !existingProject.sources.filesystem) {
-				// It's the user's project on jack cloud but not locally - offer to link
-				if (interactive) {
-					const { promptSelect } = await import("./hooks.ts");
-					console.error("");
-					console.error(`  Project "${projectName}" exists on jack cloud but not locally.`);
-					console.error("");
-
-					const choice = await promptSelect(["Link existing project", "Choose different name"]);
-
-					if (choice === 0) {
-						// User chose to link - proceed with project creation
-						reporter.success(`Linking to existing project: ${existingProject.url || projectName}`);
-						// Continue with project creation - user wants to link
-					} else {
-						// User chose different name
-						throw new JackError(
-							JackErrorCode.VALIDATION_ERROR,
-							`Project "${projectName}" already exists on jack cloud`,
-							`Try a different name: jack new ${projectName}-2`,
-							{ exitCode: 0, reported: true },
-						);
-					}
-				} else {
-					// Non-interactive mode - fail with clear message
-					throw new JackError(
-						JackErrorCode.VALIDATION_ERROR,
-						`Project "${projectName}" already exists on jack cloud`,
-						`Try a different name: jack new ${projectName}-2`,
-					);
-				}
+				// User's project exists on jack cloud but not locally - suggest clone
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					`Project "${projectName}" already exists on jack cloud`,
+					`To download it: jack clone ${projectName}`,
+				);
 			} else if (existingProject) {
 				// Project exists in registry with local path - it's truly taken by user
 				throw new JackError(
