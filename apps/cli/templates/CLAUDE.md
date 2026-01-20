@@ -119,16 +119,18 @@ Templates can define hooks in `.jack.json` that run at specific lifecycle points
 | `url` | `url` | Prints label + URL |
 | `clipboard` | `text` | Prints text |
 | `pause` | _(none)_ | Skipped |
-| `require` | `source`, `key` | Validates, prints setup if provided |
+| `require` | `source`, `key` | Validates, prints setup if provided. Supports `onMissing: "prompt" \| "generate"` |
 | `shell` | `command` | Runs with stdin ignored |
-| `prompt` | `message` | Skipped (supports `validate: "json" | "accountAssociation"`) |
+| `prompt` | `message` | Skipped. Supports `secret: true` for masked input, `validate`, `writeJson`, `deployAfter` |
 | `writeJson` | `path`, `set` | Runs (safe in CI) |
+| `stripe-setup` | `plans` | Creates Stripe products/prices, saves price IDs to secrets |
 
 ### Hook Lifecycle
 
 ```json
 {
   "hooks": {
+    "preCreate": [...],   // During project creation (secret collection, auto-generation)
     "preDeploy": [...],   // Before wrangler deploy (validation)
     "postDeploy": [...]   // After successful deploy (notifications, testing)
   }
@@ -145,9 +147,10 @@ Templates can define hooks in `.jack.json` that run at specific lifecycle points
 | `clipboard` | Copy text to clipboard | `{"action": "clipboard", "text": "{{url}}", "message": "Copied!"}` |
 | `shell` | Execute shell command | `{"action": "shell", "command": "curl {{url}}/health"}` |
 | `pause` | Wait for Enter key | `{"action": "pause", "message": "Press Enter..."}` |
-| `require` | Verify secret or env | `{"action": "require", "source": "secret", "key": "API_KEY"}` |
-| `prompt` | Prompt for input and update JSON file | `{"action": "prompt", "message": "Paste JSON", "validate": "json", "successMessage": "Saved", "writeJson": {"path": "public/data.json", "set": {"data": {"from": "input"}}}}` |
+| `require` | Verify secret/env, optionally prompt or generate | `{"action": "require", "source": "secret", "key": "API_KEY", "onMissing": "prompt"}` |
+| `prompt` | Prompt for input, optionally masked | `{"action": "prompt", "message": "Secret:", "secret": true, "writeJson": {...}}` |
 | `writeJson` | Update JSON file with template vars | `{"action": "writeJson", "path": "public/data.json", "set": {"siteUrl": "{{url}}"}}` |
+| `stripe-setup` | Create Stripe products/prices | `{"action": "stripe-setup", "plans": [{"name": "Pro", "priceKey": "STRIPE_PRO_PRICE_ID", "amount": 1900, "interval": "month"}]}` |
 
 ### Non-Interactive Mode
 
@@ -169,7 +172,7 @@ These variables are substituted at runtime (different from template placeholders
 |----------|-------|--------------|
 | `{{url}}` | Full deployed URL | postDeploy |
 | `{{domain}}` | Domain without protocol | postDeploy |
-| `{{name}}` | Project name | preDeploy, postDeploy |
+| `{{name}}` | Project name | preCreate, preDeploy, postDeploy |
 
 ### Example: API Template Hooks
 
@@ -205,13 +208,13 @@ These variables are substituted at runtime (different from template placeholders
 }
 ```
 
-### Proposed Hook Extensions
+### Advanced Hook Features
 
-These extensions are planned to support more complex setup wizards (like SaaS templates with Stripe):
+These features support complex setup wizards (like the SaaS template with Stripe):
 
-#### 1. `require` + `onMissing: "prompt"`
+#### 1. `require` + `onMissing: "prompt" | "generate"`
 
-Currently `require` fails if a secret is missing. This extension allows prompting the user instead:
+The `require` action supports automatic secret collection when a secret is missing:
 
 ```json
 {
@@ -225,88 +228,149 @@ Currently `require` fails if a secret is missing. This extension allows promptin
 ```
 
 **Behavior:**
-- If secret exists → continue (no change)
+- If secret exists → continue (shows "Using saved KEY")
 - If secret missing + interactive → prompt user, save to `.secrets.json`
 - If secret missing + non-interactive → fail with setup instructions
 
-#### 2. `shell` + `captureAs`
-
-Run a command and save its output as a secret or variable:
+**Auto-generate secrets with `onMissing: "generate"`:**
 
 ```json
 {
-  "action": "shell",
-  "command": "stripe listen --print-secret",
-  "captureAs": "secret:STRIPE_WEBHOOK_SECRET",
-  "message": "Starting Stripe webhook listener..."
+  "action": "require",
+  "source": "secret",
+  "key": "BETTER_AUTH_SECRET",
+  "message": "Generating authentication secret...",
+  "onMissing": "generate",
+  "generateCommand": "openssl rand -base64 32"
 }
 ```
 
-**Use cases:**
-- Capture Stripe CLI webhook signing secret
-- Capture generated API keys or tokens
-- Capture any CLI output needed for configuration
+This runs the command, captures stdout, and saves it as the secret automatically.
 
-**`captureAs` syntax:**
-- `secret:KEY_NAME` → saves to `.secrets.json`
-- `var:NAME` → saves to hook variables for later hooks
+#### 2. `stripe-setup` Action
 
-#### 3. `prompt` + `saveAs`
+Automatically creates Stripe products and prices, saving the price IDs as secrets:
 
-Currently `prompt` only writes to JSON files via `writeJson`. This extension allows saving input as a secret:
+```json
+{
+  "action": "stripe-setup",
+  "message": "Setting up Stripe subscription plans...",
+  "plans": [
+    {
+      "name": "Pro",
+      "priceKey": "STRIPE_PRO_PRICE_ID",
+      "amount": 1900,
+      "interval": "month",
+      "description": "Pro monthly subscription"
+    },
+    {
+      "name": "Enterprise",
+      "priceKey": "STRIPE_ENTERPRISE_PRICE_ID",
+      "amount": 9900,
+      "interval": "month"
+    }
+  ]
+}
+```
+
+**Behavior:**
+- Requires `STRIPE_SECRET_KEY` to be set first
+- Checks for existing prices by lookup key (`jack_pro_month`)
+- Creates product + price if not found
+- Saves price IDs to secrets
+
+#### 3. `prompt` with `secret` Flag
+
+Mask sensitive input (like API keys):
 
 ```json
 {
   "action": "prompt",
-  "message": "Enter your Stripe Webhook Secret (whsec_...):",
-  "saveAs": "secret:STRIPE_WEBHOOK_SECRET",
-  "validate": "startsWith:whsec_",
-  "successMessage": "Webhook secret saved"
+  "message": "Paste your webhook signing secret (whsec_...):",
+  "secret": true,
+  "writeJson": {
+    "path": ".secrets.json",
+    "set": { "STRIPE_WEBHOOK_SECRET": { "from": "input" } }
+  }
 }
 ```
 
-**Difference from `require+onMissing`:**
-- `require+onMissing` checks first, prompts only if missing
-- `prompt+saveAs` always prompts (for update flows or explicit input)
+#### 4. `prompt` with `deployAfter`
 
-### Design Principles for Hook Extensions
+Automatically redeploy after user provides input:
+
+```json
+{
+  "action": "prompt",
+  "message": "Paste webhook signing secret:",
+  "secret": true,
+  "deployAfter": true,
+  "deployMessage": "Deploying with webhook support...",
+  "writeJson": {
+    "path": ".secrets.json",
+    "set": { "STRIPE_WEBHOOK_SECRET": { "from": "input" } }
+  }
+}
+```
+
+### Design Principles
 
 When extending the hook system:
 
 1. **Extend existing actions** - prefer `require+onMissing` over a new `requireOrPrompt` action
-2. **Reusable primitives** - `captureAs` works on any action that produces output
-3. **Consistent syntax** - `secret:KEY` pattern for writing to `.secrets.json`
-4. **Non-interactive fallback** - every interactive feature must degrade gracefully in CI/MCP
+2. **Non-interactive fallback** - every interactive feature must degrade gracefully in CI/MCP
+3. **Secrets via `.secrets.json`** - use `writeJson` with `.secrets.json` for secret storage
 
-### Example: Complex Setup Wizard
+### Example: SaaS Template Setup Wizard
 
-A SaaS template with Stripe might use these extensions:
+The `saas` template uses `preCreate` hooks for a complete setup wizard:
 
 ```json
 {
   "hooks": {
-    "preDeploy": [
-      {"action": "require", "source": "secret", "key": "BETTER_AUTH_SECRET", "onMissing": "prompt", "promptMessage": "Enter a random secret (32+ chars):"},
-      {"action": "require", "source": "secret", "key": "STRIPE_SECRET_KEY", "onMissing": "prompt", "promptMessage": "Enter Stripe Secret Key:", "setupUrl": "https://dashboard.stripe.com/apikeys"}
+    "preCreate": [
+      {
+        "action": "require",
+        "source": "secret",
+        "key": "STRIPE_SECRET_KEY",
+        "message": "Stripe API key required for payments",
+        "setupUrl": "https://dashboard.stripe.com/apikeys",
+        "onMissing": "prompt",
+        "promptMessage": "Enter your Stripe Secret Key (sk_test_... or sk_live_...):"
+      },
+      {
+        "action": "require",
+        "source": "secret",
+        "key": "BETTER_AUTH_SECRET",
+        "message": "Generating authentication secret...",
+        "onMissing": "generate",
+        "generateCommand": "openssl rand -base64 32"
+      },
+      {
+        "action": "stripe-setup",
+        "message": "Setting up Stripe subscription plans...",
+        "plans": [
+          {"name": "Pro", "priceKey": "STRIPE_PRO_PRICE_ID", "amount": 1900, "interval": "month"},
+          {"name": "Enterprise", "priceKey": "STRIPE_ENTERPRISE_PRICE_ID", "amount": 9900, "interval": "month"}
+        ]
+      }
     ],
     "postDeploy": [
-      {"action": "box", "title": "Stripe Webhook Setup", "lines": ["1. Go to Stripe Dashboard → Webhooks", "2. Add endpoint: {{url}}/api/auth/stripe/webhook", "3. Select events: checkout.session.completed, customer.subscription.*"]},
-      {"action": "url", "url": "https://dashboard.stripe.com/webhooks/create?endpoint_url={{url}}/api/auth/stripe/webhook", "label": "Create webhook"},
-      {"action": "prompt", "message": "Paste webhook signing secret (whsec_...):", "saveAs": "secret:STRIPE_WEBHOOK_SECRET", "validate": "startsWith:whsec_"},
-      {"action": "message", "text": "Re-deploying with webhook secret..."},
-      {"action": "shell", "command": "jack ship --quiet"}
+      {"action": "box", "title": "Your SaaS is live!", "lines": ["{{url}}"]},
+      {"action": "clipboard", "text": "{{url}}/api/auth/stripe/webhook", "message": "Webhook URL copied"},
+      {"action": "prompt", "message": "Paste your webhook signing secret (whsec_...):", "secret": true, "deployAfter": true, "writeJson": {"path": ".secrets.json", "set": {"STRIPE_WEBHOOK_SECRET": {"from": "input"}}}}
     ]
   }
 }
 ```
 
 This creates a guided wizard that:
-1. Ensures auth secret exists (prompts if missing)
-2. Ensures Stripe key exists (prompts if missing, with setup link)
-3. Deploys the app
-4. Guides user through webhook setup with direct link
-5. Captures webhook secret
-6. Re-deploys with complete configuration
+1. Prompts for Stripe key (with setup URL)
+2. Auto-generates auth secret
+3. Creates Stripe products/prices automatically
+4. Deploys the app
+5. Guides through webhook setup
+6. Re-deploys with webhook secret
 
 ## Farcaster Miniapp Embeds
 
