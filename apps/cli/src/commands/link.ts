@@ -39,7 +39,10 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 
 	if (!hasWranglerConfig) {
 		error("No wrangler config found");
-		info("Run this from a jack project directory");
+		console.error("");
+		info("Jack needs a wrangler.toml or wrangler.jsonc to deploy.");
+		info("  → For a new project: jack new my-project");
+		info("  → For existing code: jack init");
 		process.exit(1);
 	}
 

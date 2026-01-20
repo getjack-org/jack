@@ -7,7 +7,10 @@ export default async function publish(): Promise<void> {
 	const link = await readProjectLink(process.cwd());
 	if (!link) {
 		output.error("Not in a jack project directory");
-		output.info("Run this command from a directory with a .jack folder");
+		console.error("");
+		output.info("This command requires a jack project.");
+		output.info("  → cd into an existing project, or");
+		output.info("  → Run: jack new my-project");
 		process.exit(1);
 	}
 
@@ -27,7 +30,9 @@ export default async function publish(): Promise<void> {
 	const profile = await getCurrentUserProfile();
 	if (!profile?.username) {
 		output.error("You need a username to publish projects");
-		output.info("Run: jack login (to set up your username)");
+		console.error("");
+		output.info("Usernames identify your published templates.");
+		output.info("  → Run: jack login");
 		process.exit(1);
 	}
 

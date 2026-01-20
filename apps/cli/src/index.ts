@@ -149,6 +149,18 @@ const cli = meow(
 				type: "string",
 				isMultiple: true,
 			},
+			includeBackup: {
+				type: "boolean",
+				default: false,
+			},
+			open: {
+				type: "boolean",
+				default: false,
+			},
+			noOpen: {
+				type: "boolean",
+				default: false,
+			},
 		},
 	},
 );
@@ -200,6 +212,8 @@ try {
 				managed: cli.flags.managed,
 				byo: cli.flags.byo,
 				ci: cli.flags.ci,
+				open: cli.flags.open,
+				noOpen: cli.flags.noOpen,
 			});
 			break;
 		}
@@ -279,7 +293,10 @@ try {
 		}
 		case "down": {
 			const { default: down } = await import("./commands/down.ts");
-			await withTelemetry("down", down)(args[0], { force: cli.flags.force });
+			await withTelemetry("down", down)(args[0], {
+				force: cli.flags.force,
+				includeBackup: cli.flags.includeBackup,
+			});
 			break;
 		}
 		case "publish": {
