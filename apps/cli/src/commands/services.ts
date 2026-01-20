@@ -277,6 +277,12 @@ async function dbExport(options: ServiceOptions): Promise<void> {
  */
 async function dbDelete(options: ServiceOptions): Promise<void> {
 	const projectName = await resolveProjectName(options);
+	const projectDir = process.cwd();
+
+	// Check deploy mode
+	const link = await readProjectLink(projectDir);
+	const isManaged = link?.deploy_mode === "managed";
+
 	const dbInfo = await resolveDatabaseInfo(projectName);
 
 	if (!dbInfo) {
@@ -314,14 +320,80 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 		return;
 	}
 
-	// Delete database
 	outputSpinner.start("Deleting database...");
+
+	// Track binding_name from control plane for matching in wrangler.jsonc
+	let controlPlaneBindingName: string | null = null;
+
 	try {
-		await deleteDatabase(dbInfo.name);
+		if (isManaged && link) {
+			// Managed mode: delete via control plane
+			const { fetchProjectResources, deleteProjectResource } = await import(
+				"../lib/control-plane.ts"
+			);
+
+			// Find the resource ID for this database
+			const resources = await fetchProjectResources(link.project_id);
+			const d1Resource = resources.find(
+				(r) => r.resource_type === "d1" && r.resource_name === dbInfo.name,
+			);
+
+			if (d1Resource) {
+				// Save binding_name for wrangler.jsonc cleanup
+				controlPlaneBindingName = d1Resource.binding_name;
+				// Delete via control plane (which also deletes from Cloudflare)
+				await deleteProjectResource(link.project_id, d1Resource.id);
+			} else {
+				// Resource not in control plane - fall back to wrangler for cleanup
+				await deleteDatabase(dbInfo.name);
+			}
+		} else {
+			// BYO mode: delete via wrangler directly
+			await deleteDatabase(dbInfo.name);
+		}
+
+		// Remove binding from wrangler.jsonc (both modes)
+		// Note: We need to find the LOCAL database_name from wrangler.jsonc,
+		// which may differ from the control plane's resource_name
+		const { removeD1Binding, getExistingD1Bindings } = await import("../lib/wrangler-config.ts");
+		const configPath = join(projectDir, "wrangler.jsonc");
+
+		let bindingRemoved = false;
+		try {
+			// Find the binding by matching (in order of reliability):
+			// 1. binding name (e.g., "DB") - if control plane provided it
+			// 2. database_id (provider_id from control plane)
+			// 3. database_name
+			// 4. If managed mode and we successfully deleted, remove first D1 binding
+			const existingBindings = await getExistingD1Bindings(configPath);
+			let bindingToRemove = existingBindings.find(
+				(b) =>
+					(controlPlaneBindingName && b.binding === controlPlaneBindingName) ||
+					b.database_id === dbInfo.id ||
+					b.database_name === dbInfo.name,
+			);
+
+			// Fallback: if managed mode and we deleted from control plane,
+			// remove the first D1 binding (binding_name may be null for older DBs)
+			if (!bindingToRemove && isManaged && existingBindings.length > 0) {
+				bindingToRemove = existingBindings[0];
+			}
+
+			if (bindingToRemove) {
+				bindingRemoved = await removeD1Binding(configPath, bindingToRemove.database_name);
+			}
+		} catch (bindingErr) {
+			// Log but don't fail - the database is already deleted
+			// The user can manually clean up wrangler.jsonc if needed
+		}
+
 		outputSpinner.stop();
 
 		console.error("");
 		success("Database deleted");
+		if (bindingRemoved) {
+			item("Binding removed from wrangler.jsonc");
+		}
 		console.error("");
 	} catch (err) {
 		outputSpinner.stop();
@@ -332,10 +404,11 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 }
 
 /**
- * Parse --name flag from args
- * Supports: --name foo, --name=foo
+ * Parse --name flag or positional arg from args
+ * Supports: --name foo, --name=foo, or first positional arg
  */
 function parseNameFlag(args: string[]): string | undefined {
+	// Check --name flag first (takes priority)
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg === "--name" && args[i + 1]) {
@@ -345,6 +418,14 @@ function parseNameFlag(args: string[]): string | undefined {
 			return arg.slice("--name=".length);
 		}
 	}
+
+	// Fall back to first positional argument (non-flag)
+	for (const arg of args) {
+		if (!arg.startsWith("-")) {
+			return arg;
+		}
+	}
+
 	return undefined;
 }
 

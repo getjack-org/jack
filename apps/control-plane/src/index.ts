@@ -12,7 +12,7 @@ import {
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
-import type { Bindings } from "./types";
+import type { Bindings, Resource } from "./types";
 
 type WorkosJwtPayload = JwtPayload & {
 	org_id?: string;
@@ -836,6 +836,83 @@ api.post("/projects/:projectId/resources/:resourceType", async (c) => {
 			return c.json({ error: "not_implemented", message }, 501);
 		}
 
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+// DELETE /v1/projects/:projectId/resources/:resourceId - Delete a project resource
+api.delete("/projects/:projectId/resources/:resourceId", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const resourceId = c.req.param("resourceId");
+	const provisioning = new ProvisioningService(c.env);
+
+	// Get project and verify it exists
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify user has org membership access
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get the resource
+	const resource = await c.env.DB.prepare(
+		"SELECT * FROM resources WHERE id = ? AND project_id = ? AND status != 'deleted'",
+	)
+		.bind(resourceId, projectId)
+		.first<Resource>();
+
+	if (!resource) {
+		return c.json({ error: "not_found", message: "Resource not found" }, 404);
+	}
+
+	try {
+		// Delete from Cloudflare based on resource type
+		const cfClient = new CloudflareClient(c.env);
+
+		switch (resource.resource_type) {
+			case "d1":
+				await cfClient.deleteD1Database(resource.provider_id);
+				break;
+			case "kv":
+				await cfClient.deleteKVNamespace(resource.provider_id);
+				break;
+			case "r2":
+			case "r2_content":
+				await cfClient.deleteR2Bucket(resource.resource_name);
+				break;
+			default:
+				// Worker resources should not be deleted via this endpoint
+				return c.json(
+					{
+						error: "invalid_request",
+						message: `Cannot delete resource type: ${resource.resource_type}`,
+					},
+					400,
+				);
+		}
+
+		// Mark resource as deleted in DB (soft delete)
+		await c.env.DB.prepare("UPDATE resources SET status = 'deleted' WHERE id = ?")
+			.bind(resourceId)
+			.run();
+
+		return c.json({
+			success: true,
+			resource_id: resourceId,
+			deleted_at: new Date().toISOString(),
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to delete resource";
 		return c.json({ error: "internal_error", message }, 500);
 	}
 });
@@ -1956,7 +2033,7 @@ api.post("/projects/:projectId/publish", async (c) => {
 	const fullProject = await c.env.DB.prepare(
 		`SELECT p.*, r.provider_id as d1_database_id
 		 FROM projects p
-		 LEFT JOIN resources r ON r.project_id = p.id AND r.resource_type = 'd1'
+		 LEFT JOIN resources r ON r.project_id = p.id AND r.resource_type = 'd1' AND r.status != 'deleted'
 		 WHERE p.id = ?`,
 	)
 		.bind(projectId)

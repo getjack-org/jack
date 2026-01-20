@@ -674,9 +674,14 @@ export class DeploymentService {
 			.first<{ provider_id: string }>();
 
 		const d1Resource = await this.db
-			.prepare("SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1'")
+			.prepare(
+				"SELECT provider_id FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+			)
 			.bind(projectId)
 			.first<{ provider_id: string }>();
+
+		// Get existing cache to preserve d1_database_id if lookup returns nothing
+		const existingCache = await this.cacheService.getProjectConfig(projectId);
 
 		const r2Resource = project.content_bucket_enabled
 			? await this.db
@@ -692,7 +697,7 @@ export class DeploymentService {
 			org_id: project.org_id,
 			slug: project.slug,
 			worker_name: workerResource?.provider_id || "",
-			d1_database_id: d1Resource?.provider_id || "",
+			d1_database_id: d1Resource?.provider_id || existingCache?.d1_database_id || "",
 			content_bucket_name: r2Resource?.provider_id || null,
 			owner_username: project.owner_username,
 			status: "active",
