@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { $ } from "bun";
 import pkg from "../../package.json";
 import { CONFIG_DIR } from "./config.ts";
+import { debug } from "./debug.ts";
 
 const VERSION_CACHE_PATH = join(CONFIG_DIR, "version-cache.json");
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -123,7 +124,16 @@ export async function performUpdate(): Promise<{
 }> {
 	try {
 		// Run bun add -g to update
+		debug(`Executing: bun add -g ${PACKAGE_NAME}@latest`);
 		const result = await $`bun add -g ${PACKAGE_NAME}@latest`.nothrow().quiet();
+
+		debug(`Exit code: ${result.exitCode}`);
+		if (result.stdout.toString()) {
+			debug(`stdout: ${result.stdout.toString()}`);
+		}
+		if (result.stderr.toString()) {
+			debug(`stderr: ${result.stderr.toString()}`);
+		}
 
 		if (result.exitCode !== 0) {
 			return {
@@ -133,12 +143,15 @@ export async function performUpdate(): Promise<{
 		}
 
 		// Verify the new version
+		debug("Verifying installed version...");
 		const newVersionResult = await $`bun pm ls -g`.nothrow().quiet();
 		const output = newVersionResult.stdout.toString();
+		debug(`bun pm ls -g output: ${output.slice(0, 500)}`);
 
 		// Try to extract version from output
 		const versionMatch = output.match(/@getjack\/jack@(\d+\.\d+\.\d+)/);
 		const newVersion = versionMatch?.[1];
+		debug(`Extracted version: ${newVersion ?? "not found"}`);
 
 		// Clear version cache so next check gets fresh data
 		try {
@@ -152,6 +165,7 @@ export async function performUpdate(): Promise<{
 			version: newVersion,
 		};
 	} catch (err) {
+		debug(`Update error: ${err instanceof Error ? err.message : String(err)}`);
 		return {
 			success: false,
 			error: err instanceof Error ? err.message : "Unknown error",
