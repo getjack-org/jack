@@ -38,6 +38,7 @@ const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "
 export function createProgressTracker(options: ProgressOptions) {
 	const { total, delayMs = 2000, barWidth = 25, label = "Uploading" } = options;
 	const startTime = Date.now();
+	const purple = getRandomPurple(); // Pick color once at start
 	let frame = 0;
 	let intervalId: Timer | null = null;
 	let current = 0;
@@ -55,7 +56,6 @@ export function createProgressTracker(options: ProgressOptions) {
 			);
 		} else {
 			// Show progress bar after delay
-			const purple = getRandomPurple();
 			const filled = Math.round((pct / 100) * barWidth);
 			const empty = barWidth - filled;
 			const bar = "▓".repeat(filled) + "░".repeat(empty);
@@ -69,7 +69,7 @@ export function createProgressTracker(options: ProgressOptions) {
 	return {
 		start() {
 			render();
-			intervalId = setInterval(render, 80);
+			intervalId = setInterval(render, 150);
 		},
 
 		update(bytes: number) {
@@ -96,6 +96,7 @@ export function createProgressTracker(options: ProgressOptions) {
 export function createUploadProgress(options: UploadProgressOptions) {
 	const { totalSize, delayMs = 2000, barWidth = 25, label = "Uploading" } = options;
 	const startTime = Date.now();
+	const purple = getRandomPurple(); // Pick color once at start
 	let frame = 0;
 	let pulsePos = 0;
 	let intervalId: Timer | null = null;
@@ -113,8 +114,6 @@ export function createUploadProgress(options: UploadProgressOptions) {
 			);
 		} else {
 			// Show pulsing bar after delay (indicates activity without false progress)
-			const purple = getRandomPurple();
-
 			// Create pulsing effect - a bright section that moves across the bar
 			const pulseWidth = 5;
 			pulsePos = (pulsePos + 1) % (barWidth + pulseWidth);
@@ -139,8 +138,80 @@ export function createUploadProgress(options: UploadProgressOptions) {
 		start() {
 			if (process.stderr.isTTY) {
 				render();
-				intervalId = setInterval(render, 80);
+				intervalId = setInterval(render, 150);
 			}
+		},
+
+		complete() {
+			if (intervalId) {
+				clearInterval(intervalId);
+				intervalId = null;
+			}
+			clearLine();
+		},
+	};
+}
+
+export interface FileCountProgressOptions {
+	delayMs?: number;
+	barWidth?: number;
+	label?: string;
+}
+
+/**
+ * Creates a file-count progress indicator for operations where we know
+ * the total file count and can track per-file progress.
+ *
+ * Shows spinner first, then after delay shows progress bar with file count.
+ */
+export function createFileCountProgress(options: FileCountProgressOptions = {}) {
+	const { delayMs = 2000, barWidth = 25, label = "Packaging" } = options;
+	const startTime = Date.now();
+	const purple = getRandomPurple(); // Pick color once at start
+	let frame = 0;
+	let intervalId: Timer | null = null;
+	let current = 0;
+	let total = 0;
+
+	function render() {
+		const elapsed = Date.now() - startTime;
+
+		clearLine();
+
+		if (elapsed < delayMs) {
+			// Just spinner for first N seconds
+			process.stderr.write(
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} ${label}...`,
+			);
+		} else if (total > 0) {
+			// Show progress bar with file count after delay
+			const pct = Math.min(Math.round((current / total) * 100), 100);
+			const filled = Math.round((pct / 100) * barWidth);
+			const empty = barWidth - filled;
+			const bar = "▓".repeat(filled) + "░".repeat(empty);
+
+			process.stderr.write(
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} ${label} ${purple}[${bar}]${colors.reset} ${colors.dim}(${current}/${total} files)${colors.reset}`,
+			);
+		} else {
+			// No total yet, just show spinner
+			process.stderr.write(
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} ${label}...`,
+			);
+		}
+	}
+
+	return {
+		start() {
+			if (process.stderr.isTTY) {
+				render();
+				intervalId = setInterval(render, 150);
+			}
+		},
+
+		update(currentFile: number, totalFiles: number) {
+			current = currentFile;
+			total = totalFiles;
 		},
 
 		complete() {
