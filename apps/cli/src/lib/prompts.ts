@@ -1,5 +1,7 @@
-import { isCancel, select, text } from "@clack/prompts";
+import { text } from "@clack/prompts";
+import { isCancel } from "./hooks.ts";
 import type { DetectedSecret } from "./env-parser.ts";
+import { promptSelectValue } from "./hooks.ts";
 import { info, success, warn } from "./output.ts";
 import { getSavedSecrets, getSecretsPath, maskSecret, saveSecrets } from "./secrets.ts";
 
@@ -23,14 +25,11 @@ export async function promptSaveSecrets(detected: DetectedSecret[]): Promise<voi
 	}
 	console.error("");
 
-	const action = await select({
-		message: "What would you like to do?",
-		options: [
-			{ value: "save", label: "Save to jack for future projects" },
-			{ value: "paste", label: "Paste additional secrets" },
-			{ value: "skip", label: "Skip for now" },
-		],
-	});
+	const action = await promptSelectValue("What would you like to do?", [
+		{ value: "save", label: "Save to jack for future projects" },
+		{ value: "paste", label: "Paste additional secrets" },
+		{ value: "skip", label: "Skip for now" },
+	]);
 
 	if (isCancel(action) || action === "skip") {
 		return;
@@ -111,13 +110,10 @@ export async function promptUseSecrets(): Promise<Record<string, string> | null>
 	}
 	console.error("");
 
-	const action = await select({
-		message: "Use them for this project?",
-		options: [
-			{ label: "Yes", value: "yes" },
-			{ label: "No", value: "no" },
-		],
-	});
+	const action = await promptSelectValue("Use them for this project?", [
+		{ value: "yes", label: "Yes" },
+		{ value: "no", label: "No" },
+	]);
 
 	if (isCancel(action) || action !== "yes") {
 		return null;
@@ -154,13 +150,10 @@ export async function promptUseSecretsFromList(
 		return false;
 	}
 
-	const action = await select({
-		message: "Use saved secrets for this project?",
-		options: [
-			{ label: "Yes", value: "yes" },
-			{ label: "No", value: "no" },
-		],
-	});
+	const action = await promptSelectValue("Use saved secrets for this project?", [
+		{ value: "yes", label: "Yes" },
+		{ value: "no", label: "No" },
+	]);
 
 	return !isCancel(action) && action === "yes";
 }

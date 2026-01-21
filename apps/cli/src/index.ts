@@ -447,3 +447,6 @@ try {
 }
 
 await shutdown();
+
+// Ensure clean exit (stdin listeners from prompts can keep event loop alive)
+process.exit(0);

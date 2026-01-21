@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { isCancel, select } from "@clack/prompts";
+import { isCancel, promptSelectValue } from "../lib/hooks.ts";
 import { downloadProjectSource, fetchProjectTags } from "../lib/control-plane.ts";
 import { formatSize } from "../lib/format.ts";
 import { box, error, info, spinner, success } from "../lib/output.ts";
@@ -34,14 +34,14 @@ export default async function clone(projectName?: string, flags: CloneFlags = {}
 		}
 
 		// Prompt user for action
-		const action = await select({
-			message: `Directory ${flags.as ?? projectName} already exists. What would you like to do?`,
-			options: [
+		const action = await promptSelectValue(
+			`Directory ${flags.as ?? projectName} already exists. What would you like to do?`,
+			[
 				{ value: "overwrite", label: "Overwrite (delete and recreate)" },
 				{ value: "merge", label: "Merge (keep existing files)" },
 				{ value: "cancel", label: "Cancel" },
 			],
-		});
+		);
 
 		if (isCancel(action) || action === "cancel") {
 			info("Clone cancelled");

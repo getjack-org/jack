@@ -6,7 +6,8 @@
  * For BYO projects: uses wrangler secret commands.
  */
 
-import { isCancel, password as passwordPrompt } from "@clack/prompts";
+import { password as passwordPrompt } from "@clack/prompts";
+import { isCancel } from "../lib/hooks.ts";
 import { $ } from "bun";
 import { getControlApiUrl } from "../lib/control-plane.ts";
 import { JackError, JackErrorCode } from "../lib/errors.ts";

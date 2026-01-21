@@ -1,7 +1,8 @@
 /**
  * Shared login flow for CLI and programmatic use
  */
-import { isCancel, text } from "@clack/prompts";
+import { text } from "@clack/prompts";
+import { isCancel } from "../hooks.ts";
 import {
 	checkUsernameAvailable,
 	getCurrentUserProfile,

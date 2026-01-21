@@ -16,6 +16,7 @@ import {
 } from "../templates/index.ts";
 import type { EnvVar, Template } from "../templates/types.ts";
 import { generateAgentFiles } from "./agent-files.ts";
+import { ensureAgentIntegration } from "./agent-integration.ts";
 import {
 	getActiveAgents,
 	getAgentDefinition,
@@ -875,17 +876,17 @@ export async function createProject(
 
 			// No match - prompt user to choose
 			if (interactive) {
-				const { select } = await import("@clack/prompts");
+				const { promptSelectValue, isCancel } = await import("./hooks.ts");
 				console.error("");
 				console.error(`  No template matched for: "${intentPhrase}"`);
 				console.error("");
 
-				const choice = await select({
-					message: "Select a template:",
-					options: BUILTIN_TEMPLATES.map((t, i) => ({ value: t, label: `${i + 1}. ${t}` })),
-				});
+				const choice = await promptSelectValue(
+					"Select a template:",
+					BUILTIN_TEMPLATES.map((t) => ({ value: t, label: t })),
+				);
 
-				if (typeof choice !== "string") {
+				if (isCancel(choice) || typeof choice !== "string") {
 					throw new JackError(JackErrorCode.VALIDATION_ERROR, "No template selected", undefined, {
 						exitCode: 0,
 						reported: true,
@@ -917,18 +918,18 @@ export async function createProject(
 
 			// Multiple matches
 			if (interactive) {
-				const { select } = await import("@clack/prompts");
+				const { promptSelectValue, isCancel } = await import("./hooks.ts");
 				console.error("");
 				console.error(`  Multiple templates matched: "${intentPhrase}"`);
 				console.error("");
 
 				const matchedNames = matches.map((m) => m.template);
-				const choice = await select({
-					message: "Select a template:",
-					options: matchedNames.map((t, i) => ({ value: t, label: `${i + 1}. ${t}` })),
-				});
+				const choice = await promptSelectValue(
+					"Select a template:",
+					matchedNames.map((t) => ({ value: t, label: t })),
+				);
 
-				if (typeof choice !== "string") {
+				if (isCancel(choice) || typeof choice !== "string") {
 					throw new JackError(JackErrorCode.VALIDATION_ERROR, "No template selected", undefined, {
 						exitCode: 0,
 						reported: true,
@@ -1607,6 +1608,18 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		deployMode = autoDetectResult.deployMode;
 	} else {
 		deployMode = link?.deploy_mode ?? "byo";
+	}
+
+	// Ensure agent integration is set up (JACK.md, MCP config)
+	// This is idempotent and runs silently
+	try {
+		await ensureAgentIntegration(projectPath, {
+			projectName,
+			silent: true,
+		});
+	} catch (err) {
+		// Don't fail deploy if agent integration fails
+		debug("Agent integration setup failed:", err);
 	}
 
 	// Ensure wrangler is installed (auto-install if needed)
