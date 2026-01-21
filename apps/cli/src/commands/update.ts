@@ -52,7 +52,6 @@ export default async function update(): Promise<void> {
 
 	if (result.success) {
 		success(`Updated to v${result.version ?? latestVersion}`);
-		info("Restart your terminal to use the new version.");
 	} else {
 		error("Update failed");
 		if (result.error) {
