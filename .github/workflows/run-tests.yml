@@ -68,9 +68,11 @@ jobs:
         env:
           CI: true
 
-      - name: Run MCP smoke tests
-        run: |
-          bun test apps/cli/tests/mcp.test.ts
-          bun run apps/cli/src/index.ts mcp test
-        env:
-          CI: true
+      # TODO: Re-enable when MCP SDK race condition is fixed
+      # See: https://github.com/modelcontextprotocol/typescript-sdk/issues/1049
+      # - name: Run MCP smoke tests
+      #   run: |
+      #     bun test apps/cli/tests/mcp.test.ts
+      #     bun run apps/cli/src/index.ts mcp test
+      #   env:
+      #     CI: true

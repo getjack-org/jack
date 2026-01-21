@@ -57,12 +57,18 @@ export interface WranglerConfig {
 		binding: string;
 		id?: string; // Optional - wrangler auto-provisions if missing
 	}>;
+	vectorize?: Array<{
+		binding: string;
+		index_name?: string;
+		preset?: "cloudflare" | "cloudflare-small" | "cloudflare-large";
+		dimensions?: number;
+		metric?: "cosine" | "euclidean" | "dot-product";
+	}>;
 	// Unsupported bindings (for validation)
 	durable_objects?: unknown;
 	queues?: unknown;
 	services?: unknown;
 	hyperdrive?: unknown;
-	vectorize?: unknown;
 	browser?: unknown;
 	mtls_certificates?: unknown;
 }

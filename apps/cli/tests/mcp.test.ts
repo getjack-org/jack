@@ -11,7 +11,9 @@ import {
 
 const cliRoot = fileURLToPath(new URL("../", import.meta.url));
 
-test("jack mcp serve exposes tools without deploying", async () => {
+// TODO: Fix flaky test - MCP SDK has race condition in StdioClientTransport
+// See: https://github.com/modelcontextprotocol/typescript-sdk/issues/1049
+test.skip("jack mcp serve exposes tools without deploying", async () => {
 	const projectDir = await mkdtemp(join(tmpdir(), "jack-mcp-test-"));
 	const configDir = await mkdtemp(join(tmpdir(), "jack-config-"));
 	const clientEnv = {

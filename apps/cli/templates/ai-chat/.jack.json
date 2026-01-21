@@ -1,0 +1,29 @@
+{
+	"name": "ai-chat",
+	"description": "AI chat with streaming UI (free Cloudflare AI)",
+	"secrets": [],
+	"capabilities": ["ai"],
+	"intent": {
+		"keywords": ["ai", "chat", "llm", "mistral", "completion", "chatbot"],
+		"examples": ["AI chatbot", "chat interface", "LLM chat app"]
+	},
+	"hooks": {
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "URL copied to clipboard"
+			},
+			{
+				"action": "box",
+				"title": "AI Chat: {{name}}",
+				"lines": [
+					"{{url}}",
+					"",
+					"Open in browser to start chatting!",
+					"Rate limit: 10 requests/minute"
+				]
+			}
+		]
+	}
+}

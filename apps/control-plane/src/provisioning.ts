@@ -4,6 +4,13 @@ import type { Bindings, Project, ProjectConfig, ProjectLimits, Resource } from "
 
 const DISPATCH_NAMESPACE = "jack-tenants";
 
+// Omakase presets for Vectorize (match Cloudflare AI embedding models)
+const VECTORIZE_PRESETS = {
+	cloudflare: { dimensions: 768, metric: "cosine" as const }, // bge-base-en-v1.5
+	"cloudflare-small": { dimensions: 384, metric: "cosine" as const }, // bge-small-en-v1.5
+	"cloudflare-large": { dimensions: 1024, metric: "cosine" as const }, // bge-large-en-v1.5
+} as const;
+
 // Minimal ES module worker that returns 503 with JSON message
 const STUB_WORKER_SCRIPT = `export default {
 	fetch: () => new Response(
@@ -429,11 +436,11 @@ export class ProvisioningService {
 
 	/**
 	 * Register a resource with a specific binding name.
-	 * Used for user-defined bindings (e.g., R2 buckets and KV namespaces from wrangler.jsonc).
+	 * Used for user-defined bindings (e.g., R2 buckets, KV namespaces, and Vectorize indexes from wrangler.jsonc).
 	 */
 	async registerResourceWithBinding(
 		projectId: string,
-		type: "r2" | "kv",
+		type: "r2" | "kv" | "vectorize",
 		bindingName: string,
 		resourceName: string,
 		providerId: string,
@@ -514,6 +521,58 @@ export class ProvisioningService {
 			bindingName,
 			title,
 			namespace.id,
+		);
+	}
+
+	/**
+	 * Provision a Vectorize index for a specific binding.
+	 */
+	async provisionVectorizeBinding(
+		projectId: string,
+		bindingName: string,
+		options?: {
+			preset?: keyof typeof VECTORIZE_PRESETS;
+			dimensions?: number;
+			metric?: "cosine" | "euclidean" | "dot-product";
+		},
+	): Promise<Resource> {
+		this.validateBindingName(bindingName);
+
+		const resourceNames = this.getResourceNames(projectId);
+		const indexName = `${resourceNames.worker}-${bindingName.toLowerCase()}`;
+
+		// Determine dimensions and metric from options
+		let dimensions: number;
+		let metric: "cosine" | "euclidean" | "dot-product";
+
+		if (options?.preset) {
+			const preset = VECTORIZE_PRESETS[options.preset];
+			if (!preset) {
+				throw new Error(
+					`Invalid Vectorize preset "${options.preset}". ` +
+						`Valid presets: ${Object.keys(VECTORIZE_PRESETS).join(", ")}`,
+				);
+			}
+			dimensions = options.dimensions ?? preset.dimensions;
+			metric = options.metric ?? preset.metric;
+		} else {
+			// Use cloudflare default (768 dimensions, cosine) if no preset specified
+			dimensions = options?.dimensions ?? VECTORIZE_PRESETS.cloudflare.dimensions;
+			metric = options?.metric ?? VECTORIZE_PRESETS.cloudflare.metric;
+		}
+
+		const { index } = await this.cfClient.createVectorizeIndexIfNotExists(
+			indexName,
+			dimensions,
+			metric,
+		);
+
+		return await this.registerResourceWithBinding(
+			projectId,
+			"vectorize",
+			bindingName,
+			indexName,
+			index.name, // provider_id is the index name for Vectorize
 		);
 	}
 

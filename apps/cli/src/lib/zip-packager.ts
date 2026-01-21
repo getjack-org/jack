@@ -45,6 +45,12 @@ export interface ManifestData {
 		vars?: Record<string, string>;
 		r2?: Array<{ binding: string; bucket_name: string }>;
 		kv?: Array<{ binding: string }>;
+		vectorize?: Array<{
+			binding: string;
+			preset?: string;
+			dimensions?: number;
+			metric?: string;
+		}>;
 	};
 }
 
@@ -221,6 +227,16 @@ function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindi
 	if (config.kv_namespaces && config.kv_namespaces.length > 0) {
 		bindings.kv = config.kv_namespaces.map((kv) => ({
 			binding: kv.binding,
+		}));
+	}
+
+	// Extract Vectorize bindings
+	if (config.vectorize && config.vectorize.length > 0) {
+		bindings.vectorize = config.vectorize.map((vec) => ({
+			binding: vec.binding,
+			preset: vec.preset,
+			dimensions: vec.dimensions,
+			metric: vec.metric,
 		}));
 	}
 

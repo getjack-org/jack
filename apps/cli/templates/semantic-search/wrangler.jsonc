@@ -1,0 +1,27 @@
+{
+	"name": "jack-template",
+	"main": "src/index.ts",
+	"compatibility_date": "2024-12-01",
+	"ai": {
+		"binding": "AI"
+	},
+	"vectorize": [
+		{
+			"binding": "VECTORS",
+			"index_name": "jack-template-vectors",
+			// preset: cloudflare = 768 dimensions, cosine metric
+			// matches @cf/baai/bge-base-en-v1.5 embedding model
+			"preset": "cloudflare"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "jack-template-db"
+		}
+	],
+	"assets": {
+		"directory": "public",
+		"binding": "ASSETS"
+	}
+}

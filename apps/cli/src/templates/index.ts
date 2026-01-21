@@ -10,7 +10,7 @@ import type { Template } from "./types";
 // Resolve templates directory relative to this file (src/templates -> templates)
 const TEMPLATES_DIR = join(dirname(dirname(import.meta.dir)), "templates");
 
-export const BUILTIN_TEMPLATES = ["hello", "miniapp", "api", "nextjs", "saas", "simple-api-starter"];
+export const BUILTIN_TEMPLATES = ["hello", "miniapp", "api", "nextjs", "saas", "simple-api-starter", "ai-chat", "semantic-search"];
 
 /**
  * Resolved template with origin tracking for lineage
@@ -347,6 +347,7 @@ export function renderTemplate(template: Template, vars: { name: string }): Temp
 		rendered[path] = content
 			.replace(/jack-template-db/g, `${vars.name}-db`)
 			.replace(/jack-template-cache/g, `${vars.name}-cache`)
+			.replace(/jack-template-vectors/g, `${vars.name}-vectors`)
 			.replace(/jack-template/g, vars.name);
 	}
 	return { ...template, files: rendered };
