@@ -23,14 +23,13 @@ async function readMultilineJson(prompt: string): Promise<string> {
 
 	return new Promise((resolve) => {
 		rl.on("line", (line) => {
-			if (line.trim() === "" && lines.length > 0) {
+			// Empty line = submit (or skip if nothing entered)
+			if (line.trim() === "") {
 				rl.close();
 				resolve(lines.join("\n"));
 				return;
 			}
-			if (line.trim() !== "") {
-				lines.push(line);
-			}
+			lines.push(line);
 		});
 
 		rl.on("close", () => {
@@ -82,31 +81,112 @@ const noopOutput: HookOutput = {
  * - writeJson: { path, set, successMessage? } -> JSON update (runs in non-interactive)
  */
 
+// Re-export isCancel for consumers
+export { isCancel } from "@clack/core";
+
+// Unicode symbols (with ASCII fallbacks for non-unicode terminals)
+const isUnicodeSupported =
+	process.platform !== "win32" ||
+	Boolean(process.env.CI) ||
+	Boolean(process.env.WT_SESSION) ||
+	process.env.TERM_PROGRAM === "vscode" ||
+	process.env.TERM === "xterm-256color";
+
+const S_RADIO_ACTIVE = isUnicodeSupported ? "●" : ">";
+const S_RADIO_INACTIVE = isUnicodeSupported ? "○" : " ";
+
+export interface SelectOption<T = string> {
+	value: T;
+	label: string;
+	hint?: string;
+}
+
 /**
- * Prompt user with numbered options
- * Uses @clack/prompts selectKey for reliable input handling
+ * Clean select prompt with bullet-point style (no vertical bars)
+ * Supports both:
+ * - Number keys (1, 2, 3...) for immediate selection
+ * - Arrow keys (up/down) + Enter for navigation-based selection
+ *
+ * @param message - The prompt message to display
+ * @param options - Array of options (strings or {value, label, hint?} objects)
+ * @returns The selected value, or symbol if cancelled
+ */
+export async function promptSelectValue<T>(
+	message: string,
+	options: Array<SelectOption<T> | string>,
+): Promise<T | symbol> {
+	const { SelectPrompt, isCancel } = await import("@clack/core");
+	const pc = await import("picocolors");
+
+	// Normalize options to {value, label} format
+	const normalizedOptions = options.map((opt, index) => {
+		if (typeof opt === "string") {
+			return { value: opt as T, label: opt, key: String(index + 1) };
+		}
+		return { ...opt, key: String(index + 1) };
+	});
+
+	const prompt = new SelectPrompt({
+		options: normalizedOptions,
+		initialValue: normalizedOptions[0]?.value,
+		render() {
+			const title = `${message}\n`;
+			const lines: string[] = [];
+
+			for (let i = 0; i < normalizedOptions.length; i++) {
+				const opt = normalizedOptions[i];
+				const isActive = this.cursor === i;
+				const num = `${i + 1}.`;
+
+				if (isActive) {
+					const hint = opt.hint ? pc.dim(` (${opt.hint})`) : "";
+					lines.push(`${pc.green(S_RADIO_ACTIVE)} ${num} ${opt.label}${hint}`);
+				} else {
+					lines.push(`${pc.dim(S_RADIO_INACTIVE)} ${pc.dim(num)} ${pc.dim(opt.label)}`);
+				}
+			}
+
+			return title + lines.join("\n");
+		},
+	});
+
+	// Add number key support for immediate selection
+	prompt.on("key", (char) => {
+		if (!char) return;
+		const num = Number.parseInt(char, 10);
+		if (num >= 1 && num <= normalizedOptions.length) {
+			prompt.value = normalizedOptions[num - 1]?.value;
+			prompt.emit("submit");
+		}
+	});
+
+	const result = await prompt.prompt();
+
+	if (isCancel(result)) {
+		return result;
+	}
+
+	return result as T;
+}
+
+/**
+ * Simple select prompt for string options (returns index)
+ * Supports both number keys (1, 2...) and arrow keys + Enter
  * Returns the selected option index (0-based) or -1 if cancelled
  */
-export async function promptSelect(options: string[]): Promise<number> {
-	const { selectKey, isCancel } = await import("@clack/prompts");
+export async function promptSelect(options: string[], message?: string): Promise<number> {
+	const { isCancel } = await import("@clack/core");
 
-	// Build options with number keys (1, 2, 3, ...)
-	const clackOptions = options.map((label, index) => ({
-		value: String(index + 1),
-		label,
-	}));
-
-	const result = await selectKey({
-		message: "",
-		options: clackOptions,
-	});
+	const result = await promptSelectValue(
+		message ?? "",
+		options.map((label, index) => ({ value: index, label })),
+	);
 
 	if (isCancel(result)) {
 		return -1;
 	}
 
-	// Convert "1", "2", etc. back to 0-based index
-	return Number.parseInt(result as string, 10) - 1;
+	return result as number;
 }
 
 /**

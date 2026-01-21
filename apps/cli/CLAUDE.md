@@ -112,7 +112,83 @@ JACK_TELEMETRY_DISABLED=1 ./src/index.ts ship
 - Prefer explicit types over inference for public APIs
 - Follow existing patterns in the codebase
 - **User-facing output**: Use jargon-free terms (deployed/undeployed, database, cloud backup) unless user is configuring specific infra. Don't use Lambda, Workers, RDS, H100, D1, R2 etc.
-- **Prompts**: Use `promptSelect()` from `src/lib/hooks.ts` for Yes/No choices. It uses single keypress (press 1 or 2 immediately), not arrow-key navigation. Do NOT use `@inquirer/prompts` select.
+
+## Prompts (IMPORTANT)
+
+**Always use the custom prompts from `src/lib/hooks.ts`** - never use `@clack/prompts` select/confirm directly.
+
+### Available Functions
+
+```typescript
+import { promptSelect, promptSelectValue, isCancel } from "../lib/hooks.ts";
+```
+
+| Function | Returns | Use Case |
+|----------|---------|----------|
+| `promptSelect(options, message?)` | index (0-based) or -1 | Simple choices, Yes/No |
+| `promptSelectValue(message, options)` | value or cancel symbol | When you need the actual value |
+
+### Style
+
+Clean bullet-point style with number hints (no vertical bars):
+```
+Pick an option:
+● 1. Open in browser
+○ 2. Skip
+```
+
+### Interaction
+
+Supports **both**:
+- Number keys (1, 2, 3...) for immediate selection
+- Arrow keys (↑/↓) + Enter for navigation
+- Esc or Ctrl+C to cancel
+
+### Patterns
+
+**Yes/No (replaces confirm):**
+```typescript
+const choice = await promptSelect(["Yes", "No"], "Continue?");
+if (choice !== 0) return; // cancelled or "No"
+```
+
+**Dangerous operations:**
+```typescript
+const choice = await promptSelect(
+    ["Yes, delete", "No, cancel"],
+    `Delete database '${name}'?`
+);
+if (choice !== 0) {
+    info("Cancelled");
+    return;
+}
+```
+
+**Select with values:**
+```typescript
+const action = await promptSelectValue("What would you like to do?", [
+    { value: "save", label: "Save to jack", hint: "recommended" },
+    { value: "paste", label: "Paste additional secrets" },
+    { value: "skip", label: "Skip for now" },
+]);
+
+if (isCancel(action) || action === "skip") return;
+```
+
+**String array shorthand:**
+```typescript
+const template = await promptSelectValue("Select a template:", [
+    "miniapp",
+    "api",
+    "simple-api-starter",
+]);
+```
+
+### DON'T Use
+
+- `@clack/prompts` select() - has vertical bars, arrow-only
+- `@clack/prompts` confirm() - different style, less flexible
+- `@inquirer/prompts` - different library entirely
 
 ## MCP Server
 

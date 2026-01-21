@@ -8,8 +8,8 @@
  */
 
 import { existsSync } from "node:fs";
-import { isCancel, select } from "@clack/prompts";
 import { isLoggedIn } from "../lib/auth/index.ts";
+import { isCancel, promptSelectValue } from "../lib/hooks.ts";
 import {
 	type ManagedProject,
 	findProjectBySlug,
@@ -128,13 +128,13 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 	}
 
 	console.error("");
-	const choice = await select({
-		message: "Select a project to link:",
-		options: projects.map((p) => ({
+	const choice = await promptSelectValue(
+		"Select a project to link:",
+		projects.map((p) => ({
 			value: p.id,
 			label: `${p.slug} (${p.status})`,
 		})),
-	});
+	);
 
 	if (isCancel(choice)) {
 		info("Cancelled");

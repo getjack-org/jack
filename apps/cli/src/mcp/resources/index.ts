@@ -67,15 +67,30 @@ export function registerResources(
 
 		if (uri === "agents://context") {
 			const projectPath = options.projectPath ?? process.cwd();
+			const jackPath = join(projectPath, "JACK.md");
 			const agentsPath = join(projectPath, "AGENTS.md");
 			const claudePath = join(projectPath, "CLAUDE.md");
 
 			const contents: string[] = [];
 
+			// Try to read JACK.md first (jack-specific context)
+			if (existsSync(jackPath)) {
+				try {
+					const jackContent = await Bun.file(jackPath).text();
+					contents.push("# JACK.md\n\n");
+					contents.push(jackContent);
+				} catch {
+					// Ignore read errors
+				}
+			}
+
 			// Try to read AGENTS.md
 			if (existsSync(agentsPath)) {
 				try {
 					const agentsContent = await Bun.file(agentsPath).text();
+					if (contents.length > 0) {
+						contents.push("\n\n---\n\n");
+					}
 					contents.push("# AGENTS.md\n\n");
 					contents.push(agentsContent);
 				} catch {
@@ -97,13 +112,38 @@ export function registerResources(
 				}
 			}
 
+			// If no agent files found, return jack guidance as fallback
 			if (contents.length === 0) {
+				const fallbackGuidance = `# Jack Project
+
+This project is managed by jack.
+
+## Commands
+- \`jack ship\` - Deploy changes
+- \`jack logs\` - Stream production logs
+- \`jack services\` - Manage databases and other services
+
+**Always use jack commands. Never use wrangler directly.**
+
+## MCP Tools Available
+
+If connected, prefer \`mcp__jack__*\` tools over CLI:
+- \`mcp__jack__deploy_project\` - Deploy changes
+- \`mcp__jack__execute_sql\` - Query databases
+- \`mcp__jack__get_project_status\` - Check status
+
+## Documentation
+
+Full docs: https://docs.getjack.org/llms-full.txt
+
+Check for JACK.md in the project root for project-specific instructions.
+`;
 				return {
 					contents: [
 						{
 							uri,
-							mimeType: "text/plain",
-							text: "No agent context files found in project directory",
+							mimeType: "text/markdown",
+							text: fallbackGuidance,
 						},
 					],
 				};
