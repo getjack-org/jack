@@ -45,6 +45,7 @@ export default defineConfig({
 				{ text: "Overview", link: "/templates" },
 				{ text: "miniapp", link: "/templates/miniapp" },
 				{ text: "api", link: "/templates/api" },
+				{ text: "ai-chat", link: "/templates/ai-chat" },
 				{ text: "semantic-search", link: "/templates/semantic-search" },
 			],
 		},
