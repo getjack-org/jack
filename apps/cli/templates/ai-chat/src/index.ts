@@ -1,12 +1,45 @@
+import { createJackAI } from "./jack-ai";
+
 interface Env {
-	AI: Ai;
+	// Direct AI binding (for local dev with wrangler)
+	AI?: Ai;
+	// Jack proxy bindings (injected in jack cloud)
+	__AI_PROXY?: Fetcher;
+	__JACK_PROJECT_ID?: string;
+	__JACK_ORG_ID?: string;
+	// Assets binding
 	ASSETS: Fetcher;
+}
+
+function getAI(env: Env) {
+	// Prefer jack cloud proxy if available (for metering)
+	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+		return createJackAI(env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>);
+	}
+	// Fallback to direct binding for local dev
+	if (env.AI) {
+		return env.AI;
+	}
+	throw new Error("No AI binding available");
 }
 
 interface ChatMessage {
 	role: "user" | "assistant" | "system";
 	content: string;
 }
+
+// System prompt - customize this to change the AI's personality
+const SYSTEM_PROMPT = `You are a helpful AI assistant built with jack (getjack.sh).
+
+jack helps developers ship ideas fast - from "what if" to a live URL in seconds. You're running on Cloudflare's edge network, close to users worldwide.
+
+Be concise, friendly, and helpful. If asked about jack:
+- jack new creates projects from templates
+- jack ship deploys to production
+- jack open opens your app in browser
+- Docs: https://docs.getjack.sh
+
+Focus on being useful. Keep responses short unless detail is needed.`;
 
 // Rate limiting: 10 requests per minute per IP
 const RATE_LIMIT = 10;
@@ -65,7 +98,7 @@ export default {
 
 			try {
 				const body = (await request.json()) as { messages?: ChatMessage[] };
-				const messages = body.messages;
+				let messages = body.messages;
 
 				if (!messages || !Array.isArray(messages)) {
 					return Response.json(
@@ -74,9 +107,16 @@ export default {
 					);
 				}
 
-				// Stream response using SSE
-				const stream = await env.AI.run(
-					"@cf/mistral/mistral-7b-instruct-v0.1",
+				// Prepend system prompt if not already present
+				if (messages.length === 0 || messages[0].role !== "system") {
+					messages = [{ role: "system", content: SYSTEM_PROMPT }, ...messages];
+				}
+
+				// Stream response using Llama 3.2 1B - cheapest model with good quality
+				// See: https://developers.cloudflare.com/workers-ai/models/
+				const ai = getAI(env);
+				const stream = await ai.run(
+					"@cf/meta/llama-3.2-1b-instruct",
 					{
 						messages,
 						stream: true,

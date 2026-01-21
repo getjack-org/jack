@@ -1,8 +1,62 @@
+import { createJackAI, type JackAI } from "./jack-ai";
+import { createJackVectorize, type JackVectorize } from "./jack-vectorize";
+
 interface Env {
-	AI: Ai;
-	VECTORS: VectorizeIndex;
+	// Direct bindings (for local dev with wrangler)
+	AI?: Ai;
+	VECTORS?: VectorizeIndex;
+	// Jack proxy bindings (injected in jack cloud)
+	__AI_PROXY?: Fetcher;
+	__VECTORIZE_PROXY?: Fetcher;
+	__JACK_PROJECT_ID?: string;
+	__JACK_ORG_ID?: string;
+	// Other bindings
 	DB: D1Database;
 	ASSETS: Fetcher;
+}
+
+// Index name must match wrangler.jsonc vectorize config
+const VECTORIZE_INDEX_NAME = "jack-template-vectors";
+
+// Minimal AI interface for embedding generation
+type AIClient = {
+	run: (model: string, inputs: { text: string }) => Promise<{ data: number[][] } | unknown>;
+};
+
+function getAI(env: Env): AIClient {
+	// Prefer jack cloud proxy if available (for metering)
+	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+		return createJackAI(env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>) as AIClient;
+	}
+	// Fallback to direct binding for local dev
+	if (env.AI) {
+		return env.AI as unknown as AIClient;
+	}
+	throw new Error("No AI binding available");
+}
+
+// Minimal Vectorize interface
+type VectorizeClient = {
+	insert: (vectors: { id: string; values: number[]; metadata?: Record<string, unknown> }[]) => Promise<unknown>;
+	query: (
+		vector: number[],
+		options?: { topK?: number; returnMetadata?: "none" | "indexed" | "all" },
+	) => Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
+};
+
+function getVectorize(env: Env): VectorizeClient {
+	// Prefer jack cloud proxy if available (for metering)
+	if (env.__VECTORIZE_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+		return createJackVectorize(
+			env as Required<Pick<Env, "__VECTORIZE_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
+			VECTORIZE_INDEX_NAME,
+		) as VectorizeClient;
+	}
+	// Fallback to direct binding for local dev
+	if (env.VECTORS) {
+		return env.VECTORS as unknown as VectorizeClient;
+	}
+	throw new Error("No Vectorize binding available");
 }
 
 // Rate limiting: 10 requests per minute per IP
@@ -29,17 +83,17 @@ function checkRateLimit(ip: string): boolean {
 
 /**
  * Extract embedding vector from AI response
- * Handles union type from @cf/baai/bge-base-en-v1.5
+ * Handles response from @cf/baai/bge-base-en-v1.5
  */
-function getEmbeddingVector(response: Awaited<ReturnType<Ai["run"]>>): number[] | null {
+function getEmbeddingVector(response: unknown): number[] | null {
 	if (
 		response &&
 		typeof response === "object" &&
 		"data" in response &&
-		Array.isArray(response.data) &&
-		response.data.length > 0
+		Array.isArray((response as { data: unknown }).data) &&
+		(response as { data: unknown[] }).data.length > 0
 	) {
-		return response.data[0] as number[];
+		return (response as { data: number[][] }).data[0];
 	}
 	return null;
 }
@@ -72,8 +126,9 @@ export default {
 					return Response.json({ error: "Missing id or content" }, { status: 400 });
 				}
 
-				// Generate embedding using free Cloudflare AI
-				const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+				// Generate embedding using Cloudflare AI
+				const ai = getAI(env);
+				const embedding = await ai.run("@cf/baai/bge-base-en-v1.5", {
 					text: content,
 				});
 
@@ -83,7 +138,8 @@ export default {
 				}
 
 				// Store in Vectorize
-				await env.VECTORS.insert([
+				const vectors = getVectorize(env);
+				await vectors.insert([
 					{
 						id,
 						values: embeddingVector,
@@ -117,7 +173,8 @@ export default {
 				}
 
 				// Generate query embedding
-				const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+				const ai = getAI(env);
+				const embedding = await ai.run("@cf/baai/bge-base-en-v1.5", {
 					text: query,
 				});
 
@@ -127,7 +184,8 @@ export default {
 				}
 
 				// Search Vectorize
-				const results = await env.VECTORS.query(embeddingVector, {
+				const vectors = getVectorize(env);
+				const results = await vectors.query(embeddingVector, {
 					topK: limit,
 					returnMetadata: "all",
 				});

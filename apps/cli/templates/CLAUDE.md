@@ -6,6 +6,36 @@
 2. **Templates are for user code, not jack's tools** - wrangler is jack's responsibility (installed globally), not the template's
 3. **Ship a lockfile** - `bun.lock` provides 70% faster installs on cold cache
 
+## AI Bindings (IMPORTANT)
+
+**For jack cloud projects, DO NOT use direct AI bindings.**
+
+See [AI-BINDINGS.md](./AI-BINDINGS.md) for the full pattern.
+
+Quick summary:
+- Jack cloud uses a metered proxy (`__AI_PROXY`) instead of direct `env.AI`
+- Templates must include `src/jack-ai.ts` wrapper
+- Use `getAI(env)` helper instead of `env.AI` directly
+- wrangler.jsonc still declares `ai: { binding: "AI" }` for local dev only
+
+```typescript
+// WRONG for jack cloud:
+const result = await env.AI.run(model, inputs);
+
+// CORRECT (works for both local dev and jack cloud):
+import { createJackAI } from "./jack-ai";
+
+function getAI(env: Env) {
+  if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+    return createJackAI(env);
+  }
+  return env.AI;
+}
+
+const ai = getAI(env);
+const result = await ai.run(model, inputs);
+```
+
 ## Dependency Rules
 
 ### DO include in templates:

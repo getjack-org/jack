@@ -7,18 +7,17 @@
 		"keywords": ["rag", "semantic", "search", "embeddings", "vectorize", "vector", "similarity"],
 		"examples": ["RAG app", "document search", "semantic search", "knowledge base"]
 	},
+	"agentContext": "Local development requires 'wrangler dev --remote' for AI and Vectorize bindings.",
 	"hooks": {
 		"postDeploy": [
 			{ "action": "clipboard", "text": "{{url}}", "message": "URL copied" },
 			{
 				"action": "box",
-				"title": "Semantic Search: {{name}}",
+				"title": "{{name}}",
 				"lines": [
 					"{{url}}",
 					"",
-					"Open in browser to index documents and search!",
-					"",
-					"Note: Local dev requires 'wrangler dev --remote'"
+					"jack open  to view in browser"
 				]
 			}
 		]
