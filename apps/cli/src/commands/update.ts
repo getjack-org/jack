@@ -33,9 +33,9 @@ export default async function update(): Promise<void> {
 
 	info(`Current version: v${currentVersion}`);
 
-	// Check for updates
+	// Check for updates - skip cache since user explicitly requested update
 	debug("Fetching latest version from npm...");
-	const latestVersion = await checkForUpdate();
+	const latestVersion = await checkForUpdate(true);
 	debug(`Latest version from npm: ${latestVersion ?? "none (you're up to date)"}`);
 
 	if (!latestVersion) {
