@@ -482,15 +482,21 @@ export class DeploymentService {
 	 */
 	async resolveBindingsFromManifest(
 		projectId: string,
+		orgId: string,
 		intent: ManifestData["bindings"],
 	): Promise<DispatchScriptBinding[]> {
 		const bindings: DispatchScriptBinding[] = [];
 
-		// Always add PROJECT_ID as plain_text binding
+		// Always add PROJECT_ID and ORG_ID as plain_text bindings
 		bindings.push({
 			type: "plain_text",
 			name: "PROJECT_ID",
 			text: projectId,
+		});
+		bindings.push({
+			type: "plain_text",
+			name: "__JACK_ORG_ID",
+			text: orgId,
 		});
 
 		if (!intent) {
@@ -529,7 +535,9 @@ export class DeploymentService {
 			});
 		}
 
-		// Resolve AI binding (no provisioning needed, just add the binding)
+		// Resolve AI binding
+		// TODO: Re-enable service binding to proxy once authentication issue is resolved
+		// For now, use direct AI binding for deployment to work
 		if (intent.ai) {
 			bindings.push({
 				type: "ai",
@@ -836,8 +844,15 @@ export class DeploymentService {
 			);
 		}
 
+		// Get org_id from project
+		const project = await this.db
+			.prepare("SELECT org_id FROM projects WHERE id = ?")
+			.bind(projectId)
+			.first<{ org_id: string }>();
+		if (!project) throw new Error(`Project ${projectId} not found`);
+
 		// Resolve bindings from manifest intent (uses manifest bindings, not legacy getBindingsForProject)
-		const bindings = await this.resolveBindingsFromManifest(projectId, manifest.bindings);
+		const bindings = await this.resolveBindingsFromManifest(projectId, project.org_id, manifest.bindings);
 
 		// Extract all modules from the ZIP (main module and additional modules like WASM)
 		const { mainModule, additionalModules } = await this.extractAllModules(

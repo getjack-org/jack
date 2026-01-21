@@ -484,7 +484,7 @@ export class CloudflareClient {
 		if (!data.success) {
 			const errorMsg =
 				data.errors?.length > 0
-					? data.errors.map((e) => e.message).join(", ")
+					? data.errors.map((e) => `[${e.code}] ${e.message}`).join(", ")
 					: "Unknown Cloudflare API error";
 			throw new Error(`Cloudflare API error: ${errorMsg}`);
 		}
@@ -764,7 +764,7 @@ export class CloudflareClient {
 		if (!data.success) {
 			const errorMsg =
 				data.errors?.length > 0
-					? data.errors.map((e) => e.message).join(", ")
+					? data.errors.map((e) => `[${e.code}] ${e.message}`).join(", ")
 					: "Unknown Cloudflare API error";
 			throw new Error(`Cloudflare API error: ${errorMsg}`);
 		}
@@ -788,11 +788,13 @@ export class CloudflareClient {
 		const data = (await response.json()) as CloudflareResponse<VectorizeIndex>;
 
 		if (!data.success) {
-			// Check if error is "index not found" (error code 10043 or similar)
+			// Check if error is "index not found" (error codes and message patterns)
 			const notFound = data.errors?.some(
 				(e) =>
 					e.code === 10043 ||
+					e.code === 3000 ||
 					e.message?.toLowerCase().includes("not found") ||
+					e.message?.toLowerCase().includes("not_found") ||
 					e.message?.toLowerCase().includes("does not exist"),
 			);
 
@@ -1373,7 +1375,7 @@ export class CloudflareClient {
 		if (!data.success) {
 			const errorMsg =
 				data.errors?.length > 0
-					? data.errors.map((e) => e.message).join(", ")
+					? data.errors.map((e) => `[${e.code}] ${e.message}`).join(", ")
 					: "Unknown Cloudflare API error";
 			throw new Error(`Failed to upload dispatch script with assets: ${errorMsg}`);
 		}

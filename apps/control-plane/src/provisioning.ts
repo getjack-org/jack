@@ -567,13 +567,14 @@ export class ProvisioningService {
 			metric,
 		);
 
-		return await this.registerResourceWithBinding(
+		const resource = await this.registerResourceWithBinding(
 			projectId,
 			"vectorize",
 			bindingName,
 			indexName,
 			index.name, // provider_id is the index name for Vectorize
 		);
+		return resource;
 	}
 
 	/**
