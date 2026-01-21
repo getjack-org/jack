@@ -143,8 +143,8 @@ export function classifyStatement(sql: string): ClassifiedStatement {
 			case "SELECT":
 				return { sql: trimmed, risk: "read", operation: "SELECT" };
 			default:
-				// Unknown CTE operation - default to write for safety
-				return { sql: trimmed, risk: "write", operation };
+				// Unknown CTE operation - let SQLite handle it
+				return { sql: trimmed, risk: "read", operation };
 		}
 	}
 
@@ -205,8 +205,9 @@ export function classifyStatement(sql: string): ClassifiedStatement {
 		return { sql: trimmed, risk: "read", operation: "PRAGMA" };
 	}
 
-	// Unknown operations default to write for safety
-	return { sql: trimmed, risk: "write", operation };
+	// Unknown operations default to read - let SQLite handle syntax errors
+	// Invalid SQL can't modify data, so no point requiring --write for gibberish
+	return { sql: trimmed, risk: "read", operation };
 }
 
 /**
