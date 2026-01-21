@@ -536,14 +536,17 @@ async function runAutoDetectFlow(
 	dryRun = false,
 ): Promise<AutoDetectResult> {
 	// Step 1: Validate project (file count, size limits)
+	const validationSpin = reporter.spinner("Scanning project...");
 	const validation = await validateProject(projectPath);
 	if (!validation.valid) {
+		validationSpin.error("Project too large or invalid");
 		track(Events.AUTO_DETECT_REJECTED, { reason: "validation_failed" });
 		throw new JackError(
 			JackErrorCode.VALIDATION_ERROR,
 			validation.error || "Project validation failed",
 		);
 	}
+	validationSpin.success(`Scanned ${validation.fileCount} files`);
 
 	// Step 2: Detect project type
 	const detection = detectProjectType(projectPath);
@@ -566,9 +569,11 @@ async function runAutoDetectFlow(
 	if (detection.type === "unknown") {
 		track(Events.AUTO_DETECT_FAILED, { reason: "unknown_type" });
 
+		// Use detection.error if available (e.g., monorepo message), otherwise generic
 		throw new JackError(
 			JackErrorCode.VALIDATION_ERROR,
-			"Could not detect project type\n\nSupported types:\n  - Vite (React, Vue, etc.)\n  - Hono API\n  - SvelteKit (with @sveltejs/adapter-cloudflare)\n\nTo deploy manually, create a wrangler.jsonc file.\nDocs: https://docs.getjack.org/guides/manual-setup",
+			detection.error ||
+				"Could not detect project type\n\nSupported types:\n  - Vite (React, Vue, etc.)\n  - Hono API\n  - SvelteKit (with @sveltejs/adapter-cloudflare)\n\nTo deploy manually, create a wrangler.jsonc file.\nDocs: https://docs.getjack.org/guides/manual-setup",
 		);
 	}
 

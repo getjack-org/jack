@@ -238,6 +238,11 @@ try {
 			});
 			break;
 		}
+		case "shit": {
+			// Easter egg for typo
+			console.error("💩💩💩");
+			// Fall through to ship
+		}
 		case "ship":
 		case "push":
 		case "up":
