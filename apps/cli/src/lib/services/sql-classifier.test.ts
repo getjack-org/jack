@@ -229,9 +229,9 @@ describe("sql-classifier", () => {
 				expect(result.operation).toBe("SELECT");
 			});
 
-			it("treats unknown operations as write for safety", () => {
+			it("treats unknown operations as read (let SQLite handle errors)", () => {
 				const result = classifyStatement("VACUUM");
-				expect(result.risk).toBe("write");
+				expect(result.risk).toBe("read");
 				expect(result.operation).toBe("VACUUM");
 			});
 

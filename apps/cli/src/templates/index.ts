@@ -104,8 +104,57 @@ async function loadTemplate(name: string): Promise<Template> {
 // Internal files that should be excluded from templates
 const INTERNAL_FILES = [".jack.json", ".jack/template.json"];
 
+// Wrangler config files that need sanitization when forking (JSONC only, no TOML support)
+const WRANGLER_CONFIG_FILES = ["wrangler.jsonc", "wrangler.json"];
+
 /**
- * Extract zip buffer to file map, excluding internal files
+ * Strip provider-specific IDs from wrangler config bindings.
+ * When forking a template, the original author's resource IDs won't work
+ * for the new user - wrangler 4.45.0+ will auto-provision new resources.
+ *
+ * Stripped fields:
+ * - D1: database_id (author's database)
+ * - KV: id (author's namespace)
+ * - R2: nothing (bucket_name is just a name, not a provider ID)
+ */
+function sanitizeWranglerConfig(content: string, filename: string): string {
+	// Only handle JSON/JSONC files
+	if (!filename.endsWith(".json") && !filename.endsWith(".jsonc")) {
+		return content;
+	}
+
+	try {
+		const config = parseJsonc(content);
+
+		// D1: strip database_id
+		if (Array.isArray(config.d1_databases)) {
+			for (const db of config.d1_databases) {
+				if (db && typeof db === "object" && "database_id" in db) {
+					delete db.database_id;
+				}
+			}
+		}
+
+		// KV: strip id
+		if (Array.isArray(config.kv_namespaces)) {
+			for (const kv of config.kv_namespaces) {
+				if (kv && typeof kv === "object" && "id" in kv) {
+					delete kv.id;
+				}
+			}
+		}
+
+		// Re-serialize with formatting
+		return JSON.stringify(config, null, "\t");
+	} catch {
+		// If parsing fails, return original content
+		return content;
+	}
+}
+
+/**
+ * Extract zip buffer to file map, excluding internal files.
+ * Sanitizes wrangler config to remove provider IDs (D1 database_id, KV id).
  */
 function extractZipToFiles(zipData: ArrayBuffer): Record<string, string> {
 	const files: Record<string, string> = {};
@@ -117,7 +166,17 @@ function extractZipToFiles(zipData: ArrayBuffer): Record<string, string> {
 
 		// Skip internal files
 		if (path && !INTERNAL_FILES.includes(path)) {
-			files[path] = new TextDecoder().decode(content);
+			let fileContent = new TextDecoder().decode(content);
+
+			// Sanitize wrangler config files to strip provider IDs
+			// This ensures forked projects create new resources instead of
+			// trying to use the original author's resources
+			const filename = path.split("/").pop() || path;
+			if (filename === "wrangler.jsonc" || filename === "wrangler.json") {
+				fileContent = sanitizeWranglerConfig(fileContent, filename);
+			}
+
+			files[path] = fileContent;
 		}
 	}
 
