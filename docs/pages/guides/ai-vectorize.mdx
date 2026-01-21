@@ -1,0 +1,248 @@
+# AI & Vectorize Bindings
+
+Jack cloud projects can use Cloudflare's AI and Vectorize services for machine learning inference and vector search.
+
+## Quick Start
+
+Add bindings to your `wrangler.jsonc`:
+
+```jsonc
+{
+  "ai": {
+    "binding": "AI"
+  },
+  "vectorize": [
+    {
+      "binding": "VECTORS",
+      "index_name": "my-vectors",
+      "preset": "cloudflare"
+    }
+  ]
+}
+```
+
+Deploy and jack cloud automatically provisions the resources:
+
+```bash
+jack ship
+```
+
+## AI Binding
+
+The AI binding gives you access to Cloudflare's AI models for inference.
+
+### Configuration
+
+```jsonc
+{
+  "ai": {
+    "binding": "AI"
+  }
+}
+```
+
+### Usage
+
+```typescript
+interface Env {
+  AI: Ai;
+}
+
+export default {
+  async fetch(request: Request, env: Env) {
+    // Text generation
+    const response = await env.AI.run("@cf/meta/llama-3-8b-instruct", {
+      prompt: "What is the capital of France?",
+    });
+
+    // Text embeddings
+    const embeddings = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+      text: "Hello world",
+    });
+
+    // Image classification
+    const result = await env.AI.run("@cf/microsoft/resnet-50", {
+      image: await request.arrayBuffer(),
+    });
+
+    return Response.json(response);
+  },
+};
+```
+
+### Available Models
+
+Common models include:
+
+| Model | Use Case |
+|-------|----------|
+| `@cf/meta/llama-3-8b-instruct` | Text generation, chat |
+| `@cf/baai/bge-base-en-v1.5` | Text embeddings (768 dims) |
+| `@cf/baai/bge-small-en-v1.5` | Smaller embeddings (384 dims) |
+| `@cf/microsoft/resnet-50` | Image classification |
+| `@cf/openai/whisper` | Speech to text |
+
+See [Cloudflare AI Models](https://developers.cloudflare.com/workers-ai/models/) for the full list.
+
+## Vectorize Binding
+
+Vectorize is a vector database for semantic search, RAG, and similarity matching.
+
+### Configuration
+
+```jsonc
+{
+  "vectorize": [
+    {
+      "binding": "VECTORS",
+      "index_name": "my-index",
+      "preset": "cloudflare"
+    }
+  ]
+}
+```
+
+**Presets:**
+
+| Preset | Dimensions | Metric | Best For |
+|--------|------------|--------|----------|
+| `cloudflare` | 768 | cosine | BGE-base embeddings |
+| `cloudflare-small` | 384 | cosine | BGE-small embeddings |
+| `cloudflare-large` | 1024 | cosine | Larger models |
+
+Or specify dimensions manually:
+
+```jsonc
+{
+  "vectorize": [
+    {
+      "binding": "VECTORS",
+      "index_name": "custom-index",
+      "dimensions": 1536,
+      "metric": "cosine"
+    }
+  ]
+}
+```
+
+### Usage
+
+```typescript
+interface Env {
+  VECTORS: VectorizeIndex;
+}
+
+export default {
+  async fetch(request: Request, env: Env) {
+    // Insert vectors
+    await env.VECTORS.insert([
+      {
+        id: "doc-1",
+        values: [0.1, 0.2, ...], // 768 floats for cloudflare preset
+        metadata: { title: "My Document" },
+      },
+    ]);
+
+    // Query similar vectors
+    const results = await env.VECTORS.query([0.1, 0.2, ...], {
+      topK: 5,
+      returnMetadata: "all",
+    });
+
+    // results.matches = [{ id, score, metadata }, ...]
+    return Response.json(results);
+  },
+};
+```
+
+## Combining AI + Vectorize
+
+A common pattern is using AI for embeddings and Vectorize for search:
+
+```typescript
+interface Env {
+  AI: Ai;
+  VECTORS: VectorizeIndex;
+}
+
+// Index a document
+async function indexDocument(env: Env, id: string, content: string) {
+  // Generate embedding
+  const response = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+    text: content,
+  });
+  const embedding = response.data[0];
+
+  // Store in Vectorize
+  await env.VECTORS.insert([
+    {
+      id,
+      values: embedding,
+      metadata: { preview: content.slice(0, 100) },
+    },
+  ]);
+}
+
+// Search documents
+async function search(env: Env, query: string) {
+  // Generate query embedding
+  const response = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+    text: query,
+  });
+  const embedding = response.data[0];
+
+  // Find similar documents
+  const results = await env.VECTORS.query(embedding, {
+    topK: 5,
+    returnMetadata: "all",
+  });
+
+  return results.matches;
+}
+```
+
+## Templates
+
+The **semantic-search** template includes a working AI + Vectorize setup:
+
+```bash
+jack new my-search -t semantic-search
+```
+
+This gives you:
+- Document indexing API
+- Semantic search API
+- Web UI for testing
+- D1 database for full content storage
+
+## Jack Cloud Provisioning
+
+When you deploy with `jack ship`, jack cloud:
+
+1. Detects AI and Vectorize bindings in your config
+2. Provisions a Vectorize index (named `jack-{projectId}-{binding}`)
+3. Binds the resources to your worker
+4. Handles all Cloudflare API setup automatically
+
+You don't need a Cloudflare account or API tokens - jack cloud manages everything.
+
+## Local Development
+
+For local development with `wrangler dev`, you need a Cloudflare account with AI and Vectorize enabled:
+
+```bash
+# Create index for local dev
+wrangler vectorize create my-vectors --preset cloudflare
+
+# Run locally
+wrangler dev
+```
+
+## Pricing
+
+Jack cloud includes generous free tiers:
+
+- **AI**: Free tier included with Cloudflare Workers
+- **Vectorize**: 30M queried dimensions/month free, 5M stored dimensions free
+
+See [Cloudflare pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) for details.
