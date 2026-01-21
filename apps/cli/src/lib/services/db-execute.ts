@@ -11,6 +11,9 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
+import { type ExecuteSqlResponse, executeManagedSql } from "../control-plane.ts";
+import { readProjectLink } from "../project-link.ts";
+import { type D1BindingConfig, getExistingD1Bindings } from "../wrangler-config.ts";
 import {
 	type ClassifiedStatement,
 	type RiskLevel,
@@ -19,7 +22,6 @@ import {
 	getRiskDescription,
 	splitStatements,
 } from "./sql-classifier.ts";
-import { getExistingD1Bindings, type D1BindingConfig } from "../wrangler-config.ts";
 
 export interface ExecuteSqlOptions {
 	/** Path to project directory */
@@ -367,6 +369,55 @@ export async function executeSql(options: ExecuteSqlOptions): Promise<ExecuteSql
 		}
 	}
 
+	// Check for managed mode - route through control plane
+	const link = await readProjectLink(projectDir);
+	if (link?.deploy_mode === "managed") {
+		try {
+			const managedResult = await executeManagedSql(link.project_id, sql);
+
+			if (!managedResult.success) {
+				return {
+					success: false,
+					risk: highestRisk,
+					statements,
+					error: managedResult.error || "Failed to execute SQL",
+				};
+			}
+
+			// Build result matching wrangler format
+			const result: ExecuteSqlResult = {
+				success: true,
+				risk: highestRisk,
+				statements,
+				results: managedResult.results,
+				meta: {
+					changes: managedResult.meta.changes,
+					duration_ms: managedResult.meta.duration_ms,
+					last_row_id: managedResult.meta.last_row_id,
+				},
+			};
+
+			// Add warning for destructive ops
+			if (highestRisk === "destructive") {
+				const ops = statements
+					.filter((s) => s.risk === "destructive")
+					.map((s) => s.operation)
+					.join(", ");
+				result.warning = `Executed destructive operation(s): ${ops}`;
+			}
+
+			return result;
+		} catch (error) {
+			return {
+				success: false,
+				risk: highestRisk,
+				statements,
+				error: error instanceof Error ? error.message : "Failed to execute SQL via control plane",
+			};
+		}
+	}
+
+	// BYO mode: use wrangler
 	// Get database
 	const db = databaseName
 		? await getDatabaseByName(projectDir, databaseName)
@@ -475,6 +526,54 @@ export async function executeSqlFile(
 		}
 	}
 
+	// Check for managed mode - route through control plane
+	const link = await readProjectLink(projectDir);
+	if (link?.deploy_mode === "managed") {
+		try {
+			const managedResult = await executeManagedSql(link.project_id, sql);
+
+			if (!managedResult.success) {
+				return {
+					success: false,
+					risk: highestRisk,
+					statements,
+					error: managedResult.error || "Failed to execute SQL",
+				};
+			}
+
+			// Build result matching wrangler format
+			const result: ExecuteSqlResult = {
+				success: true,
+				risk: highestRisk,
+				statements,
+				results: managedResult.results,
+				meta: {
+					changes: managedResult.meta.changes,
+					duration_ms: managedResult.meta.duration_ms,
+					last_row_id: managedResult.meta.last_row_id,
+				},
+			};
+
+			// Add warning for destructive ops
+			if (highestRisk === "destructive") {
+				const ops = [
+					...new Set(statements.filter((s) => s.risk === "destructive").map((s) => s.operation)),
+				].join(", ");
+				result.warning = `Executed destructive operation(s): ${ops}`;
+			}
+
+			return result;
+		} catch (error) {
+			return {
+				success: false,
+				risk: highestRisk,
+				statements,
+				error: error instanceof Error ? error.message : "Failed to execute SQL via control plane",
+			};
+		}
+	}
+
+	// BYO mode: use wrangler
 	// Get database
 	const db = databaseName
 		? await getDatabaseByName(projectDir, databaseName)

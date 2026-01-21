@@ -111,6 +111,51 @@ When uploading Workers to Cloudflare's dispatch namespace, upload ALL files from
 - Use those instead of `jack` CLI commands or `wrangler` commands
 - If a capability isn't available via MCP, ask the user to run it via CLI
 
+## Deploy Mode: Managed vs BYO
+
+Jack has two deploy modes that require different code paths:
+
+- **managed** (Jack Cloud): Uses control plane APIs, user has Jack Cloud auth only
+- **byo** (Bring Your Own): Uses wrangler CLI, user has Cloudflare auth
+
+### Critical Pattern: Always Check Deploy Mode Before Calling Wrangler
+
+**NEVER call wrangler commands unconditionally.** Managed mode users don't have Cloudflare credentials.
+
+```typescript
+// ❌ BAD - calls wrangler for all projects
+const dbInfo = await getWranglerDatabaseInfo(dbName);
+
+// ✅ GOOD - check deploy mode first
+const link = await readProjectLink(projectDir);
+if (link?.deploy_mode === "managed") {
+  // Use control plane API
+  const dbInfo = await getManagedDatabaseInfo(link.project_id);
+} else {
+  // BYO: use wrangler
+  const dbInfo = await getWranglerDatabaseInfo(dbName);
+}
+```
+
+### Where to Route by Deploy Mode
+
+| Operation | Managed (Jack Cloud) | BYO (wrangler) |
+|-----------|---------------------|----------------|
+| DB info | `getManagedDatabaseInfo()` | `wrangler d1 info` |
+| DB export | `exportManagedDatabase()` | `wrangler d1 export` |
+| DB execute | Control plane proxy (TODO) | `wrangler d1 execute` |
+| Worker status | Control plane API | `wrangler deployments list` |
+| Project delete | `deleteManagedProject()` | `wrangler delete` |
+
+### Testing Deploy Mode Isolation
+
+Use `scripts/test-managed-mode-no-cf-auth.sh` to verify managed mode works without Cloudflare auth:
+```bash
+./scripts/test-managed-mode-no-cf-auth.sh /path/to/managed/project
+```
+
+This simulates a user who has Jack Cloud auth (`~/.config/jack/auth.json`) but no Cloudflare auth (`~/.wrangler/`).
+
 ## Code Style
 
 - TypeScript with Bun runtime

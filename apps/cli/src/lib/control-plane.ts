@@ -179,10 +179,32 @@ export async function checkSlugAvailability(slug: string): Promise<SlugAvailabil
 	return response.json() as Promise<SlugAvailabilityResponse>;
 }
 
+export interface DatabaseInfoResponse {
+	name: string;
+	id: string;
+	sizeBytes: number;
+	numTables: number;
+	version?: string;
+	createdAt?: string;
+}
+
 export interface DatabaseExportResponse {
 	success: boolean;
 	download_url: string;
 	expires_in: number;
+}
+
+export interface ExecuteSqlResponse {
+	success: boolean;
+	results: unknown[];
+	meta: {
+		changes: number;
+		duration_ms: number;
+		last_row_id: number;
+		rows_read: number;
+		rows_written: number;
+	};
+	error?: string;
 }
 
 export interface DeleteProjectResponse {
@@ -203,6 +225,31 @@ export interface ManagedProject {
 	updated_at: string;
 	tags?: string; // JSON string array from DB, e.g., '["backend", "api"]'
 	owner_username?: string | null;
+}
+
+/**
+ * Get managed project's D1 database info (size, tables, etc.)
+ * This avoids calling wrangler and uses the control plane API.
+ */
+export async function getManagedDatabaseInfo(projectId: string): Promise<DatabaseInfoResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${projectId}/database/info`,
+	);
+
+	if (response.status === 404) {
+		throw new Error("No database found for this project");
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to get database info: ${response.status}`);
+	}
+
+	return response.json() as Promise<DatabaseInfoResponse>;
 }
 
 /**
@@ -227,6 +274,45 @@ export async function exportManagedDatabase(projectId: string): Promise<Database
 	}
 
 	return response.json() as Promise<DatabaseExportResponse>;
+}
+
+/**
+ * Execute SQL against a managed project's D1 database.
+ * Routes through control plane for Jack Cloud auth.
+ */
+export async function executeManagedSql(
+	projectId: string,
+	sql: string,
+	params?: unknown[],
+): Promise<ExecuteSqlResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const body: { sql: string; params?: unknown[] } = { sql };
+	if (params && params.length > 0) {
+		body.params = params;
+	}
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${projectId}/database/execute`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		},
+	);
+
+	if (response.status === 504) {
+		throw new Error("SQL execution timed out. The query may be too complex.");
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to execute SQL: ${response.status}`);
+	}
+
+	return response.json() as Promise<ExecuteSqlResponse>;
 }
 
 /**
