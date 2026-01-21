@@ -4,7 +4,7 @@
 	"secrets": [],
 	"capabilities": ["ai"],
 	"intent": {
-		"keywords": ["ai", "chat", "llm", "mistral", "completion", "chatbot"],
+		"keywords": ["ai", "chat", "llm", "llama", "completion", "chatbot"],
 		"examples": ["AI chatbot", "chat interface", "LLM chat app"]
 	},
 	"hooks": {
@@ -16,12 +16,11 @@
 			},
 			{
 				"action": "box",
-				"title": "AI Chat: {{name}}",
+				"title": "{{name}}",
 				"lines": [
 					"{{url}}",
 					"",
-					"Open in browser to start chatting!",
-					"Rate limit: 10 requests/minute"
+					"jack open  to view in browser"
 				]
 			}
 		]
