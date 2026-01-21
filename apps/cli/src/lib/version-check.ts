@@ -91,11 +91,11 @@ export async function checkForUpdate(
 	skipCache = false,
 ): Promise<string | null> {
 	const currentVersion = getCurrentVersion();
+	const now = Date.now();
 
 	// Check cache first (unless skipCache is true)
 	if (!skipCache) {
 		const cache = await readVersionCache();
-		const now = Date.now();
 
 		if (cache && now - cache.checkedAt < CACHE_TTL_MS) {
 			// Use cached value
@@ -106,7 +106,7 @@ export async function checkForUpdate(
 		}
 	}
 
-	// Fetch fresh version (don't await in caller for non-blocking)
+	// Fetch fresh version
 	const latestVersion = await fetchLatestVersion();
 	if (!latestVersion) return null;
 
