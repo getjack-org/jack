@@ -1,5 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { createMcpServer } from "./server.ts";
+import type { McpServerOptions } from "./types.ts";
 
 export interface McpClientOptions {
 	command: string;
@@ -12,12 +16,50 @@ export interface McpClientOptions {
 
 export interface McpTestClient {
 	client: Client;
-	transport: StdioClientTransport;
+	transport: Transport;
 	getStderr(): string;
 	close(): Promise<void>;
 }
 
-export async function openMcpTestClient(options: McpClientOptions): Promise<McpTestClient> {
+/**
+ * Open an MCP test client using in-memory transport.
+ * This is the recommended approach for testing - no process spawning,
+ * no race conditions, deterministic behavior.
+ */
+export async function openMcpTestClientInMemory(
+	serverOptions: McpServerOptions = {},
+): Promise<McpTestClient> {
+	// Create linked transport pair
+	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+	// Create and connect server
+	const { server } = await createMcpServer(serverOptions);
+	await server.connect(serverTransport);
+
+	// Create and connect client
+	const client = new Client({
+		name: "jack-mcp-test",
+		version: "0.1.0",
+	});
+	await client.connect(clientTransport);
+
+	return {
+		client,
+		transport: clientTransport,
+		getStderr: () => "(in-memory transport - no stderr)",
+		close: async () => {
+			await clientTransport.close();
+			await serverTransport.close();
+		},
+	};
+}
+
+/**
+ * Open an MCP test client using stdio transport (spawns a child process).
+ * This tests the full stdio path but is prone to race conditions.
+ * Use openMcpTestClientInMemory() for reliable testing.
+ */
+export async function openMcpTestClientStdio(options: McpClientOptions): Promise<McpTestClient> {
 	const transport = new StdioClientTransport({
 		command: options.command,
 		args: options.args ?? [],
@@ -50,6 +92,9 @@ export async function openMcpTestClient(options: McpClientOptions): Promise<McpT
 		close: () => transport.close(),
 	};
 }
+
+// Legacy alias for backwards compatibility
+export const openMcpTestClient = openMcpTestClientStdio;
 
 export function parseMcpToolResult(toolResult: {
 	content?: Array<{ type: string; text?: string }>;
