@@ -5,7 +5,6 @@
     "": {
       "name": "jack",
       "dependencies": {
-        "@clack/prompts": "^0.11.0",
         "react": "^19.2.3",
         "react-dom": "^19.2.3",
         "vocs": "^1.4.0",
@@ -26,9 +25,20 @@
         "typescript": "^5.0.0",
       },
     },
+    "apps/binding-proxy-worker": {
+      "name": "@getjack/binding-proxy-worker",
+      "dependencies": {
+        "tokenx": "^1.2.1",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^4.20241205.0",
+        "typescript": "^5.0.0",
+        "wrangler": "^4.0.0",
+      },
+    },
     "apps/cli": {
       "name": "@getjack/jack",
-      "version": "0.1.15",
+      "version": "0.1.23",
       "bin": {
         "jack": "./src/index.ts",
       },
@@ -264,6 +274,8 @@
     "@getjack/auth": ["@getjack/auth@workspace:packages/auth"],
 
     "@getjack/auth-worker": ["@getjack/auth-worker@workspace:apps/auth-worker"],
+
+    "@getjack/binding-proxy-worker": ["@getjack/binding-proxy-worker@workspace:apps/binding-proxy-worker"],
 
     "@getjack/control-plane": ["@getjack/control-plane@workspace:apps/control-plane"],
 
@@ -1654,6 +1666,8 @@
     "tinyglobby": ["tinyglobby@0.2.15", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.3" } }, "sha512-j2Zq4NyQYG5XMST4cbs02Ak8iJUdxRM0XI5QyxXuZOzKOINmWurp3smXu3y5wDcJrptwpSjgXHzIQxR0omXljQ=="],
 
     "toidentifier": ["toidentifier@1.0.1", "", {}, "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA=="],
+
+    "tokenx": ["tokenx@1.2.1", "", {}, "sha512-lVhFIhR2qh3uUyUA8Ype+HGzcokUJbHmRSN1TJKOe4Y26HkawQuLiGkUCkR5LD9dx+Rtp+njrwzPL8AHHYQSYA=="],
 
     "toml": ["toml@3.0.0", "", {}, "sha512-y/mWCZinnvxjTKYhJ+pYxwD0mRLVvOtdS2Awbgxln6iEnt4rk0yBxeSBHkGJcPucRiG0e55mwWp+g/05rsrd6w=="],
 
