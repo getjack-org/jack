@@ -45,6 +45,7 @@ export default defineConfig({
 				{ text: "Overview", link: "/templates" },
 				{ text: "miniapp", link: "/templates/miniapp" },
 				{ text: "api", link: "/templates/api" },
+				{ text: "semantic-search", link: "/templates/semantic-search" },
 			],
 		},
 		{
@@ -64,6 +65,7 @@ export default defineConfig({
 		{
 			text: "Guides",
 			items: [
+				{ text: "AI & Vectorize Bindings", link: "/guides/ai-vectorize" },
 				{ text: "Using with AI Agents", link: "/guides/ai-agents" },
 				{ text: "Troubleshooting", link: "/guides/troubleshooting" },
 			],

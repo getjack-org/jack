@@ -1,0 +1,177 @@
+# Semantic Search Template
+
+Build semantic search with AI embeddings and vector database.
+
+```bash
+jack new my-search -t semantic-search
+```
+
+## What You Get
+
+- **Cloudflare AI** - Text embeddings with BGE model
+- **Vectorize** - Vector database for similarity search
+- **D1 Database** - Store full document content
+- **Web UI** - Test interface for indexing and searching
+
+## Project Structure
+
+```
+my-search/
+├── src/
+│   └── index.ts
+├── public/
+│   ├── index.html
+│   └── app.js
+├── package.json
+├── wrangler.jsonc
+└── AGENTS.md
+```
+
+## How It Works
+
+1. **Index**: Upload documents → AI generates embeddings → stored in Vectorize
+2. **Search**: Query → AI generates embedding → Vectorize finds similar docs
+
+## API Endpoints
+
+### Index a Document
+
+```bash
+curl -X POST https://your-app.runjack.xyz/api/index \
+  -H "Content-Type: application/json" \
+  -d '{"id": "doc-1", "content": "Your document text here"}'
+```
+
+### Search Documents
+
+```bash
+curl -X POST https://your-app.runjack.xyz/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "find similar content", "limit": 5}'
+```
+
+Response:
+
+```json
+{
+  "results": [
+    {
+      "id": "doc-1",
+      "score": 0.89,
+      "metadata": { "preview": "Your document text..." }
+    }
+  ]
+}
+```
+
+## Configuration
+
+The template uses these bindings in `wrangler.jsonc`:
+
+```jsonc
+{
+  "ai": { "binding": "AI" },
+  "vectorize": [
+    {
+      "binding": "VECTORS",
+      "index_name": "jack-template-vectors",
+      "preset": "cloudflare"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jack-template-db"
+    }
+  ]
+}
+```
+
+## Customizing
+
+### Change the Embedding Model
+
+Edit `src/index.ts`:
+
+```typescript
+// Default: 768 dimensions
+const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+  text: content,
+});
+
+// Smaller/faster: 384 dimensions
+const embedding = await env.AI.run("@cf/baai/bge-small-en-v1.5", {
+  text: content,
+});
+```
+
+If changing dimensions, update `wrangler.jsonc`:
+
+```jsonc
+"vectorize": [
+  {
+    "binding": "VECTORS",
+    "index_name": "my-vectors",
+    "preset": "cloudflare-small"  // 384 dimensions
+  }
+]
+```
+
+### Add Metadata Filtering
+
+Store additional metadata when indexing:
+
+```typescript
+await env.VECTORS.insert([
+  {
+    id,
+    values: embedding,
+    metadata: {
+      preview: content.slice(0, 100),
+      category: "technical",
+      date: Date.now(),
+    },
+  },
+]);
+```
+
+### Retrieve Full Content
+
+The template stores full content in D1. Fetch it after search:
+
+```typescript
+const results = await env.VECTORS.query(embedding, { topK: 5 });
+
+const fullResults = await Promise.all(
+  results.matches.map(async (match) => {
+    const doc = await env.DB.prepare(
+      "SELECT content FROM documents WHERE id = ?"
+    ).bind(match.id).first();
+    return { ...match, content: doc?.content };
+  })
+);
+```
+
+## Deploying
+
+```bash
+jack ship
+```
+
+Jack cloud automatically:
+- Provisions a Vectorize index for your project
+- Creates the D1 database
+- Binds AI to your worker
+
+## Use Cases
+
+- **Documentation search** - Find relevant docs by meaning
+- **Product recommendations** - Similar items based on descriptions
+- **FAQ matching** - Route questions to best answers
+- **Content deduplication** - Find near-duplicate documents
+
+## Resources
+
+- [AI & Vectorize Guide](/guides/ai-vectorize) - Detailed binding documentation
+- [Cloudflare AI Models](https://developers.cloudflare.com/workers-ai/models/)
+- [Vectorize Documentation](https://developers.cloudflare.com/vectorize/)
