@@ -161,6 +161,18 @@ const cli = meow(
 				type: "boolean",
 				default: false,
 			},
+			write: {
+				type: "boolean",
+				shortFlag: "w",
+				default: false,
+			},
+			file: {
+				type: "string",
+				shortFlag: "f",
+			},
+			db: {
+				type: "string",
+			},
 		},
 	},
 );
@@ -322,7 +334,11 @@ try {
 		}
 		case "services": {
 			const { default: services } = await import("./commands/services.ts");
-			await withTelemetry("services", services)(args[0], args.slice(1), {
+			const serviceArgs = [...args.slice(1)];
+			if (cli.flags.write) serviceArgs.push("--write");
+			if (cli.flags.file) serviceArgs.push("--file", cli.flags.file);
+			if (cli.flags.db) serviceArgs.push("--db", cli.flags.db);
+			await withTelemetry("services", services)(args[0], serviceArgs, {
 				project: cli.flags.project,
 			});
 			break;
