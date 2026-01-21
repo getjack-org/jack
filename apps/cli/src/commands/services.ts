@@ -49,31 +49,29 @@ async function ensureLocalProjectContext(projectName: string): Promise<void> {
 
 /**
  * Get database info for a project.
- * For managed: fetch from control plane
+ * For managed: fetch from control plane (throws on error - no silent fallback)
  * For BYO: parse from wrangler.jsonc
  */
 async function resolveDatabaseInfo(projectName: string): Promise<ResolvedDatabaseInfo | null> {
 	// Read deploy mode from .jack/project.json
 	const link = await readProjectLink(process.cwd());
 
-	// For managed projects, fetch from control plane
+	// For managed projects, fetch from control plane (don't fall back to wrangler)
 	if (link?.deploy_mode === "managed") {
-		try {
-			const resources = await fetchProjectResources(link.project_id);
-			const d1 = resources.find((r) => r.resource_type === "d1");
-			if (d1) {
-				return {
-					name: d1.resource_name,
-					id: d1.provider_id,
-					source: "control-plane",
-				};
-			}
-		} catch {
-			// Fall through to wrangler parsing
+		const resources = await fetchProjectResources(link.project_id);
+		const d1 = resources.find((r) => r.resource_type === "d1");
+		if (d1) {
+			return {
+				name: d1.resource_name,
+				id: d1.provider_id,
+				source: "control-plane",
+			};
 		}
+		// No database in control plane for managed project
+		return null;
 	}
 
-	// For BYO or fallback, parse from wrangler config
+	// For BYO, parse from wrangler config
 	try {
 		await ensureLocalProjectContext(projectName);
 		const resources = await parseWranglerResources(process.cwd());
@@ -85,7 +83,7 @@ async function resolveDatabaseInfo(projectName: string): Promise<ResolvedDatabas
 			};
 		}
 	} catch {
-		// No database found
+		// No database found in wrangler config
 	}
 
 	return null;
@@ -198,6 +196,41 @@ async function resolveProjectName(options: ServiceOptions): Promise<string> {
  */
 async function dbInfo(options: ServiceOptions): Promise<void> {
 	const projectName = await resolveProjectName(options);
+	const projectDir = process.cwd();
+	const link = await readProjectLink(projectDir);
+
+	// For managed projects, use control plane API (no wrangler dependency)
+	if (link?.deploy_mode === "managed") {
+		outputSpinner.start("Fetching database info...");
+		try {
+			const { getManagedDatabaseInfo } = await import("../lib/control-plane.ts");
+			const dbInfo = await getManagedDatabaseInfo(link.project_id);
+			outputSpinner.stop();
+
+			console.error("");
+			success(`Database: ${dbInfo.name}`);
+			console.error("");
+			item(`Size: ${formatSize(dbInfo.sizeBytes)}`);
+			item(`Tables: ${dbInfo.numTables}`);
+			item(`ID: ${dbInfo.id}`);
+			item("Source: managed (jack cloud)");
+			console.error("");
+			return;
+		} catch (err) {
+			outputSpinner.stop();
+			console.error("");
+			if (err instanceof Error && err.message.includes("No database found")) {
+				error("No database found for this project");
+				info("Create one with: jack services db create");
+			} else {
+				error(`Failed to fetch database info: ${err instanceof Error ? err.message : String(err)}`);
+			}
+			console.error("");
+			process.exit(1);
+		}
+	}
+
+	// BYO mode: use wrangler
 	const dbInfo = await resolveDatabaseInfo(projectName);
 
 	if (!dbInfo) {
@@ -228,9 +261,6 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 	item(`Size: ${formatSize(wranglerDbInfo.sizeBytes)}`);
 	item(`Tables: ${wranglerDbInfo.numTables}`);
 	item(`ID: ${dbInfo.id || wranglerDbInfo.id}`);
-	if (dbInfo.source === "control-plane") {
-		item("Source: managed (jack cloud)");
-	}
 	console.error("");
 }
 
@@ -238,6 +268,54 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
  * Export database to SQL file
  */
 async function dbExport(options: ServiceOptions): Promise<void> {
+	const projectDir = process.cwd();
+	const link = await readProjectLink(projectDir);
+
+	// For managed projects, use control plane export API
+	if (link?.deploy_mode === "managed") {
+		outputSpinner.start("Exporting database...");
+		try {
+			const { exportManagedDatabase, getManagedDatabaseInfo } = await import(
+				"../lib/control-plane.ts"
+			);
+
+			// Get db name for filename
+			const dbInfo = await getManagedDatabaseInfo(link.project_id);
+			const filename = generateExportFilename(dbInfo.name);
+			const outputPath = join(projectDir, filename);
+
+			// Get export URL from control plane
+			const exportResult = await exportManagedDatabase(link.project_id);
+
+			// Download the export
+			const response = await fetch(exportResult.download_url);
+			if (!response.ok) {
+				throw new Error(`Failed to download export: ${response.status}`);
+			}
+
+			const content = await response.text();
+			await Bun.write(outputPath, content);
+
+			outputSpinner.stop();
+			console.error("");
+			success(`Exported to ./${filename}`);
+			console.error("");
+		} catch (err) {
+			outputSpinner.stop();
+			console.error("");
+			if (err instanceof Error && err.message.includes("No database found")) {
+				error("No database found for this project");
+				info("Create one with: jack services db create");
+			} else {
+				error(`Failed to export: ${err instanceof Error ? err.message : String(err)}`);
+			}
+			console.error("");
+			process.exit(1);
+		}
+		return;
+	}
+
+	// BYO mode: use wrangler
 	const projectName = await resolveProjectName(options);
 	const dbInfo = await resolveDatabaseInfo(projectName);
 
@@ -253,9 +331,9 @@ async function dbExport(options: ServiceOptions): Promise<void> {
 	const filename = generateExportFilename(dbInfo.name);
 
 	// Export to current directory
-	const outputPath = join(process.cwd(), filename);
+	const outputPath = join(projectDir, filename);
 
-	// Export
+	// Export via wrangler
 	outputSpinner.start("Exporting database...");
 	try {
 		await exportDatabase(dbInfo.name, outputPath);
@@ -283,27 +361,69 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 	const link = await readProjectLink(projectDir);
 	const isManaged = link?.deploy_mode === "managed";
 
-	const dbInfo = await resolveDatabaseInfo(projectName);
+	// For managed projects, get database info from control plane
+	let dbInfo: ResolvedDatabaseInfo | null = null;
+	let displaySizeBytes: number | undefined;
+	let displayNumTables: number | undefined;
 
-	if (!dbInfo) {
-		console.error("");
-		error("No database found for this project");
-		info("Create one with: jack services db create");
-		console.error("");
-		return;
-	}
-
-	// Get detailed database info to show what will be deleted
 	outputSpinner.start("Fetching database info...");
-	const wranglerDbInfo = await getWranglerDatabaseInfo(dbInfo.name);
-	outputSpinner.stop();
+
+	if (isManaged && link) {
+		try {
+			const { getManagedDatabaseInfo } = await import("../lib/control-plane.ts");
+			const managedDbInfo = await getManagedDatabaseInfo(link.project_id);
+			outputSpinner.stop();
+
+			dbInfo = {
+				name: managedDbInfo.name,
+				id: managedDbInfo.id,
+				source: "control-plane",
+			};
+			displaySizeBytes = managedDbInfo.sizeBytes;
+			displayNumTables = managedDbInfo.numTables;
+		} catch (err) {
+			outputSpinner.stop();
+			if (err instanceof Error && err.message.includes("No database found")) {
+				console.error("");
+				error("No database found for this project");
+				info("Create one with: jack services db create");
+				console.error("");
+				return;
+			}
+			throw err;
+		}
+	} else {
+		// BYO mode
+		dbInfo = await resolveDatabaseInfo(projectName);
+		outputSpinner.stop();
+
+		if (!dbInfo) {
+			console.error("");
+			error("No database found for this project");
+			info("Create one with: jack services db create");
+			console.error("");
+			return;
+		}
+
+		// Get detailed info via wrangler for BYO mode
+		outputSpinner.start("Fetching database details...");
+		const wranglerDbInfo = await getWranglerDatabaseInfo(dbInfo.name);
+		outputSpinner.stop();
+
+		if (wranglerDbInfo) {
+			displaySizeBytes = wranglerDbInfo.sizeBytes;
+			displayNumTables = wranglerDbInfo.numTables;
+		}
+	}
 
 	// Show what will be deleted
 	console.error("");
 	info(`Database: ${dbInfo.name}`);
-	if (wranglerDbInfo) {
-		item(`Size: ${formatSize(wranglerDbInfo.sizeBytes)}`);
-		item(`Tables: ${wranglerDbInfo.numTables}`);
+	if (displaySizeBytes !== undefined) {
+		item(`Size: ${formatSize(displaySizeBytes)}`);
+	}
+	if (displayNumTables !== undefined) {
+		item(`Tables: ${displayNumTables}`);
 	}
 	console.error("");
 	warn("This will permanently delete the database and all its data");

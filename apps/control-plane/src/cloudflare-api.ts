@@ -86,6 +86,27 @@ interface D1Database {
 	created_at: string;
 }
 
+interface D1DatabaseInfo {
+	uuid: string;
+	name: string;
+	version: string;
+	num_tables: number;
+	file_size: number;
+	created_at: string;
+}
+
+export interface D1QueryResult {
+	success: boolean;
+	results: unknown[];
+	meta: {
+		changes: number;
+		duration_ms: number;
+		last_row_id: number;
+		rows_read: number;
+		rows_written: number;
+	};
+}
+
 interface R2Bucket {
 	name: string;
 	creation_date: string;
@@ -333,6 +354,13 @@ export class CloudflareClient {
 	 */
 	async createD1Database(name: string): Promise<D1Database> {
 		return this.request<D1Database>("POST", "/d1/database", { name });
+	}
+
+	/**
+	 * Gets D1 database info including size and table count
+	 */
+	async getD1DatabaseInfo(databaseId: string): Promise<D1DatabaseInfo> {
+		return this.request<D1DatabaseInfo>("GET", `/d1/database/${databaseId}`);
 	}
 
 	/**
@@ -834,8 +862,17 @@ export class CloudflareClient {
 	/**
 	 * Execute SQL statements against a D1 database
 	 */
-	async executeD1Query(databaseId: string, sql: string): Promise<void> {
+	async executeD1Query(
+		databaseId: string,
+		sql: string,
+		params?: unknown[],
+	): Promise<D1QueryResult> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/d1/database/${databaseId}/query`;
+
+		const body: { sql: string; params?: unknown[] } = { sql };
+		if (params && params.length > 0) {
+			body.params = params;
+		}
 
 		const response = await fetch(url, {
 			method: "POST",
@@ -843,22 +880,35 @@ export class CloudflareClient {
 				Authorization: `Bearer ${this.apiToken}`,
 				"Content-Type": "application/json",
 			},
-			body: JSON.stringify({ sql }),
+			body: JSON.stringify(body),
 		});
 
-		const data = (await response.json()) as CloudflareResponse<unknown>;
+		const data = (await response.json()) as CloudflareResponse<D1QueryResult[]>;
 
 		if (!data.success) {
-			// Handle common errors gracefully
 			const errorMsg = data.errors?.[0]?.message || "D1 query failed";
-
-			// Ignore "table already exists" errors (idempotent schema)
-			if (errorMsg.includes("already exists")) {
-				return;
-			}
-
 			throw new Error(`D1 error: ${errorMsg}`);
 		}
+
+		// Cloudflare D1 API returns an array of results (one per statement)
+		// We return the first result for single-statement queries
+		const result = data.result?.[0];
+		if (!result) {
+			// Return empty result if no data returned
+			return {
+				success: true,
+				results: [],
+				meta: {
+					changes: 0,
+					duration_ms: 0,
+					last_row_id: 0,
+					rows_read: 0,
+					rows_written: 0,
+				},
+			};
+		}
+
+		return result;
 	}
 
 	/**
@@ -1579,6 +1629,144 @@ export class CloudflareClient {
 		return this.parseDimensionBreakdown(result, "cache_status");
 	}
 
+	/**
+	 * Get AI usage metrics for a specific project from Analytics Engine.
+	 * Queries binding-proxy-worker logs where blob3 = 'ai'.
+	 *
+	 * Schema (from binding-proxy-worker):
+	 * - index1: project_id
+	 * - blob1: org_id
+	 * - blob3: binding_type ("ai")
+	 * - blob4: model name
+	 * - double1: count (always 1)
+	 * - double2: duration_ms
+	 * - double3: tokens_in
+	 * - double4: tokens_out
+	 */
+	async getProjectAIUsage(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<{ metrics: AIUsageMetrics; by_model: AIUsageByModel[] }> {
+		const escapedProjectId = this.escapeSQL(projectId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+		const whereClause = `index1 = '${escapedProjectId}' AND blob3 = 'ai' AND timestamp >= toDateTime('${formattedFrom}') AND timestamp <= toDateTime('${formattedTo}')`;
+
+		// Aggregate metrics
+		const metricsQuery = `
+			SELECT
+				SUM(_sample_interval) as total_requests,
+				SUM(double3 * _sample_interval) as tokens_in,
+				SUM(double4 * _sample_interval) as tokens_out,
+				AVG(double2) as avg_latency_ms
+			FROM jack_usage
+			WHERE ${whereClause}
+		`;
+
+		// Breakdown by model
+		const byModelQuery = `
+			SELECT
+				blob4 as model,
+				SUM(_sample_interval) as requests,
+				SUM(double3 * _sample_interval) as tokens_in,
+				SUM(double4 * _sample_interval) as tokens_out
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob4
+			ORDER BY requests DESC
+		`;
+
+		const [metricsResult, byModelResult] = await Promise.all([
+			this.queryAnalyticsEngine(metricsQuery),
+			this.queryAnalyticsEngine(byModelQuery),
+		]);
+
+		return this.combineAIUsageMetrics(metricsResult, byModelResult);
+	}
+
+	/**
+	 * Get AI usage metrics for an org from Analytics Engine.
+	 */
+	async getOrgAIUsage(
+		orgId: string,
+		from: string,
+		to: string,
+	): Promise<{ metrics: AIUsageMetrics; by_model: AIUsageByModel[] }> {
+		const escapedOrgId = this.escapeSQL(orgId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+		const whereClause = `blob1 = '${escapedOrgId}' AND blob3 = 'ai' AND timestamp >= toDateTime('${formattedFrom}') AND timestamp <= toDateTime('${formattedTo}')`;
+
+		const metricsQuery = `
+			SELECT
+				SUM(_sample_interval) as total_requests,
+				SUM(double3 * _sample_interval) as tokens_in,
+				SUM(double4 * _sample_interval) as tokens_out,
+				AVG(double2) as avg_latency_ms
+			FROM jack_usage
+			WHERE ${whereClause}
+		`;
+
+		const byModelQuery = `
+			SELECT
+				blob4 as model,
+				SUM(_sample_interval) as requests,
+				SUM(double3 * _sample_interval) as tokens_in,
+				SUM(double4 * _sample_interval) as tokens_out
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob4
+			ORDER BY requests DESC
+		`;
+
+		const [metricsResult, byModelResult] = await Promise.all([
+			this.queryAnalyticsEngine(metricsQuery),
+			this.queryAnalyticsEngine(byModelQuery),
+		]);
+
+		return this.combineAIUsageMetrics(metricsResult, byModelResult);
+	}
+
+	/**
+	 * Combine AI usage metrics from main query with model breakdown.
+	 */
+	private combineAIUsageMetrics(
+		metricsResult: AnalyticsEngineQueryResult,
+		byModelResult: AnalyticsEngineQueryResult,
+	): { metrics: AIUsageMetrics; by_model: AIUsageByModel[] } {
+		const row = metricsResult.data[0] || {};
+		const tokensIn = Math.round(Number(row.tokens_in) || 0);
+		const tokensOut = Math.round(Number(row.tokens_out) || 0);
+		const totalRequests = Math.round(Number(row.total_requests) || 0);
+
+		const metrics: AIUsageMetrics = {
+			total_requests: totalRequests,
+			tokens_in: tokensIn,
+			tokens_out: tokensOut,
+			total_tokens: tokensIn + tokensOut,
+			avg_latency_ms: Math.round((Number(row.avg_latency_ms) || 0) * 100) / 100,
+		};
+
+		const by_model: AIUsageByModel[] = byModelResult.data.map((modelRow) => {
+			const modelTokensIn = Math.round(Number(modelRow.tokens_in) || 0);
+			const modelTokensOut = Math.round(Number(modelRow.tokens_out) || 0);
+			const modelRequests = Math.round(Number(modelRow.requests) || 0);
+
+			return {
+				model: String(modelRow.model || "unknown"),
+				requests: modelRequests,
+				tokens_in: modelTokensIn,
+				tokens_out: modelTokensOut,
+				total_tokens: modelTokensIn + modelTokensOut,
+				percentage:
+					totalRequests > 0 ? Math.round((modelRequests / totalRequests) * 10000) / 100 : 0,
+			};
+		});
+
+		return { metrics, by_model };
+	}
+
 	private parseDimensionBreakdown(
 		result: AnalyticsEngineQueryResult,
 		dimensionKey: string,
@@ -1631,5 +1819,22 @@ export interface UsageMetricsAE {
 export interface UsageByDimension {
 	dimension: string;
 	requests: number;
+	percentage: number;
+}
+
+export interface AIUsageMetrics {
+	total_requests: number;
+	tokens_in: number;
+	tokens_out: number;
+	total_tokens: number;
+	avg_latency_ms: number;
+}
+
+export interface AIUsageByModel {
+	model: string;
+	requests: number;
+	tokens_in: number;
+	tokens_out: number;
+	total_tokens: number;
 	percentage: number;
 }

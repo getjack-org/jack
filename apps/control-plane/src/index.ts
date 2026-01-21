@@ -4,10 +4,13 @@ import { unzipSync } from "fflate";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
+	type AIUsageByModel,
+	type AIUsageMetrics,
 	CloudflareClient,
-	getMimeType,
-	type UsageMetricsAE,
+	type D1QueryResult,
 	type UsageByDimension,
+	type UsageMetricsAE,
+	getMimeType,
 } from "./cloudflare-api";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
@@ -754,6 +757,116 @@ api.get("/orgs/:orgId/usage", async (c) => {
 	}
 });
 
+// Project-level AI usage (tokens, models)
+api.get("/projects/:projectId/ai-usage", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const rangeResult = resolveAnalyticsRange(c);
+
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
+
+	const { range } = rangeResult;
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Check cache first
+	const cacheKey = `ae:ai:project:${projectId}:${range.from}:${range.to}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const { metrics, by_model } = await cfClient.getProjectAIUsage(projectId, range.from, range.to);
+
+		const response = {
+			project_id: projectId,
+			range,
+			ai_metrics: metrics,
+			by_model,
+		};
+
+		// Cache for 5 minutes
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+			expirationTtl: 300,
+		});
+
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Analytics query failed";
+		console.error("AI Analytics Engine query error:", error);
+		return c.json({ error: "upstream_error", message }, 502);
+	}
+});
+
+// Org-level AI usage (tokens, models across all projects)
+api.get("/orgs/:orgId/ai-usage", async (c) => {
+	const auth = c.get("auth");
+	const orgId = c.req.param("orgId");
+	const rangeResult = resolveAnalyticsRange(c);
+
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
+
+	const { range } = rangeResult;
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(orgId, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Org not found" }, 404);
+	}
+
+	const cacheKey = `ae:ai:org:${orgId}:${range.from}:${range.to}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const { metrics, by_model } = await cfClient.getOrgAIUsage(orgId, range.from, range.to);
+
+		const response = {
+			org_id: orgId,
+			range,
+			ai_metrics: metrics,
+			by_model,
+		};
+
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+			expirationTtl: 300,
+		});
+
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Analytics query failed";
+		console.error("AI Analytics Engine query error:", error);
+		return c.json({ error: "upstream_error", message }, 502);
+	}
+});
+
 api.post("/projects/:projectId/content-bucket", async (c) => {
 	const auth = c.get("auth");
 	const projectId = c.req.param("projectId");
@@ -901,7 +1014,10 @@ api.delete("/projects/:projectId/resources/:resourceId", async (c) => {
 				break;
 			default:
 				return c.json(
-					{ error: "invalid_request", message: `Cannot delete resource type: ${resource.resource_type}` },
+					{
+						error: "invalid_request",
+						message: `Cannot delete resource type: ${resource.resource_type}`,
+					},
 					400,
 				);
 		}
@@ -1100,6 +1216,118 @@ api.get("/projects/:projectId/tags", async (c) => {
 	}
 
 	return c.json({ tags });
+});
+
+// Database info endpoint (for managed projects - avoids wrangler dependency)
+api.get("/projects/:projectId/database/info", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; slug: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get D1 resource
+	const d1Resource = await c.env.DB.prepare(
+		"SELECT provider_id, resource_name FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ provider_id: string; resource_name: string }>();
+
+	if (!d1Resource) {
+		return c.json({ error: "not_found", message: "No database found for project" }, 404);
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const dbInfo = await cfClient.getD1DatabaseInfo(d1Resource.provider_id);
+
+		return c.json({
+			name: dbInfo.name,
+			id: dbInfo.uuid,
+			sizeBytes: dbInfo.file_size || 0,
+			numTables: dbInfo.num_tables || 0,
+			version: dbInfo.version,
+			createdAt: dbInfo.created_at,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to get database info";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+// Database execute endpoint (SQL execution)
+api.post("/projects/:projectId/database/execute", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; slug: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get D1 resource
+	const d1Resource = await c.env.DB.prepare(
+		"SELECT provider_id, resource_name FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ provider_id: string; resource_name: string }>();
+
+	if (!d1Resource) {
+		return c.json({ error: "not_found", message: "No database found for project" }, 404);
+	}
+
+	// Parse request body
+	const body = await c.req.json<{ sql: string; params?: unknown[] }>();
+	if (!body.sql || typeof body.sql !== "string") {
+		return c.json(
+			{ error: "invalid_request", message: "sql is required and must be a string" },
+			400,
+		);
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const result = await cfClient.executeD1Query(d1Resource.provider_id, body.sql, body.params);
+
+		return c.json(result);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Query execution failed";
+		return c.json({ error: "query_failed", message }, 500);
+	}
 });
 
 // Database export endpoint
