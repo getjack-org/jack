@@ -310,12 +310,10 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 	console.error("");
 
 	// Confirm deletion
-	const { confirm } = await import("@clack/prompts");
-	const shouldDelete = await confirm({
-		message: `Delete database '${dbInfo.name}'?`,
-	});
+	const { promptSelect } = await import("../lib/hooks.ts");
+	const choice = await promptSelect(["Yes, delete", "No, cancel"], `Delete database '${dbInfo.name}'?`);
 
-	if (shouldDelete !== true) {
+	if (choice !== 0) {
 		info("Cancelled");
 		return;
 	}
@@ -711,6 +709,15 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 		outputSpinner.stop();
 
 		if (!result.success) {
+			// Track failed execution
+			track(Events.SQL_EXECUTED, {
+				success: false,
+				risk_level: result.risk,
+				statement_count: result.statements.length,
+				from_file: !!execArgs.filePath,
+				error_type: "execution_failed",
+			});
+
 			console.error("");
 			error(result.error || "SQL execution failed");
 			console.error("");
@@ -743,6 +750,7 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 
 		// Track telemetry
 		track(Events.SQL_EXECUTED, {
+			success: true,
 			risk_level: result.risk,
 			statement_count: result.statements.length,
 			from_file: !!execArgs.filePath,
@@ -751,6 +759,12 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 		outputSpinner.stop();
 
 		if (err instanceof WriteNotAllowedError) {
+			track(Events.SQL_EXECUTED, {
+				success: false,
+				error_type: "write_not_allowed",
+				risk_level: err.risk,
+			});
+
 			console.error("");
 			error(err.message);
 			info("Add the --write flag to allow data modification:");
@@ -760,12 +774,23 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 		}
 
 		if (err instanceof DestructiveOperationError) {
+			track(Events.SQL_EXECUTED, {
+				success: false,
+				error_type: "destructive_blocked",
+				risk_level: "destructive",
+			});
+
 			console.error("");
 			error(err.message);
 			info("Destructive operations require confirmation via CLI.");
 			console.error("");
 			process.exit(1);
 		}
+
+		track(Events.SQL_EXECUTED, {
+			success: false,
+			error_type: "unknown",
+		});
 
 		console.error("");
 		error(`SQL execution failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -147,7 +147,26 @@ async function executeViaWrangler(
 		.quiet();
 
 	if (result.exitCode !== 0) {
+		// Wrangler outputs errors to stdout as JSON, not stderr
+		const stdout = result.stdout.toString().trim();
 		const stderr = result.stderr.toString().trim();
+
+		// Try to parse JSON error from stdout first
+		try {
+			const data = JSON.parse(stdout);
+			if (data.error) {
+				// Wrangler error format: { error: { text: "...", notes: [{ text: "..." }] } }
+				const errorText = data.error.text || data.error.message || "Unknown error";
+				const notes = data.error.notes?.map((n: { text: string }) => n.text).join("; ");
+				return {
+					success: false,
+					error: notes ? `${errorText} (${notes})` : errorText,
+				};
+			}
+		} catch {
+			// Not JSON, fall through to stderr
+		}
+
 		return {
 			success: false,
 			error: stderr || `Failed to execute SQL on ${databaseName}`,
@@ -172,6 +191,8 @@ async function executeViaWrangler(
 							last_row_id: firstResult.meta.last_row_id,
 						}
 					: undefined,
+				// Capture error details from wrangler response
+				error: firstResult.error || firstResult.message,
 			};
 		}
 
@@ -198,7 +219,25 @@ async function executeFileViaWrangler(
 		.quiet();
 
 	if (result.exitCode !== 0) {
+		// Wrangler outputs errors to stdout as JSON, not stderr
+		const stdout = result.stdout.toString().trim();
 		const stderr = result.stderr.toString().trim();
+
+		// Try to parse JSON error from stdout first
+		try {
+			const data = JSON.parse(stdout);
+			if (data.error) {
+				const errorText = data.error.text || data.error.message || "Unknown error";
+				const notes = data.error.notes?.map((n: { text: string }) => n.text).join("; ");
+				return {
+					success: false,
+					error: notes ? `${errorText} (${notes})` : errorText,
+				};
+			}
+		} catch {
+			// Not JSON, fall through to stderr
+		}
+
 		return {
 			success: false,
 			error: stderr || `Failed to execute SQL file on ${databaseName}`,
