@@ -1,0 +1,131 @@
+# AI Chat Template
+
+Add LLM-powered chat to your app in 30 seconds.
+
+```bash
+jack new my-chat -t ai-chat
+```
+
+## What You Get
+
+- **Llama 3** - Meta's open LLM via Cloudflare AI
+- **Streaming** - Real-time token streaming
+- **Chat UI** - Ready-to-use interface
+
+## The Simplest AI Call
+
+Add AI to **any** jack project in 2 steps:
+
+### 1. Add binding to wrangler.jsonc
+
+```jsonc
+{
+  "ai": { "binding": "AI" }
+}
+```
+
+### 2. Call the model
+
+```typescript
+interface Env {
+  AI: Ai;
+}
+
+export default {
+  async fetch(request: Request, env: Env) {
+    const response = await env.AI.run("@cf/meta/llama-3-8b-instruct", {
+      prompt: "Say hello",
+    });
+    return Response.json(response);
+  },
+};
+```
+
+Deploy with `jack ship`. That's it.
+
+## Streaming Responses
+
+For chat UIs, stream tokens as they're generated:
+
+```typescript
+const stream = await env.AI.run("@cf/meta/llama-3-8b-instruct", {
+  prompt: "Write a haiku about coding",
+  stream: true,
+});
+
+return new Response(stream, {
+  headers: { "content-type": "text/event-stream" },
+});
+```
+
+## Chat with History
+
+Send conversation context:
+
+```typescript
+const response = await env.AI.run("@cf/meta/llama-3-8b-instruct", {
+  messages: [
+    { role: "system", content: "You are a helpful assistant." },
+    { role: "user", content: "What is 2+2?" },
+    { role: "assistant", content: "4" },
+    { role: "user", content: "Multiply that by 10" },
+  ],
+});
+```
+
+## Available Models
+
+| Model | Best For |
+|-------|----------|
+| `@cf/meta/llama-3-8b-instruct` | General chat, fast |
+| `@cf/meta/llama-3.1-70b-instruct` | Complex reasoning |
+| `@cf/mistral/mistral-7b-instruct` | Efficient, multilingual |
+| `@cf/qwen/qwen1.5-14b-chat` | Chinese + English |
+
+## Example: Add AI to an API
+
+Starting from the `api` template:
+
+```bash
+jack new my-api -t api
+```
+
+Edit `wrangler.jsonc`:
+
+```jsonc
+{
+  "name": "my-api",
+  "main": "src/index.ts",
+  "ai": { "binding": "AI" }
+}
+```
+
+Edit `src/index.ts`:
+
+```typescript
+import { Hono } from "hono";
+
+const app = new Hono<{ Bindings: { AI: Ai } }>();
+
+app.post("/chat", async (c) => {
+  const { message } = await c.req.json();
+
+  const response = await c.env.AI.run("@cf/meta/llama-3-8b-instruct", {
+    prompt: message,
+  });
+
+  return c.json(response);
+});
+
+export default app;
+```
+
+```bash
+jack ship
+```
+
+## Pricing
+
+Cloudflare AI has a generous free tier:
+- **Free**: 10,000 neurons/day (~thousands of requests)
+- See [Cloudflare AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)
