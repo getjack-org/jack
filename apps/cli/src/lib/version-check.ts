@@ -85,20 +85,25 @@ function isNewerVersion(latest: string, current: string): boolean {
 /**
  * Check if an update is available (uses cache, non-blocking)
  * Returns the latest version if newer, null otherwise
+ * @param skipCache - If true, bypass the cache and always fetch from npm
  */
-export async function checkForUpdate(): Promise<string | null> {
+export async function checkForUpdate(
+	skipCache = false,
+): Promise<string | null> {
 	const currentVersion = getCurrentVersion();
 
-	// Check cache first
-	const cache = await readVersionCache();
-	const now = Date.now();
+	// Check cache first (unless skipCache is true)
+	if (!skipCache) {
+		const cache = await readVersionCache();
+		const now = Date.now();
 
-	if (cache && now - cache.checkedAt < CACHE_TTL_MS) {
-		// Use cached value
-		if (isNewerVersion(cache.latestVersion, currentVersion)) {
-			return cache.latestVersion;
+		if (cache && now - cache.checkedAt < CACHE_TTL_MS) {
+			// Use cached value
+			if (isNewerVersion(cache.latestVersion, currentVersion)) {
+				return cache.latestVersion;
+			}
+			return null;
 		}
-		return null;
 	}
 
 	// Fetch fresh version (don't await in caller for non-blocking)
