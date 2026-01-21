@@ -34,6 +34,7 @@ interface PackageJson {
 	name?: string;
 	dependencies?: Record<string, string>;
 	devDependencies?: Record<string, string>;
+	workspaces?: string[] | { packages: string[] };
 }
 
 const CONFIG_EXTENSIONS = [".ts", ".js", ".mjs"];
@@ -212,6 +213,16 @@ export function detectProjectType(projectPath: string): DetectionResult {
 	const detectedDeps: string[] = [];
 	const configFiles: string[] = [];
 
+	// Check for monorepo - user is in wrong directory
+	if (pkg?.workspaces) {
+		const workspaces = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces.packages;
+		const hint = workspaces.length > 0 ? workspaces[0]?.replace("/*", "/your-app") : "apps/your-app";
+		return {
+			type: "unknown",
+			error: `This is a monorepo root, not a deployable project.\n\ncd into a package first:\n  cd ${hint}\n  jack ship`,
+		};
+	}
+
 	// Check for unsupported/coming-soon frameworks first (before reading package.json)
 	// This provides better error messages for frameworks we recognize but don't auto-deploy yet
 	const unsupported = detectUnsupportedFramework(projectPath, pkg);
@@ -363,6 +374,11 @@ function shouldExclude(relativePath: string): boolean {
 	return false;
 }
 
+// Derive skip directories from DEFAULT_EXCLUDES patterns (e.g., "node_modules/**" -> "node_modules")
+const SKIP_DIRECTORIES = new Set(
+	DEFAULT_EXCLUDES.filter((p) => p.endsWith("/**")).map((p) => p.slice(0, -3)),
+);
+
 export async function validateProject(projectPath: string): Promise<ValidationResult> {
 	if (!existsSync(join(projectPath, "package.json"))) {
 		return {
@@ -374,37 +390,41 @@ export async function validateProject(projectPath: string): Promise<ValidationRe
 	let fileCount = 0;
 	let totalSizeBytes = 0;
 
-	try {
-		const entries = await readdir(projectPath, {
-			recursive: true,
-			withFileTypes: true,
-		});
+	// Walk directory tree manually to skip excluded dirs early (don't descend into node_modules)
+	async function walkDir(dirPath: string): Promise<void> {
+		const entries = await readdir(dirPath, { withFileTypes: true });
 
 		for (const entry of entries) {
-			if (!entry.isFile()) {
+			// Skip excluded directories entirely (don't descend)
+			if (entry.isDirectory() && SKIP_DIRECTORIES.has(entry.name)) {
 				continue;
 			}
 
-			const parentDir = entry.parentPath ?? projectPath;
-			const absolutePath = join(parentDir, entry.name);
+			const absolutePath = join(dirPath, entry.name);
 			const relativePath = relative(projectPath, absolutePath);
 
-			if (shouldExclude(relativePath)) {
-				continue;
-			}
+			if (entry.isDirectory()) {
+				// Recursively walk subdirectories
+				await walkDir(absolutePath);
+			} else if (entry.isFile()) {
+				// Check glob-based exclusions for files
+				if (shouldExclude(relativePath)) {
+					continue;
+				}
 
-			fileCount++;
-			if (fileCount > MAX_FILES) {
-				return {
-					valid: false,
-					error: `Project has more than ${MAX_FILES} files (excluding node_modules, .git, etc.)`,
-					fileCount,
-				};
-			}
+				fileCount++;
+				if (fileCount > MAX_FILES) {
+					throw new Error(`Project has more than ${MAX_FILES} files (excluding node_modules, .git, etc.)`);
+				}
 
-			const stats = await stat(absolutePath);
-			totalSizeBytes += stats.size;
+				const stats = await stat(absolutePath);
+				totalSizeBytes += stats.size;
+			}
 		}
+	}
+
+	try {
+		await walkDir(projectPath);
 
 		const totalSizeKb = Math.round(totalSizeBytes / 1024);
 
@@ -423,6 +443,13 @@ export async function validateProject(projectPath: string): Promise<ValidationRe
 			totalSizeKb,
 		};
 	} catch (err) {
+		if (err instanceof Error && err.message.includes("more than")) {
+			return {
+				valid: false,
+				error: err.message,
+				fileCount,
+			};
+		}
 		return {
 			valid: false,
 			error: `Failed to scan project: ${err instanceof Error ? err.message : String(err)}`,
