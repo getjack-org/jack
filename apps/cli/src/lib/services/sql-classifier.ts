@@ -3,8 +3,8 @@
  *
  * Classifies SQL statements by risk level to enable security guardrails:
  * - read: SELECT, EXPLAIN, PRAGMA (read-only) - safe to run
- * - write: INSERT, UPDATE, DELETE (with WHERE) - requires --write flag
- * - destructive: DROP, TRUNCATE, DELETE (no WHERE), ALTER - requires --write + confirmation
+ * - write: INSERT, UPDATE, DELETE (with WHERE), ALTER - requires --write flag
+ * - destructive: DROP, TRUNCATE, DELETE (no WHERE) - requires --write + confirmation
  *
  * Uses simple regex-based classification since D1 uses SQLite with a limited SQL surface.
  */
@@ -31,9 +31,9 @@ const SQL_PATTERNS = {
 	// Destructive operations (dangerous - require confirmation)
 	drop: /^\s*DROP\b/i,
 	truncate: /^\s*TRUNCATE\b/i,
-	alter: /^\s*ALTER\b/i,
 
 	// Write operations (require --write flag)
+	alter: /^\s*ALTER\b/i,
 	insert: /^\s*INSERT\b/i,
 	update: /^\s*UPDATE\b/i,
 	delete: /^\s*DELETE\b/i,
@@ -157,16 +157,16 @@ export function classifyStatement(sql: string): ClassifiedStatement {
 		return { sql: trimmed, risk: "destructive", operation: "TRUNCATE" };
 	}
 
-	if (SQL_PATTERNS.alter.test(cleaned)) {
-		return { sql: trimmed, risk: "destructive", operation: "ALTER" };
-	}
-
 	// DELETE without WHERE is destructive
 	if (isDeleteWithoutWhere(cleaned)) {
 		return { sql: trimmed, risk: "destructive", operation: "DELETE" };
 	}
 
 	// Check write operations
+	if (SQL_PATTERNS.alter.test(cleaned)) {
+		return { sql: trimmed, risk: "write", operation: "ALTER" };
+	}
+
 	if (SQL_PATTERNS.insert.test(cleaned)) {
 		return { sql: trimmed, risk: "write", operation: "INSERT" };
 	}

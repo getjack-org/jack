@@ -146,6 +146,24 @@ describe("sql-classifier", () => {
 				expect(result.risk).toBe("write");
 				expect(result.operation).toBe("PRAGMA");
 			});
+
+			it("classifies ALTER TABLE as write", () => {
+				const result = classifyStatement("ALTER TABLE users ADD COLUMN email TEXT");
+				expect(result.risk).toBe("write");
+				expect(result.operation).toBe("ALTER");
+			});
+
+			it("classifies ALTER TABLE RENAME as write", () => {
+				const result = classifyStatement("ALTER TABLE users RENAME TO customers");
+				expect(result.risk).toBe("write");
+				expect(result.operation).toBe("ALTER");
+			});
+
+			it("classifies ALTER TABLE DROP COLUMN as write", () => {
+				const result = classifyStatement("ALTER TABLE users DROP COLUMN email");
+				expect(result.risk).toBe("write");
+				expect(result.operation).toBe("ALTER");
+			});
 		});
 
 		describe("destructive operations", () => {
@@ -183,24 +201,6 @@ describe("sql-classifier", () => {
 				const result = classifyStatement("DELETE FROM users;");
 				expect(result.risk).toBe("destructive");
 				expect(result.operation).toBe("DELETE");
-			});
-
-			it("classifies ALTER TABLE as destructive", () => {
-				const result = classifyStatement("ALTER TABLE users ADD COLUMN email TEXT");
-				expect(result.risk).toBe("destructive");
-				expect(result.operation).toBe("ALTER");
-			});
-
-			it("classifies ALTER TABLE RENAME as destructive", () => {
-				const result = classifyStatement("ALTER TABLE users RENAME TO customers");
-				expect(result.risk).toBe("destructive");
-				expect(result.operation).toBe("ALTER");
-			});
-
-			it("classifies ALTER TABLE DROP COLUMN as destructive", () => {
-				const result = classifyStatement("ALTER TABLE users DROP COLUMN email");
-				expect(result.risk).toBe("destructive");
-				expect(result.operation).toBe("ALTER");
 			});
 		});
 
