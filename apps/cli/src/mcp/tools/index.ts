@@ -12,6 +12,10 @@ import {
 	wrapResultsForMcp,
 } from "../../lib/services/db-execute.ts";
 import { listDatabases } from "../../lib/services/db-list.ts";
+import { createVectorizeIndex } from "../../lib/services/vectorize-create.ts";
+import { deleteVectorizeIndex } from "../../lib/services/vectorize-delete.ts";
+import { getVectorizeInfo } from "../../lib/services/vectorize-info.ts";
+import { listVectorizeIndexes } from "../../lib/services/vectorize-list.ts";
 import { Events, track, withTelemetry } from "../../lib/telemetry.ts";
 import type { DebugLogger, McpServerOptions } from "../types.ts";
 import { formatErrorResponse, formatSuccessResponse } from "../utils.ts";
@@ -76,6 +80,43 @@ const ExecuteSqlSchema = z.object({
 		.string()
 		.optional()
 		.describe("Database name (auto-detect from wrangler.jsonc if not provided)"),
+});
+
+const CreateVectorizeIndexSchema = z.object({
+	name: z.string().optional().describe("Index name (auto-generated if not provided)"),
+	dimensions: z.number().optional().default(768).describe("Vector dimensions (default: 768)"),
+	metric: z
+		.enum(["cosine", "euclidean", "dot-product"])
+		.optional()
+		.default("cosine")
+		.describe("Distance metric (default: cosine)"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const ListVectorizeIndexesSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const DeleteVectorizeIndexSchema = z.object({
+	name: z.string().describe("Index name to delete"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const GetVectorizeInfoSchema = z.object({
+	name: z.string().describe("Index name"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
 });
 
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
@@ -210,6 +251,85 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							},
 						},
 						required: ["sql"],
+					},
+				},
+				{
+					name: "create_vectorize_index",
+					description:
+						"Create a new Vectorize index for vector similarity search. Returns deploy_required=true since binding needs deploy to activate.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							name: {
+								type: "string",
+								description: "Index name (auto-generated if not provided)",
+							},
+							dimensions: {
+								type: "number",
+								default: 768,
+								description: "Vector dimensions (default: 768 for bge-base-en-v1.5)",
+							},
+							metric: {
+								type: "string",
+								enum: ["cosine", "euclidean", "dot-product"],
+								default: "cosine",
+								description: "Distance metric (default: cosine)",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "list_vectorize_indexes",
+					description: "List all Vectorize indexes for a project.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "delete_vectorize_index",
+					description: "Delete a Vectorize index.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							name: {
+								type: "string",
+								description: "Index name to delete",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+						required: ["name"],
+					},
+				},
+				{
+					name: "get_vectorize_info",
+					description:
+						"Get information about a Vectorize index (dimensions, metric, vector count).",
+					inputSchema: {
+						type: "object",
+						properties: {
+							name: {
+								type: "string",
+								description: "Index name",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+						required: ["name"],
 					},
 				},
 			],
@@ -539,6 +659,168 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							isError: true,
 						};
 					}
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "create_vectorize_index": {
+					const args = CreateVectorizeIndexSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedCreateVectorizeIndex = withTelemetry(
+						"create_vectorize_index",
+						async (
+							projectDir: string,
+							name?: string,
+							dimensions?: number,
+							metric?: "cosine" | "euclidean" | "dot-product",
+						) => {
+							const result = await createVectorizeIndex(projectDir, {
+								name,
+								dimensions,
+								metric,
+							});
+
+							// Track business event
+							track(Events.SERVICE_CREATED, {
+								service_type: "vectorize",
+								platform: "mcp",
+							});
+
+							return {
+								index_name: result.indexName,
+								binding_name: result.bindingName,
+								dimensions: result.dimensions,
+								metric: result.metric,
+								created: result.created,
+								deploy_required: true,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedCreateVectorizeIndex(
+						projectPath,
+						args.name,
+						args.dimensions,
+						args.metric,
+					);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "list_vectorize_indexes": {
+					const args = ListVectorizeIndexesSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedListVectorizeIndexes = withTelemetry(
+						"list_vectorize_indexes",
+						async (projectDir: string) => {
+							const indexes = await listVectorizeIndexes(projectDir);
+							return {
+								indexes: indexes.map((idx) => ({
+									name: idx.name,
+									binding: idx.binding,
+									dimensions: idx.dimensions,
+									metric: idx.metric,
+									vector_count: idx.vectorCount,
+								})),
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedListVectorizeIndexes(projectPath);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "delete_vectorize_index": {
+					const args = DeleteVectorizeIndexSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedDeleteVectorizeIndex = withTelemetry(
+						"delete_vectorize_index",
+						async (projectDir: string, indexName: string) => {
+							const result = await deleteVectorizeIndex(projectDir, indexName);
+
+							// Track business event
+							track(Events.SERVICE_DELETED, {
+								service_type: "vectorize",
+								platform: "mcp",
+							});
+
+							return {
+								index_name: result.indexName,
+								deleted: result.deleted,
+								binding_removed: result.bindingRemoved,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedDeleteVectorizeIndex(projectPath, args.name);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "get_vectorize_info": {
+					const args = GetVectorizeInfoSchema.parse(request.params.arguments ?? {});
+
+					const wrappedGetVectorizeInfo = withTelemetry(
+						"get_vectorize_info",
+						async (indexName: string) => {
+							const info = await getVectorizeInfo(indexName);
+
+							if (!info) {
+								throw new JackError(
+									JackErrorCode.RESOURCE_NOT_FOUND,
+									`Vectorize index '${indexName}' not found`,
+									"Use list_vectorize_indexes to see available indexes",
+								);
+							}
+
+							return {
+								name: info.name,
+								dimensions: info.dimensions,
+								metric: info.metric,
+								vector_count: info.vectorCount,
+								created_on: info.createdOn,
+								modified_on: info.modifiedOn,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedGetVectorizeInfo(args.name);
 
 					return {
 						content: [
