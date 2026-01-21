@@ -15,6 +15,7 @@ import {
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
+import { validateReadOnly } from "./sql-utils";
 import type { Bindings, Resource } from "./types";
 
 type WorkosJwtPayload = JwtPayload & {
@@ -1317,6 +1318,69 @@ api.post("/projects/:projectId/database/execute", async (c) => {
 			{ error: "invalid_request", message: "sql is required and must be a string" },
 			400,
 		);
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const result = await cfClient.executeD1Query(d1Resource.provider_id, body.sql, body.params);
+
+		return c.json(result);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Query execution failed";
+		return c.json({ error: "query_failed", message }, 500);
+	}
+});
+
+// Database read-only query endpoint (for web UI)
+api.post("/projects/:projectId/database/query", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; slug: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get D1 resource
+	const d1Resource = await c.env.DB.prepare(
+		"SELECT provider_id, resource_name FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ provider_id: string; resource_name: string }>();
+
+	if (!d1Resource) {
+		return c.json({ error: "not_found", message: "No database found for project" }, 404);
+	}
+
+	// Parse request body
+	const body = await c.req.json<{ sql: string; params?: unknown[] }>();
+	if (!body.sql || typeof body.sql !== "string") {
+		return c.json(
+			{ error: "invalid_request", message: "sql is required and must be a string" },
+			400,
+		);
+	}
+
+	// Validate read-only
+	const validationError = validateReadOnly(body.sql);
+	if (validationError) {
+		return c.json({ error: "read_only_violation", message: validationError }, 400);
 	}
 
 	try {
