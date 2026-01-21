@@ -1,0 +1,26 @@
+{
+	"name": "semantic-search",
+	"description": "Semantic search with AI embeddings + Vectorize",
+	"secrets": [],
+	"capabilities": ["ai", "db"],
+	"intent": {
+		"keywords": ["rag", "semantic", "search", "embeddings", "vectorize", "vector", "similarity"],
+		"examples": ["RAG app", "document search", "semantic search", "knowledge base"]
+	},
+	"hooks": {
+		"postDeploy": [
+			{ "action": "clipboard", "text": "{{url}}", "message": "URL copied" },
+			{
+				"action": "box",
+				"title": "Semantic Search: {{name}}",
+				"lines": [
+					"{{url}}",
+					"",
+					"Open in browser to index documents and search!",
+					"",
+					"Note: Local dev requires 'wrangler dev --remote'"
+				]
+			}
+		]
+	}
+}

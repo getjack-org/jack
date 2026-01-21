@@ -97,6 +97,17 @@ interface KVNamespace {
 	supports_url_encoding?: boolean;
 }
 
+interface VectorizeIndex {
+	name: string;
+	description?: string;
+	config: {
+		dimensions: number;
+		metric: "cosine" | "euclidean" | "dot-product";
+	};
+	created_on: string;
+	modified_on: string;
+}
+
 // =====================================================
 // Workers Assets API Types & Utilities
 // =====================================================
@@ -686,6 +697,138 @@ export class CloudflareClient {
 					: "Unknown Cloudflare API error";
 			throw new Error(`Cloudflare API error: ${errorMsg}`);
 		}
+	}
+
+	// =====================================================
+	// Vectorize API Methods
+	// =====================================================
+
+	/**
+	 * Creates a new Vectorize index
+	 * @returns The created index with name, config, created_on, modified_on
+	 */
+	async createVectorizeIndex(
+		name: string,
+		dimensions: number,
+		metric: "cosine" | "euclidean" | "dot-product" = "cosine",
+		description?: string,
+	): Promise<VectorizeIndex> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/vectorize/v2/indexes`;
+		const body: Record<string, unknown> = {
+			name,
+			config: { dimensions, metric },
+		};
+		if (description) {
+			body.description = description;
+		}
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
+		});
+
+		const data = (await response.json()) as CloudflareResponse<VectorizeIndex>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Cloudflare API error: ${errorMsg}`);
+		}
+
+		return data.result;
+	}
+
+	/**
+	 * Gets a Vectorize index by name
+	 * @returns The index if found, null if not found
+	 */
+	async getVectorizeIndex(name: string): Promise<VectorizeIndex | null> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/vectorize/v2/indexes/${name}`;
+		const response = await fetch(url, {
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+			},
+		});
+
+		const data = (await response.json()) as CloudflareResponse<VectorizeIndex>;
+
+		if (!data.success) {
+			// Check if error is "index not found" (error code 10043 or similar)
+			const notFound = data.errors?.some(
+				(e) =>
+					e.code === 10043 ||
+					e.message?.toLowerCase().includes("not found") ||
+					e.message?.toLowerCase().includes("does not exist"),
+			);
+
+			if (notFound) {
+				return null;
+			}
+
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Cloudflare API error: ${errorMsg}`);
+		}
+
+		return data.result;
+	}
+
+	/**
+	 * Deletes a Vectorize index
+	 */
+	async deleteVectorizeIndex(name: string): Promise<void> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/vectorize/v2/indexes/${name}`;
+		const response = await fetch(url, {
+			method: "DELETE",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+			},
+		});
+
+		const data = (await response.json()) as CloudflareResponse<unknown>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Cloudflare API error: ${errorMsg}`);
+		}
+	}
+
+	/**
+	 * Creates a Vectorize index if it doesn't already exist (idempotent)
+	 * @returns The index and whether it was newly created
+	 */
+	async createVectorizeIndexIfNotExists(
+		name: string,
+		dimensions: number,
+		metric: "cosine" | "euclidean" | "dot-product",
+	): Promise<{ index: VectorizeIndex; created: boolean }> {
+		const existing = await this.getVectorizeIndex(name);
+
+		if (existing) {
+			// Validate that dimensions match - dimensions are immutable
+			if (existing.config.dimensions !== dimensions) {
+				throw new Error(
+					`Vectorize index "${name}" already exists with different dimensions ` +
+						`(${existing.config.dimensions} vs ${dimensions}). Dimensions are immutable.`,
+				);
+			}
+			return { index: existing, created: false };
+		}
+
+		const index = await this.createVectorizeIndex(name, dimensions, metric);
+		return { index, created: true };
 	}
 
 	/**

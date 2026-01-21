@@ -19,6 +19,7 @@ export const SUPPORTED_BINDINGS = [
 	"vars",
 	"r2_buckets",
 	"kv_namespaces",
+	"vectorize",
 ] as const;
 
 /**
@@ -30,7 +31,6 @@ export const UNSUPPORTED_BINDINGS = [
 	"queues",
 	"services",
 	"hyperdrive",
-	"vectorize",
 	"browser",
 	"mtls_certificates",
 ] as const;
@@ -43,7 +43,6 @@ const BINDING_DISPLAY_NAMES: Record<string, string> = {
 	queues: "Queues",
 	services: "Service Bindings",
 	hyperdrive: "Hyperdrive",
-	vectorize: "Vectorize",
 	browser: "Browser Rendering",
 	mtls_certificates: "mTLS Certificates",
 };
@@ -72,7 +71,7 @@ export function validateBindings(
 		if (value !== undefined && value !== null) {
 			const displayName = BINDING_DISPLAY_NAMES[binding] || binding;
 			errors.push(
-				`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, R2, KV, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
+				`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, R2, KV, Vectorize, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
 			);
 		}
 	}

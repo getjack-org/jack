@@ -27,6 +27,12 @@ interface ManifestData {
 		ai?: { binding: string };
 		r2?: Array<{ binding: string; bucket_name: string }>;
 		kv?: Array<{ binding: string }>;
+		vectorize?: Array<{
+			binding: string;
+			preset?: string;
+			dimensions?: number;
+			metric?: string;
+		}>;
 		assets?: {
 			binding: string;
 			directory: string;
@@ -41,7 +47,7 @@ interface ManifestData {
 	};
 }
 
-const SUPPORTED_BINDING_KEYS = ["d1", "ai", "r2", "kv", "assets", "vars"] as const;
+const SUPPORTED_BINDING_KEYS = ["d1", "ai", "r2", "kv", "vectorize", "assets", "vars"] as const;
 
 export interface ManifestValidationResult {
 	valid: boolean;
@@ -137,6 +143,34 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
 						} else {
 							if (typeof kv.binding !== "string") {
 								errors.push(`manifest.bindings.kv[${i}].binding must be a string`);
+							}
+						}
+					}
+				}
+			}
+
+			// Validate Vectorize binding structure
+			if (bindings.vectorize !== undefined) {
+				if (!Array.isArray(bindings.vectorize)) {
+					errors.push("manifest.bindings.vectorize must be an array");
+				} else {
+					for (let i = 0; i < bindings.vectorize.length; i++) {
+						const vec = bindings.vectorize[i] as Record<string, unknown>;
+						if (typeof vec !== "object" || vec === null) {
+							errors.push(`manifest.bindings.vectorize[${i}] must be an object`);
+						} else {
+							if (typeof vec.binding !== "string") {
+								errors.push(`manifest.bindings.vectorize[${i}].binding must be a string`);
+							}
+							// preset, dimensions, and metric are optional
+							if (vec.preset !== undefined && typeof vec.preset !== "string") {
+								errors.push(`manifest.bindings.vectorize[${i}].preset must be a string`);
+							}
+							if (vec.dimensions !== undefined && typeof vec.dimensions !== "number") {
+								errors.push(`manifest.bindings.vectorize[${i}].dimensions must be a number`);
+							}
+							if (vec.metric !== undefined && typeof vec.metric !== "string") {
+								errors.push(`manifest.bindings.vectorize[${i}].metric must be a string`);
 							}
 						}
 					}
@@ -565,6 +599,47 @@ export class DeploymentService {
 					type: "kv_namespace",
 					name: kvIntent.binding,
 					namespace_id: namespaceId,
+				});
+			}
+		}
+
+		// Resolve Vectorize bindings (provision if needed)
+		if (intent.vectorize && Array.isArray(intent.vectorize)) {
+			const existingVectorizeResources = await this.db
+				.prepare(
+					"SELECT binding_name, provider_id FROM resources WHERE project_id = ? AND resource_type = 'vectorize' AND status != 'deleted'",
+				)
+				.bind(projectId)
+				.all<{ binding_name: string; provider_id: string }>();
+
+			const existingByBinding = new Map(
+				(existingVectorizeResources.results ?? []).map((r) => [r.binding_name, r.provider_id]),
+			);
+
+			for (const vecIntent of intent.vectorize) {
+				let indexName = existingByBinding.get(vecIntent.binding);
+
+				if (!indexName) {
+					const vecResource = await this.provisioningService.provisionVectorizeBinding(
+						projectId,
+						vecIntent.binding,
+						{
+							preset: vecIntent.preset as
+								| "cloudflare"
+								| "cloudflare-small"
+								| "cloudflare-large"
+								| undefined,
+							dimensions: vecIntent.dimensions,
+							metric: vecIntent.metric as "cosine" | "euclidean" | "dot-product" | undefined,
+						},
+					);
+					indexName = vecResource.provider_id;
+				}
+
+				bindings.push({
+					type: "vectorize",
+					name: vecIntent.binding,
+					index_name: indexName,
 				});
 			}
 		}
