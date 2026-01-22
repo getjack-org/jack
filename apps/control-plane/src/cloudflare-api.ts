@@ -173,7 +173,7 @@ export async function computeAssetHash(
 	const hashArray = new Uint8Array(hashBuffer);
 	let hashHex = "";
 	for (let i = 0; i < hashArray.length; i++) {
-		hashHex += hashArray[i].toString(16).padStart(2, "0");
+		hashHex += hashArray[i]!.toString(16).padStart(2, "0");
 	}
 
 	return hashHex.slice(0, 32);
@@ -198,9 +198,7 @@ export async function computeAssetHash(
 export async function createAssetManifest(files: Map<string, Uint8Array>): Promise<AssetManifest> {
 	const manifest: AssetManifest = {};
 
-	const entries = Array.from(files.entries());
-	for (let i = 0; i < entries.length; i++) {
-		const [filePath, content] = entries[i];
+	for (const [filePath, content] of files.entries()) {
 		manifest[filePath] = {
 			hash: await computeAssetHash(content, filePath),
 			size: content.length,
@@ -580,6 +578,38 @@ export class CloudflareClient {
 					? data.errors.map((e) => `${e.code}: ${e.message}`).join(", ")
 					: `HTTP ${response.status}: ${JSON.stringify(data)}`;
 			throw new Error(`Failed to enable observability: ${errorMsg}`);
+		}
+	}
+
+	/**
+	 * Attach/detach Tail Worker consumers for a dispatch namespace script.
+	 * This is the supported real-time logging mechanism for Workers for Platforms.
+	 */
+	async setDispatchScriptTailConsumers(
+		namespace: string,
+		scriptName: string,
+		tailConsumers: Array<{ service: string; environment?: string; namespace?: string }>,
+	): Promise<void> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/settings`;
+
+		const formData = new FormData();
+		const settings = { tail_consumers: tailConsumers };
+		formData.append("settings", new Blob([JSON.stringify(settings)], { type: "application/json" }));
+
+		const response = await fetch(url, {
+			method: "PATCH",
+			headers: { Authorization: `Bearer ${this.apiToken}` },
+			body: formData,
+		});
+
+		const data = (await response.json()) as CloudflareResponse<unknown>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => `${e.code}: ${e.message}`).join(", ")
+					: `HTTP ${response.status}: ${JSON.stringify(data)}`;
+			throw new Error(`Failed to set tail consumers: ${errorMsg}`);
 		}
 	}
 
@@ -1449,6 +1479,45 @@ export class CloudflareClient {
 		]);
 
 		return this.combineUsageMetrics(metricsResult, statusResult, cacheResult);
+	}
+
+	/**
+	 * Get per-project breakdown for an org from Analytics Engine.
+	 */
+	async getOrgUsageByProjectFromAE(
+		orgId: string,
+		from: string,
+		to: string,
+		limit = 10,
+	): Promise<{ project_id: string; requests: number; errors: number; percentage: number }[]> {
+		const escapedOrgId = this.escapeSQL(orgId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+		const whereClause = `blob1 = '${escapedOrgId}' AND timestamp >= toDateTime('${formattedFrom}') AND timestamp <= toDateTime('${formattedTo}')`;
+
+		// Simple query without CASE WHEN for compatibility
+		const query = `
+			SELECT
+				index1 as project_id,
+				SUM(_sample_interval) as requests
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY index1
+			ORDER BY requests DESC
+			LIMIT ${limit}
+		`;
+
+		const result = await this.queryAnalyticsEngine(query);
+
+		// Calculate total for percentages
+		const total = result.data.reduce((sum, row) => sum + Number(row.requests || 0), 0);
+
+		return result.data.map((row) => ({
+			project_id: String(row.project_id || ""),
+			requests: Math.round(Number(row.requests) || 0),
+			errors: 0, // Not calculated in simple query
+			percentage: total > 0 ? Math.round((Number(row.requests || 0) / total) * 1000) / 10 : 0,
+		}));
 	}
 
 	/**

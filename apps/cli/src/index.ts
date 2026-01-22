@@ -89,6 +89,9 @@ const cli = meow(
 			as: {
 				type: "string",
 			},
+			label: {
+				type: "string",
+			},
 			dash: {
 				type: "boolean",
 				default: false,
@@ -261,7 +264,7 @@ try {
 		case "logs":
 		case "tail": {
 			const { default: logs } = await import("./commands/logs.ts");
-			await withTelemetry("logs", logs)();
+			await withTelemetry("logs", logs)({ label: cli.flags.label });
 			break;
 		}
 		case "agents": {

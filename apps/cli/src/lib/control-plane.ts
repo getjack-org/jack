@@ -742,3 +742,42 @@ export async function downloadProjectSource(slug: string): Promise<Buffer> {
 
 	return Buffer.from(await response.arrayBuffer());
 }
+
+export interface LogSessionInfo {
+	id: string;
+	project_id: string;
+	label: string | null;
+	status: "active" | "expired" | "revoked" | string;
+	expires_at: string;
+}
+
+export interface StartLogSessionResponse {
+	success: boolean;
+	session: LogSessionInfo;
+	stream: { url: string; type: "sse" };
+}
+
+/**
+ * Start or renew a 1-hour log tailing session for a managed (jack cloud) project.
+ */
+export async function startLogSession(
+	projectId: string,
+	label?: string,
+): Promise<StartLogSessionResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/logs/session`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(label ? { label } : {}),
+	});
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to start log session: ${response.status}`);
+	}
+
+	return response.json() as Promise<StartLogSessionResponse>;
+}

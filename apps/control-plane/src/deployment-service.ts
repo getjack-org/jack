@@ -543,6 +543,24 @@ export class DeploymentService {
 				type: "ai",
 				name: intent.ai.binding,
 			});
+
+			// Register AI as a resource if not already registered (for UI display)
+			const existingAI = await this.db
+				.prepare(
+					"SELECT id FROM resources WHERE project_id = ? AND resource_type = 'ai' AND binding_name = ? AND status != 'deleted'",
+				)
+				.bind(projectId, intent.ai.binding)
+				.first();
+
+			if (!existingAI) {
+				await this.provisioningService.registerResourceWithBinding(
+					projectId,
+					"ai",
+					intent.ai.binding,
+					"workers-ai", // resource_name
+					"workers-ai", // provider_id (global service)
+				);
+			}
 		}
 
 		// Resolve R2 bindings (provision if needed)

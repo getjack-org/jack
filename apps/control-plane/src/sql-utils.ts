@@ -46,7 +46,7 @@ function extractCTEOperation(sql: string): string {
 	// Pattern: ) followed by optional whitespace then SELECT/INSERT/UPDATE/DELETE
 	const cteEndMatch = cleaned.match(/\)\s*(SELECT|INSERT|UPDATE|DELETE)\b/i);
 	if (cteEndMatch) {
-		return cteEndMatch[1].toUpperCase();
+		return cteEndMatch[1]!.toUpperCase();
 	}
 
 	// Fallback: if no match, look for any of these operations
