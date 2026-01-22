@@ -34,6 +34,8 @@ export interface ExecuteSqlOptions {
 	allowWrite?: boolean;
 	/** Allow interactive confirmation for destructive ops. Default: true */
 	interactive?: boolean;
+	/** Skip destructive confirmation (already confirmed by CLI). Default: false */
+	confirmed?: boolean;
 	/** For MCP: wrap results with anti-injection header */
 	wrapResults?: boolean;
 }
@@ -328,6 +330,7 @@ export async function executeSql(options: ExecuteSqlOptions): Promise<ExecuteSql
 		databaseName,
 		allowWrite = false,
 		interactive = true,
+		confirmed = false,
 		wrapResults = false,
 	} = options;
 
@@ -350,7 +353,7 @@ export async function executeSql(options: ExecuteSqlOptions): Promise<ExecuteSql
 	}
 
 	// Check for destructive operations
-	if (highestRisk === "destructive") {
+	if (highestRisk === "destructive" && !confirmed) {
 		const destructiveStmt = statements.find((s) => s.risk === "destructive");
 		if (destructiveStmt) {
 			if (!interactive) {
@@ -476,7 +479,7 @@ export async function executeSql(options: ExecuteSqlOptions): Promise<ExecuteSql
 export async function executeSqlFile(
 	options: Omit<ExecuteSqlOptions, "sql"> & { filePath: string },
 ): Promise<ExecuteSqlResult> {
-	const { projectDir, filePath, databaseName, allowWrite = false, interactive = true } = options;
+	const { projectDir, filePath, databaseName, allowWrite = false, interactive = true, confirmed = false } = options;
 
 	// Read the file
 	if (!existsSync(filePath)) {
@@ -509,7 +512,7 @@ export async function executeSqlFile(
 	}
 
 	// Check for destructive operations
-	if (highestRisk === "destructive") {
+	if (highestRisk === "destructive" && !confirmed) {
 		const destructiveStmt = statements.find((s) => s.risk === "destructive");
 		if (destructiveStmt) {
 			if (!interactive) {
