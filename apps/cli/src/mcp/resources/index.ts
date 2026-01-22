@@ -45,7 +45,7 @@ export function registerResources(
 				version: packageJson.version,
 				services: {
 					supported: ["d1", "kv", "r2"],
-					create_supported: ["d1"],
+					create_supported: ["d1", "r2"],
 				},
 				guidance: {
 					prefer_jack_over_wrangler: true,

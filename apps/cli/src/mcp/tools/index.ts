@@ -2,6 +2,9 @@ import type { Server as McpServer } from "@modelcontextprotocol/sdk/server/index
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { JackError, JackErrorCode } from "../../lib/errors.ts";
+import { authFetch } from "../../lib/auth/index.ts";
+import { getControlApiUrl, startLogSession } from "../../lib/control-plane.ts";
+import { getDeployMode, getProjectId } from "../../lib/project-link.ts";
 import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
 import { listAllProjects } from "../../lib/project-resolver.ts";
 import { createDatabase } from "../../lib/services/db-create.ts";
@@ -12,6 +15,10 @@ import {
 	wrapResultsForMcp,
 } from "../../lib/services/db-execute.ts";
 import { listDatabases } from "../../lib/services/db-list.ts";
+import { createStorageBucket } from "../../lib/services/storage-create.ts";
+import { deleteStorageBucket } from "../../lib/services/storage-delete.ts";
+import { getStorageBucketInfo } from "../../lib/services/storage-info.ts";
+import { listStorageBuckets } from "../../lib/services/storage-list.ts";
 import { createVectorizeIndex } from "../../lib/services/vectorize-create.ts";
 import { deleteVectorizeIndex } from "../../lib/services/vectorize-delete.ts";
 import { getVectorizeInfo } from "../../lib/services/vectorize-info.ts";
@@ -119,6 +126,69 @@ const GetVectorizeInfoSchema = z.object({
 		.describe("Path to project directory (defaults to current directory)"),
 });
 
+const CreateStorageBucketSchema = z.object({
+	name: z.string().optional().describe("Bucket name (auto-generated if not provided)"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const ListStorageBucketsSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const GetStorageInfoSchema = z.object({
+	name: z.string().optional().describe("Bucket name (defaults to first bucket if not provided)"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const DeleteStorageBucketSchema = z.object({
+	name: z.string().describe("Bucket name to delete"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const StartLogSessionSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+	label: z.string().optional().describe("Optional short tag/description for the log session"),
+});
+
+const TailLogsSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+	label: z.string().optional().describe("Optional short tag/description for the log session"),
+	max_events: z
+		.number()
+		.int()
+		.min(1)
+		.max(200)
+		.optional()
+		.default(50)
+		.describe("Maximum number of log events to collect (default: 50, max: 200)"),
+	duration_ms: z
+		.number()
+		.int()
+		.min(100)
+		.max(10_000)
+		.optional()
+		.default(2_000)
+		.describe("How long to listen before returning (default: 2000ms, max: 10000ms)"),
+});
+
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
 	// Register tool list handler
 	server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -186,6 +256,50 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 								type: "string",
 								enum: ["all", "local", "deployed", "cloud"],
 								description: "Filter projects by status (defaults to 'all')",
+							},
+						},
+					},
+				},
+				{
+					name: "start_log_session",
+					description:
+						"Start or renew a 1-hour real-time log session for a managed (jack cloud) project. Returns an SSE stream URL.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+							label: {
+								type: "string",
+								description: "Optional short tag/description for the session",
+							},
+						},
+					},
+				},
+				{
+					name: "tail_logs",
+					description:
+						"Collect a short sample of live log events (JSON) from a managed (jack cloud) project. Useful for agentic debugging.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+							label: {
+								type: "string",
+								description: "Optional short tag/description for the session",
+							},
+							max_events: {
+								type: "number",
+								description: "Maximum number of events to collect (default: 50, max: 200)",
+							},
+							duration_ms: {
+								type: "number",
+								description: "How long to listen before returning (default: 2000ms, max: 10000ms)",
 							},
 						},
 					},
@@ -323,6 +437,72 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							name: {
 								type: "string",
 								description: "Index name",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+						required: ["name"],
+					},
+				},
+				{
+					name: "create_storage_bucket",
+					description:
+						"Create an R2 storage bucket for a project. Returns deploy_required=true since binding needs deploy to activate.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							name: {
+								type: "string",
+								description: "Bucket name (auto-generated if not provided)",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "list_storage_buckets",
+					description: "List all R2 storage buckets for a project.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "get_storage_info",
+					description: "Get information about an R2 storage bucket.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							name: {
+								type: "string",
+								description: "Bucket name (defaults to first bucket if not provided)",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "delete_storage_bucket",
+					description: "Delete an R2 storage bucket.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							name: {
+								type: "string",
+								description: "Bucket name to delete",
 							},
 							project_path: {
 								type: "string",
@@ -481,6 +661,162 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					);
 
 					const result = await wrappedListProjects(args.filter);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "start_log_session": {
+					const args = StartLogSessionSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const deployMode = await getDeployMode(projectPath);
+					if (deployMode !== "managed") {
+						throw new JackError(
+							JackErrorCode.VALIDATION_ERROR,
+							"Real-time logs are only available for managed (jack cloud) projects",
+							"For BYOC projects, use Cloudflare dashboard logs or 'wrangler tail'.",
+						);
+					}
+
+					const projectId = await getProjectId(projectPath);
+					if (!projectId) {
+						throw new JackError(
+							JackErrorCode.PROJECT_NOT_FOUND,
+							"Project not found",
+							"Run this from a linked jack cloud project directory (has .jack/project.json).",
+						);
+					}
+
+					const wrappedStartLogSession = withTelemetry(
+						"start_log_session",
+						async (id: string, label?: string) => startLogSession(id, label),
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedStartLogSession(projectId, args.label);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "tail_logs": {
+					const args = TailLogsSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const deployMode = await getDeployMode(projectPath);
+					if (deployMode !== "managed") {
+						throw new JackError(
+							JackErrorCode.VALIDATION_ERROR,
+							"Real-time logs are only available for managed (jack cloud) projects",
+							"For BYOC projects, use Cloudflare dashboard logs or 'wrangler tail'.",
+						);
+					}
+
+					const projectId = await getProjectId(projectPath);
+					if (!projectId) {
+						throw new JackError(
+							JackErrorCode.PROJECT_NOT_FOUND,
+							"Project not found",
+							"Run this from a linked jack cloud project directory (has .jack/project.json).",
+						);
+					}
+
+					const wrappedTailLogs = withTelemetry(
+						"tail_logs",
+						async (id: string, label: string | undefined, maxEvents: number, durationMs: number) => {
+							const session = await startLogSession(id, label);
+							const streamUrl = `${getControlApiUrl()}${session.stream.url}`;
+
+							const controller = new AbortController();
+							const timeout = setTimeout(() => controller.abort(), durationMs);
+
+							const events: unknown[] = [];
+							let truncated = false;
+
+							try {
+								const response = await authFetch(streamUrl, {
+									method: "GET",
+									headers: { Accept: "text/event-stream" },
+									signal: controller.signal,
+								});
+
+								if (!response.ok || !response.body) {
+									const err = (await response
+										.json()
+										.catch(() => ({ message: "Failed to open log stream" }))) as {
+										message?: string;
+									};
+									throw new Error(err.message || `Failed to open log stream: ${response.status}`);
+								}
+
+								const reader = response.body.getReader();
+								const decoder = new TextDecoder();
+								let buffer = "";
+
+								while (events.length < maxEvents) {
+									const { done, value } = await reader.read();
+									if (done) break;
+
+									buffer += decoder.decode(value, { stream: true });
+									const lines = buffer.split("\n");
+									buffer = lines.pop() || "";
+
+									for (const line of lines) {
+										if (!line.startsWith("data:")) continue;
+										const data = line.slice(5).trim();
+										if (!data) continue;
+
+										let parsed: { type?: string } | null = null;
+										try {
+											parsed = JSON.parse(data) as { type?: string };
+										} catch {
+											continue;
+										}
+
+										if (parsed?.type !== "event") continue;
+										events.push(parsed);
+
+										if (events.length >= maxEvents) {
+											truncated = true;
+											controller.abort();
+											break;
+										}
+									}
+								}
+							} catch (error) {
+								// Treat abort as a normal exit (duration elapsed or max events reached).
+								if (!(error instanceof Error && error.name === "AbortError")) {
+									throw error;
+								}
+							} finally {
+								clearTimeout(timeout);
+								controller.abort();
+							}
+
+							return { session: session.session, events, truncated };
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedTailLogs(
+						projectId,
+						args.label,
+						args.max_events,
+						args.duration_ms,
+					);
 
 					return {
 						content: [
@@ -821,6 +1157,150 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					);
 
 					const result = await wrappedGetVectorizeInfo(args.name);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "create_storage_bucket": {
+					const args = CreateStorageBucketSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedCreateStorageBucket = withTelemetry(
+						"create_storage_bucket",
+						async (projectDir: string, name?: string) => {
+							const result = await createStorageBucket(projectDir, {
+								name,
+								interactive: false,
+							});
+
+							// Track business event
+							track(Events.SERVICE_CREATED, {
+								service_type: "r2",
+								platform: "mcp",
+							});
+
+							return {
+								bucket_name: result.bucketName,
+								binding_name: result.bindingName,
+								created: result.created,
+								deploy_required: true,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedCreateStorageBucket(projectPath, args.name);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "list_storage_buckets": {
+					const args = ListStorageBucketsSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedListStorageBuckets = withTelemetry(
+						"list_storage_buckets",
+						async (projectDir: string) => {
+							const buckets = await listStorageBuckets(projectDir);
+							return {
+								buckets: buckets.map((bucket) => ({
+									name: bucket.name,
+									binding: bucket.binding,
+								})),
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedListStorageBuckets(projectPath);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "get_storage_info": {
+					const args = GetStorageInfoSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedGetStorageInfo = withTelemetry(
+						"get_storage_info",
+						async (projectDir: string, bucketName?: string) => {
+							const info = await getStorageBucketInfo(projectDir, bucketName);
+
+							if (!info) {
+								throw new JackError(
+									JackErrorCode.RESOURCE_NOT_FOUND,
+									bucketName ? `Storage bucket '${bucketName}' not found` : "No storage buckets found",
+									"Use list_storage_buckets to see available buckets or create_storage_bucket to create one",
+								);
+							}
+
+							return {
+								name: info.name,
+								binding: info.binding,
+								source: info.source,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedGetStorageInfo(projectPath, args.name);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "delete_storage_bucket": {
+					const args = DeleteStorageBucketSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedDeleteStorageBucket = withTelemetry(
+						"delete_storage_bucket",
+						async (projectDir: string, bucketName: string) => {
+							const result = await deleteStorageBucket(projectDir, bucketName);
+
+							// Track business event
+							track(Events.SERVICE_DELETED, {
+								service_type: "r2",
+								platform: "mcp",
+							});
+
+							return {
+								bucket_name: result.bucketName,
+								deleted: result.deleted,
+								binding_removed: result.bindingRemoved,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedDeleteStorageBucket(projectPath, args.name);
 
 					return {
 						content: [
