@@ -20,6 +20,10 @@ import {
 	getDatabaseInfo as getWranglerDatabaseInfo,
 } from "../lib/services/db.ts";
 import { getRiskDescription } from "../lib/services/sql-classifier.ts";
+import { createStorageBucket } from "../lib/services/storage-create.ts";
+import { deleteStorageBucket } from "../lib/services/storage-delete.ts";
+import { getStorageBucketInfo } from "../lib/services/storage-info.ts";
+import { listStorageBuckets } from "../lib/services/storage-list.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
 import { Events, track } from "../lib/telemetry.ts";
 
@@ -105,9 +109,11 @@ export default async function services(
 	switch (subcommand) {
 		case "db":
 			return await dbCommand(args, options);
+		case "storage":
+			return await storageCommand(args, options);
 		default:
 			error(`Unknown service: ${subcommand}`);
-			info("Available: db");
+			info("Available: db, storage");
 			process.exit(1);
 	}
 }
@@ -118,6 +124,7 @@ function showHelp(): void {
 	console.error("");
 	console.error("Commands:");
 	console.error("  db         Manage database");
+	console.error("  storage    Manage storage (R2 buckets)");
 	console.error("");
 	console.error("Run 'jack services <command>' for more information.");
 	console.error("");
@@ -805,7 +812,7 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 				return;
 			}
 
-			// NOW execute with confirmation (interactive: false means "already confirmed")
+			// NOW execute with confirmation
 			outputSpinner.start("Executing SQL...");
 			if (execArgs.filePath) {
 				result = await executeSqlFile({
@@ -813,7 +820,8 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 					filePath: execArgs.filePath,
 					databaseName: execArgs.databaseName,
 					allowWrite: true,
-					interactive: false, // Already confirmed, execute now
+					interactive: true,
+					confirmed: true, // Already confirmed, skip re-prompting
 				});
 			} else {
 				result = await executeSql({
@@ -821,7 +829,8 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 					sql: execArgs.sql!,
 					databaseName: execArgs.databaseName,
 					allowWrite: true,
-					interactive: false, // Already confirmed, execute now
+					interactive: true,
+					confirmed: true, // Already confirmed, skip re-prompting
 				});
 			}
 		}
@@ -915,6 +924,248 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 		console.error("");
 		error(`SQL execution failed: ${err instanceof Error ? err.message : String(err)}`);
 		console.error("");
+		process.exit(1);
+	}
+}
+
+// ============================================================================
+// Storage (R2) Commands
+// ============================================================================
+
+function showStorageHelp(): void {
+	console.error("");
+	info("jack services storage - Manage storage buckets");
+	console.error("");
+	console.error("Actions:");
+	console.error("  info [name]    Show bucket information (default)");
+	console.error("  create         Create a new storage bucket");
+	console.error("  list           List all storage buckets in the project");
+	console.error("  delete <name>  Delete a storage bucket");
+	console.error("");
+	console.error("Examples:");
+	console.error(
+		"  jack services storage                         Show info about the default bucket",
+	);
+	console.error("  jack services storage create                  Create a new storage bucket");
+	console.error("  jack services storage list                    List all storage buckets");
+	console.error("  jack services storage delete my-bucket        Delete a bucket");
+	console.error("");
+}
+
+async function storageCommand(args: string[], options: ServiceOptions): Promise<void> {
+	const action = args[0] || "info"; // Default to info
+
+	switch (action) {
+		case "--help":
+		case "-h":
+		case "help":
+			return showStorageHelp();
+		case "info":
+			return await storageInfo(args.slice(1), options);
+		case "create":
+			return await storageCreate(args.slice(1), options);
+		case "list":
+			return await storageList(options);
+		case "delete":
+			return await storageDelete(args.slice(1), options);
+		default:
+			error(`Unknown action: ${action}`);
+			info("Available: info, create, list, delete");
+			process.exit(1);
+	}
+}
+
+/**
+ * Show storage bucket information
+ */
+async function storageInfo(args: string[], options: ServiceOptions): Promise<void> {
+	const bucketName = parseNameFlag(args);
+	const projectDir = process.cwd();
+
+	outputSpinner.start("Fetching storage info...");
+	try {
+		const bucketInfo = await getStorageBucketInfo(projectDir, bucketName);
+		outputSpinner.stop();
+
+		if (!bucketInfo) {
+			console.error("");
+			error(bucketName ? `Bucket "${bucketName}" not found` : "No storage buckets found for this project");
+			info("Create one with: jack services storage create");
+			console.error("");
+			return;
+		}
+
+		console.error("");
+		success(`Bucket: ${bucketInfo.name}`);
+		console.error("");
+		item(`Binding: ${bucketInfo.binding}`);
+		item(`Source: ${bucketInfo.source === "control-plane" ? "managed (jack cloud)" : "BYO (wrangler)"}`);
+		console.error("");
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to fetch storage info: ${err instanceof Error ? err.message : String(err)}`);
+		console.error("");
+		process.exit(1);
+	}
+}
+
+/**
+ * Create a new storage bucket
+ */
+async function storageCreate(args: string[], options: ServiceOptions): Promise<void> {
+	// Parse --name flag
+	const name = parseNameFlag(args);
+
+	outputSpinner.start("Creating storage bucket...");
+	try {
+		const result = await createStorageBucket(process.cwd(), {
+			name,
+			interactive: true,
+		});
+		outputSpinner.stop();
+
+		// Track telemetry
+		track(Events.SERVICE_CREATED, {
+			service_type: "r2",
+			binding_name: result.bindingName,
+			created: result.created,
+		});
+
+		console.error("");
+		if (result.created) {
+			success(`Storage bucket created: ${result.bucketName}`);
+		} else {
+			success(`Using existing bucket: ${result.bucketName}`);
+		}
+		console.error("");
+		item(`Binding: ${result.bindingName}`);
+
+		// Auto-deploy to activate the storage binding
+		console.error("");
+		outputSpinner.start("Deploying to activate storage binding...");
+		try {
+			const { deployProject } = await import("../lib/project-operations.ts");
+			await deployProject(process.cwd(), { interactive: true });
+			outputSpinner.stop();
+			console.error("");
+			success("Storage ready");
+			console.error("");
+		} catch (err) {
+			outputSpinner.stop();
+			console.error("");
+			warn("Deploy failed - run 'jack ship' to activate the binding");
+			console.error("");
+		}
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to create storage bucket: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * List all storage buckets in the project
+ */
+async function storageList(options: ServiceOptions): Promise<void> {
+	outputSpinner.start("Fetching storage buckets...");
+	try {
+		const buckets = await listStorageBuckets(process.cwd());
+		outputSpinner.stop();
+
+		if (buckets.length === 0) {
+			console.error("");
+			info("No storage buckets found in this project.");
+			console.error("");
+			info("Create one with: jack services storage create");
+			console.error("");
+			return;
+		}
+
+		console.error("");
+		success(`Found ${buckets.length} storage bucket${buckets.length === 1 ? "" : "s"}:`);
+		console.error("");
+
+		for (const bucket of buckets) {
+			item(`${bucket.name} (${bucket.binding})`);
+		}
+		console.error("");
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to list storage buckets: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * Delete a storage bucket
+ */
+async function storageDelete(args: string[], options: ServiceOptions): Promise<void> {
+	const bucketName = parseNameFlag(args);
+
+	if (!bucketName) {
+		console.error("");
+		error("Bucket name required");
+		info("Usage: jack services storage delete <bucket-name>");
+		console.error("");
+		process.exit(1);
+	}
+
+	const projectDir = process.cwd();
+
+	// Get bucket info first
+	outputSpinner.start("Fetching bucket info...");
+	const bucketInfo = await getStorageBucketInfo(projectDir, bucketName);
+	outputSpinner.stop();
+
+	if (!bucketInfo) {
+		console.error("");
+		error(`Bucket "${bucketName}" not found in this project`);
+		console.error("");
+		process.exit(1);
+	}
+
+	// Show what will be deleted
+	console.error("");
+	info(`Bucket: ${bucketInfo.name}`);
+	item(`Binding: ${bucketInfo.binding}`);
+	console.error("");
+	warn("This will permanently delete the bucket and all its contents");
+	console.error("");
+
+	// Confirm deletion
+	const { promptSelect } = await import("../lib/hooks.ts");
+	const choice = await promptSelect(["Yes, delete", "No, cancel"], `Delete bucket '${bucketName}'?`);
+
+	if (choice !== 0) {
+		info("Cancelled");
+		return;
+	}
+
+	outputSpinner.start("Deleting bucket...");
+
+	try {
+		const result = await deleteStorageBucket(projectDir, bucketName);
+		outputSpinner.stop();
+
+		// Track telemetry
+		track(Events.SERVICE_DELETED, {
+			service_type: "r2",
+			deleted: result.deleted,
+		});
+
+		console.error("");
+		success("Bucket deleted");
+		if (result.bindingRemoved) {
+			item("Binding removed from wrangler.jsonc");
+		}
+		console.error("");
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to delete bucket: ${err instanceof Error ? err.message : String(err)}`);
 		process.exit(1);
 	}
 }
