@@ -1,0 +1,12 @@
+name = "log-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Tail Worker for Jack Cloud. Attached dynamically per-project for 1-hour debug sessions.
+# No public routes required.
+
+[[durable_objects.bindings]]
+name = "LOG_STREAM"
+script_name = "jack-control"
+class_name = "LogStreamDO"
+

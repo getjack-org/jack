@@ -1,5 +1,5 @@
 import { verifyJwt } from "@getjack/auth";
-import type { JwtPayload } from "@getjack/auth";
+import type { AuthContext, JwtPayload } from "@getjack/auth";
 import { unzipSync } from "fflate";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -16,31 +16,24 @@ import { DeploymentService, validateManifest } from "./deployment-service";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
 import { validateReadOnly } from "./sql-utils";
-import type { Bindings, Resource } from "./types";
+import type { Bindings, ProjectConfig, ProjectStatus, Resource } from "./types";
+export { LogStreamDO } from "./log-stream-do";
 
 type WorkosJwtPayload = JwtPayload & {
 	org_id?: string;
 };
 
-type AuthContext = {
-	userId: string;
-	orgId: string;
-	workosUserId: string;
-	workosOrgId: string | null;
-	email: string;
-	firstName?: string;
-	lastName?: string;
-};
-
-declare module "hono" {
-	interface ContextVariableMap {
-		auth: AuthContext;
-	}
-}
-
 // Username validation: 3-39 chars, lowercase alphanumeric + hyphens, must start/end with alphanumeric
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]{1,2}$/;
 const ANALYTICS_CACHE_TTL_SECONDS = 600;
+const LOG_TAIL_WORKER_SERVICE = "log-worker";
+const LOG_TAIL_DISPATCH_NAMESPACE = "jack-tenants";
+
+function d1DatetimeToIso(value: string): string {
+	// D1 CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" in UTC.
+	if (value.includes("T")) return value;
+	return `${value.replace(" ", "T")}Z`;
+}
 
 function validateUsername(username: string): string | null {
 	if (!username || username.trim() === "") {
@@ -487,15 +480,15 @@ api.post("/projects", async (c) => {
 		.bind(auth.userId)
 		.first<{ username: string | null }>();
 
-	const provisioning = new ProvisioningService(c.env);
-	try {
-		const result = await provisioning.createProject(
-			auth.orgId,
-			body.name,
-			slug,
-			body.content_bucket ?? false,
-			user?.username ?? undefined,
-		);
+			const provisioning = new ProvisioningService(c.env);
+			try {
+				const result = await provisioning.createProject(
+					auth.orgId!,
+					body.name,
+					slug,
+					body.content_bucket ?? false,
+					user?.username ?? undefined,
+				);
 
 		// Construct URL with username if available
 		const url = user?.username
@@ -555,12 +548,12 @@ api.post("/projects", async (c) => {
 	}
 });
 
-api.get("/projects", async (c) => {
-	const auth = c.get("auth");
-	const provisioning = new ProvisioningService(c.env);
-	const projects = await provisioning.listProjectsByOrg(auth.orgId);
-	return c.json({ projects });
-});
+	api.get("/projects", async (c) => {
+		const auth = c.get("auth");
+		const provisioning = new ProvisioningService(c.env);
+		const projects = await provisioning.listProjectsByOrg(auth.orgId!);
+		return c.json({ projects });
+	});
 
 api.get("/projects/by-slug/:slug", async (c) => {
 	const auth = c.get("auth");
@@ -738,12 +731,16 @@ api.get("/orgs/:orgId/usage", async (c) => {
 
 	try {
 		const cfClient = new CloudflareClient(c.env);
-		const metrics = await cfClient.getOrgUsageFromAE(orgId, range.from, range.to);
+		const [metrics, byProject] = await Promise.all([
+			cfClient.getOrgUsageFromAE(orgId, range.from, range.to),
+			cfClient.getOrgUsageByProjectFromAE(orgId, range.from, range.to),
+		]);
 
 		const response = {
 			org_id: orgId,
 			range,
 			metrics,
+			by_project: byProject,
 		};
 
 		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
@@ -1357,24 +1354,32 @@ api.post("/projects/:projectId/database/query", async (c) => {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
 	}
 
-	// Get D1 resource
-	const d1Resource = await c.env.DB.prepare(
-		"SELECT provider_id, resource_name FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
-	)
-		.bind(projectId)
-		.first<{ provider_id: string; resource_name: string }>();
-
-	if (!d1Resource) {
-		return c.json({ error: "not_found", message: "No database found for project" }, 404);
-	}
-
-	// Parse request body
-	const body = await c.req.json<{ sql: string; params?: unknown[] }>();
+	const body = await c.req.json<{ sql: string; params?: unknown[]; binding_name?: string }>();
 	if (!body.sql || typeof body.sql !== "string") {
 		return c.json(
 			{ error: "invalid_request", message: "sql is required and must be a string" },
 			400,
 		);
+	}
+
+	// Get D1 resource, filtering by binding_name if provided
+	let d1Resource: { provider_id: string; resource_name: string } | null;
+	if (body.binding_name) {
+		d1Resource = await c.env.DB.prepare(
+			"SELECT provider_id, resource_name FROM resources WHERE project_id = ? AND resource_type = 'd1' AND binding_name = ? AND status != 'deleted'",
+		)
+			.bind(projectId, body.binding_name)
+			.first<{ provider_id: string; resource_name: string }>();
+	} else {
+		d1Resource = await c.env.DB.prepare(
+			"SELECT provider_id, resource_name FROM resources WHERE project_id = ? AND resource_type = 'd1' AND status != 'deleted'",
+		)
+			.bind(projectId)
+			.first<{ provider_id: string; resource_name: string }>();
+	}
+
+	if (!d1Resource) {
+		return c.json({ error: "not_found", message: "No database found for project" }, 404);
 	}
 
 	// Validate read-only
@@ -2043,21 +2048,270 @@ api.post("/projects/:projectId/observability", async (c) => {
 	}
 });
 
-// Real-time logs streaming endpoint
-// NOTE: Cloudflare's Tail API doesn't support dispatch namespace scripts.
-// For now, use the observability endpoint to enable Workers Logs (stored logs).
-api.get("/projects/:projectId/logs/stream", async (c) => {
-	return c.json(
-		{
-			error: "not_implemented",
-			message:
-				"Real-time log streaming is not yet available for managed projects. " +
-				"Use POST /projects/:projectId/observability to enable stored Workers Logs. " +
-				"Logs can then be viewed in the Cloudflare dashboard.",
-			docs: "https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/observability/",
+// Real-time logs (Tail Workers) session management + streaming
+// NOTE: Cloudflare Tail API is not available for dispatch namespace scripts. We use Tail Workers.
+api.post("/projects/:projectId/logs/session", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const workerResource = await c.env.DB.prepare(
+		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ resource_name: string }>();
+	if (!workerResource) {
+		return c.json({ error: "no_worker_deployed", message: "No worker deployed" }, 409);
+	}
+
+	const body = await c.req.json<{ label?: string }>().catch(() => ({ label: undefined }));
+	const label = typeof body.label === "string" && body.label.trim() ? body.label.trim() : null;
+
+	let sessionId: string;
+	try {
+		const existing = await c.env.DB.prepare(
+			"SELECT id FROM log_sessions WHERE project_id = ? AND status = 'active' LIMIT 1",
+		)
+			.bind(projectId)
+			.first<{ id: string }>();
+		const hadExisting = Boolean(existing?.id);
+
+		if (existing?.id) {
+			sessionId = existing.id;
+			await c.env.DB.prepare(
+				"UPDATE log_sessions SET expires_at = datetime('now', '+1 hour'), label = COALESCE(?, label) WHERE id = ?",
+			)
+				.bind(label, sessionId)
+				.run();
+		} else {
+			sessionId = `logses_${crypto.randomUUID()}`;
+			await c.env.DB.prepare(
+				`INSERT INTO log_sessions (id, project_id, org_id, created_by, label, status, expires_at)
+         VALUES (?, ?, ?, ?, ?, 'active', datetime('now', '+1 hour'))`,
+			)
+				.bind(sessionId, projectId, project.org_id, auth.userId, label)
+				.run();
+		}
+
+		const session = await c.env.DB.prepare(
+			`SELECT id, project_id, label, status, expires_at
+       FROM log_sessions
+       WHERE id = ?`,
+		)
+			.bind(sessionId)
+			.first<{ id: string; project_id: string; label: string | null; status: string; expires_at: string }>();
+
+		if (!session) {
+			throw new Error("Failed to load session");
+		}
+
+		// Attach Tail Worker only when starting a new session.
+		// Renewals assume the Tail Worker is already attached for the active session.
+		if (!hadExisting) {
+			const cfClient = new CloudflareClient(c.env);
+			try {
+				await cfClient.setDispatchScriptTailConsumers(
+					LOG_TAIL_DISPATCH_NAMESPACE,
+					workerResource.resource_name,
+					[{ service: LOG_TAIL_WORKER_SERVICE }],
+				);
+			} catch (error) {
+				// Session exists but tail attach failed; mark revoked so user can retry immediately.
+				await c.env.DB.prepare(
+					"UPDATE log_sessions SET status = 'revoked', expires_at = CURRENT_TIMESTAMP WHERE id = ?",
+				)
+					.bind(session.id)
+					.run();
+				const message = error instanceof Error ? error.message : "Failed to attach Tail Worker";
+				return c.json({ error: "internal_error", message }, 500);
+			}
+		}
+
+		return c.json({
+			success: true,
+			session: {
+				id: session.id,
+				project_id: session.project_id,
+				label: session.label,
+				status: session.status,
+				expires_at: d1DatetimeToIso(session.expires_at),
+			},
+			stream: { url: `/v1/projects/${projectId}/logs/stream`, type: "sse" },
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to create log session";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+api.get("/projects/:projectId/logs/session", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const session = await c.env.DB.prepare(
+		`SELECT id, project_id, label, status, expires_at
+     FROM log_sessions
+     WHERE project_id = ? AND status = 'active' AND expires_at > CURRENT_TIMESTAMP
+     LIMIT 1`,
+	)
+		.bind(projectId)
+		.first<{ id: string; project_id: string; label: string | null; status: string; expires_at: string }>();
+
+	if (!session) {
+		return c.json(
+			{ error: "no_active_session", message: "Start a 1h log session first." },
+			410,
+		);
+	}
+
+	return c.json({
+		success: true,
+		session: {
+			id: session.id,
+			project_id: session.project_id,
+			label: session.label,
+			status: session.status,
+			expires_at: d1DatetimeToIso(session.expires_at),
 		},
-		501,
-	);
+	});
+});
+
+api.delete("/projects/:projectId/logs/session", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const workerResource = await c.env.DB.prepare(
+		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ resource_name: string }>();
+	if (!workerResource) {
+		return c.json({ error: "no_worker_deployed", message: "No worker deployed" }, 409);
+	}
+
+	const session = await c.env.DB.prepare(
+		"SELECT id FROM log_sessions WHERE project_id = ? AND status = 'active' LIMIT 1",
+	)
+		.bind(projectId)
+		.first<{ id: string }>();
+
+	if (!session?.id) {
+		return c.json({ error: "no_active_session", message: "No active session" }, 410);
+	}
+
+	const cfClient = new CloudflareClient(c.env);
+	try {
+		await cfClient.setDispatchScriptTailConsumers(LOG_TAIL_DISPATCH_NAMESPACE, workerResource.resource_name, []);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to detach Tail Worker";
+		return c.json({ error: "internal_error", message }, 500);
+	}
+
+	await c.env.DB.prepare(
+		"UPDATE log_sessions SET status = 'revoked', expires_at = CURRENT_TIMESTAMP WHERE id = ?",
+	)
+		.bind(session.id)
+		.run();
+
+	return c.json({ success: true });
+});
+
+api.get("/projects/:projectId/logs/stream", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const session = await c.env.DB.prepare(
+		`SELECT id, expires_at
+     FROM log_sessions
+     WHERE project_id = ? AND status = 'active' AND expires_at > CURRENT_TIMESTAMP
+     LIMIT 1`,
+	)
+		.bind(projectId)
+		.first<{ id: string; expires_at: string }>();
+
+	if (!session) {
+		return c.json(
+			{ error: "no_active_session", message: "Start a 1h log session first." },
+			410,
+		);
+	}
+
+	const workerResource = await c.env.DB.prepare(
+		"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'worker' AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ resource_name: string }>();
+	if (!workerResource) {
+		return c.json({ error: "no_worker_deployed", message: "No worker deployed" }, 409);
+	}
+
+	const id = c.env.LOG_STREAM.idFromName(workerResource.resource_name);
+	const stub = c.env.LOG_STREAM.get(id);
+	const url = new URL("http://do/stream");
+	url.searchParams.set("session_id", session.id);
+	url.searchParams.set("project_id", projectId);
+	url.searchParams.set("expires_at", d1DatetimeToIso(session.expires_at));
+
+	return stub.fetch(url.toString());
 });
 
 // Source code retrieval endpoints
@@ -2383,7 +2637,7 @@ api.post("/projects/:projectId/publish", async (c) => {
 		const workerName = `jack-${shortId}`;
 		const contentBucketName = fullProject.content_bucket_enabled ? `jack-${shortId}-content` : null;
 
-		const projectConfig = {
+		const projectConfig: ProjectConfig = {
 			project_id: fullProject.id,
 			org_id: fullProject.org_id,
 			owner_username: user.username,
@@ -2391,7 +2645,7 @@ api.post("/projects/:projectId/publish", async (c) => {
 			worker_name: workerName,
 			d1_database_id: fullProject.d1_database_id || "",
 			content_bucket_name: contentBucketName,
-			status: fullProject.status,
+			status: fullProject.status as ProjectStatus,
 			updated_at: new Date().toISOString(),
 		};
 
@@ -2441,7 +2695,46 @@ app.get("/v1/projects/:owner/:slug/source", async (c) => {
 
 app.route("/v1", api);
 
-export default app;
+async function sweepExpiredLogSessions(env: Bindings): Promise<void> {
+	// Detach Tail Worker for expired sessions to avoid ongoing CPU costs.
+	const expired = await env.DB.prepare(
+		`SELECT s.id, r.resource_name AS worker_name
+     FROM log_sessions s
+     LEFT JOIN resources r
+       ON r.project_id = s.project_id
+      AND r.resource_type = 'worker'
+      AND r.status != 'deleted'
+     WHERE s.status = 'active'
+       AND s.expires_at <= CURRENT_TIMESTAMP
+     LIMIT 100`,
+	).all<{ id: string; worker_name: string | null }>();
+
+	const rows = expired.results ?? [];
+	if (rows.length === 0) return;
+
+	const cfClient = new CloudflareClient(env);
+	for (const row of rows) {
+		try {
+			if (row.worker_name) {
+				await cfClient.setDispatchScriptTailConsumers(LOG_TAIL_DISPATCH_NAMESPACE, row.worker_name, []);
+			}
+			await env.DB.prepare("UPDATE log_sessions SET status = 'expired' WHERE id = ?")
+				.bind(row.id)
+				.run();
+		} catch {
+			// Retry on next cron tick.
+		}
+	}
+}
+
+const handler: ExportedHandler<Bindings> = {
+	fetch: app.fetch,
+	scheduled: (_event, env, ctx) => {
+		ctx.waitUntil(sweepExpiredLogSessions(env));
+	},
+};
+
+export default handler;
 
 async function verifyAuth(token: string, db: D1Database): Promise<AuthContext> {
 	const payload = (await verifyJwt(token)) as WorkosJwtPayload;

@@ -6,6 +6,9 @@ routes = [
   { pattern = "control.getjack.org", custom_domain = true }
 ]
 
+[triggers]
+crons = ["*/1 * * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "jack-control-db"
@@ -22,6 +25,15 @@ bucket_name = "jack-code-internal"
 [[dispatch_namespaces]]
 binding = "TENANT_DISPATCH"
 namespace = "jack-tenants"
+
+[durable_objects]
+bindings = [
+  { name = "LOG_STREAM", class_name = "LogStreamDO" }
+]
+
+[[migrations]]
+tag = "logstream-v1"
+new_classes = ["LogStreamDO"]
 
 [[unsafe.bindings]]
 name = "FEEDBACK_LIMITER"

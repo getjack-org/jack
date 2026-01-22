@@ -436,11 +436,11 @@ export class ProvisioningService {
 
 	/**
 	 * Register a resource with a specific binding name.
-	 * Used for user-defined bindings (e.g., R2 buckets, KV namespaces, and Vectorize indexes from wrangler.jsonc).
+	 * Used for user-defined bindings (e.g., R2 buckets, KV namespaces, Vectorize indexes, and AI from wrangler.jsonc).
 	 */
 	async registerResourceWithBinding(
 		projectId: string,
-		type: "r2" | "kv" | "vectorize",
+		type: "r2" | "kv" | "vectorize" | "ai",
 		bindingName: string,
 		resourceName: string,
 		providerId: string,
@@ -739,6 +739,9 @@ export class ProvisioningService {
 		if (!limits) {
 			return;
 		}
+		if (limits.requests_per_minute === undefined) {
+			return;
+		}
 
 		let existingConfig = await this.cacheService.getProjectConfig(projectId);
 
@@ -794,7 +797,10 @@ export class ProvisioningService {
 			};
 		}
 
-		const mergedLimits = { ...existingConfig.limits, ...limits };
-		await this.cacheService.updateProjectConfig(projectId, { limits: mergedLimits });
+			const rpm = limits.requests_per_minute ?? existingConfig.limits?.requests_per_minute;
+			if (rpm === undefined) return;
+			await this.cacheService.updateProjectConfig(projectId, {
+				limits: { requests_per_minute: rpm },
+			});
+		}
 	}
-}

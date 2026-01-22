@@ -8,6 +8,7 @@ export type Bindings = {
 	CODE_BUCKET: R2Bucket;
 	TENANT_DISPATCH: DispatchNamespace;
 	USAGE: AnalyticsEngineDataset;
+	LOG_STREAM: DurableObjectNamespace;
 	FEEDBACK_LIMITER: {
 		limit: (options: { key: string }) => Promise<{ success: boolean }>;
 	};
@@ -90,4 +91,18 @@ export interface Deployment {
 	error_message: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export type LogSessionStatus = "active" | "expired" | "revoked";
+
+export interface LogSession {
+	id: string;
+	project_id: string;
+	org_id: string;
+	created_by: string;
+	label: string | null;
+	status: LogSessionStatus;
+	created_at: string;
+	updated_at: string;
+	expires_at: string;
 }

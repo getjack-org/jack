@@ -14,6 +14,10 @@ export interface AuthContext {
 	email: string;
 	firstName?: string;
 	lastName?: string;
+	// Optional fields for downstream services that enrich auth context.
+	orgId?: string;
+	workosUserId?: string;
+	workosOrgId?: string | null;
 }
 
 export interface JwksVerifierOptions {
