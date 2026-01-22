@@ -5,7 +5,7 @@ Manage databases and storage for your project.
 ## Usage
 
 ```bash
-jack services [service]
+jack services [service] [action]
 ```
 
 ## Available Services
@@ -13,12 +13,89 @@ jack services [service]
 | Service | Description |
 |---------|-------------|
 | `db` | SQLite database (D1) |
+| `storage` | Object storage (R2) |
 
-## Examples
+## Database (D1)
+
+### Commands
 
 ```bash
-# Add a database to your project
-jack services db
+jack services db                    # Show database info
+jack services db create             # Create a new database
+jack services db create --name xyz  # Create with specific name
+jack services db list               # List all databases
+jack services db execute "SQL"      # Run read-only SQL
+jack services db execute "SQL" --write  # Run SQL that modifies data
+jack services db export             # Export to .sql file
+jack services db delete             # Delete database
+```
+
+### Using in Code
+
+After adding a database, it's available as `env.DB`:
+
+```typescript
+export default {
+  async fetch(request, env) {
+    const users = await env.DB.prepare("SELECT * FROM users").all();
+    return Response.json(users.results);
+  }
+}
+```
+
+For write operations:
+
+```typescript
+await env.DB.prepare("INSERT INTO users (name, email) VALUES (?, ?)")
+  .bind("Alice", "alice@example.com")
+  .run();
+```
+
+## Storage (R2)
+
+### Commands
+
+```bash
+jack services storage               # Show bucket info
+jack services storage create        # Create a new bucket
+jack services storage create --name xyz  # Create with specific name
+jack services storage list          # List all buckets
+jack services storage info          # Show default bucket info
+jack services storage info mybucket # Show specific bucket info
+jack services storage delete name   # Delete a bucket
+```
+
+### Using in Code
+
+After adding storage, it's available as `env.STORAGE`:
+
+```typescript
+export default {
+  async fetch(request, env) {
+    // Upload a file
+    await env.STORAGE.put("hello.txt", "Hello World!");
+
+    // Download a file
+    const obj = await env.STORAGE.get("hello.txt");
+    return new Response(obj?.body);
+  }
+}
+```
+
+Common operations:
+
+```typescript
+// List objects
+const list = await env.STORAGE.list({ prefix: "images/" });
+
+// Delete an object
+await env.STORAGE.delete("old-file.txt");
+
+// Check if exists
+const head = await env.STORAGE.head("file.txt");
+if (head) {
+  console.log("Size:", head.size);
+}
 ```
 
 ## What Happens
@@ -30,18 +107,9 @@ When you add a service:
 3. Updates your project configuration
 4. Redeploys with the new binding
 
-## Using Services in Code
+## Binding Names
 
-After adding a database:
-
-```typescript
-// Access via environment binding
-export default {
-  async fetch(request, env) {
-    const result = await env.DB.prepare(
-      "SELECT * FROM users"
-    ).all();
-    return Response.json(result);
-  }
-}
-```
+| Service | First Binding | Subsequent |
+|---------|--------------|------------|
+| Database | `DB` | Name in SCREAMING_SNAKE_CASE |
+| Storage | `STORAGE` | Name in SCREAMING_SNAKE_CASE |
