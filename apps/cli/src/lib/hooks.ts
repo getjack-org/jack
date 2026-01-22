@@ -11,6 +11,10 @@ import { restoreTty } from "./tty";
  * User pastes JSON, then presses Enter on empty line to submit
  */
 async function readMultilineJson(prompt: string): Promise<string> {
+	// Ensure TTY is in a clean state before starting readline
+	// This prevents conflicts with previous @clack/prompts selections
+	restoreTty();
+
 	console.error(prompt);
 	console.error("(Paste JSON, then press Enter on empty line to submit)\n");
 
