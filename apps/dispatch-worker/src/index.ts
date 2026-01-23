@@ -51,14 +51,47 @@ function parseHostname(host: string): { username: string | null; slug: string } 
 	return { username, slug };
 }
 
+/**
+ * Sanitize and normalize hostname for safe KV lookups.
+ * - Lowercase for case-insensitive matching
+ * - Strip port if present
+ * - Validate length and characters
+ */
+function sanitizeHost(rawHost: string): string | null {
+	// Strip port if present (e.g., "example.com:443" -> "example.com")
+	const host = rawHost.split(":")[0].toLowerCase().trim();
+
+	// Reject empty or too long hostnames (max 253 chars per DNS spec)
+	if (!host || host.length > 253) {
+		return null;
+	}
+
+	// Only allow valid hostname characters (alphanumeric, hyphens, dots)
+	if (!/^[a-z0-9.-]+$/.test(host)) {
+		return null;
+	}
+
+	// Reject suspicious patterns
+	if (host.includes("..") || host.startsWith(".") || host.startsWith("-")) {
+		return null;
+	}
+
+	return host;
+}
+
 app.all("/*", async (c) => {
 	const startTime = Date.now();
 	const env = c.env;
 	const ctx = c.executionCtx;
-	const host = c.req.header("host");
+	const rawHost = c.req.header("host");
 
-	if (!host) {
+	if (!rawHost) {
 		return c.json({ error: "Missing host header" }, 400);
+	}
+
+	const host = sanitizeHost(rawHost);
+	if (!host) {
+		return c.json({ error: "Invalid host header" }, 400);
 	}
 
 	let config: ProjectConfig | null = null;
@@ -79,6 +112,8 @@ app.all("/*", async (c) => {
 		config = await env.PROJECTS_CACHE.get<ProjectConfig>(`custom:${host}`, "json");
 
 		if (!config) {
+			// Log suspicious activity for monitoring potential subdomain takeover attempts
+			console.log(`[security] Unknown custom hostname: ${host}, IP: ${c.req.header("cf-connecting-ip")}`);
 			// Cache the not-found for 60 seconds
 			await env.PROJECTS_CACHE.put(notFoundKey, "1", { expirationTtl: 60 });
 			return c.json({ error: "Unknown hostname", hostname: host }, 404);
@@ -86,6 +121,11 @@ app.all("/*", async (c) => {
 
 		if (config.status !== "active") {
 			return c.json({ error: "Project not available" }, 503);
+		}
+
+		// Verify SSL certificate is active for custom domains
+		if (config.ssl_status && config.ssl_status !== "active") {
+			return c.json({ error: "SSL certificate pending" }, 503);
 		}
 	} else {
 		// Standard runjack.xyz subdomain routing
@@ -159,7 +199,29 @@ app.all("/*", async (c) => {
 	// Forward to tenant worker
 	try {
 		const worker = env.TENANT_DISPATCH.get(config.worker_name);
-		const response = await worker.fetch(c.req.raw);
+
+		// Strip sensitive headers before forwarding to tenant workers
+		const sanitizedHeaders = new Headers(c.req.raw.headers);
+		const sensitiveHeaders = [
+			"cf-connecting-ip",
+			"cf-ipcountry",
+			"cf-ray",
+			"cf-visitor",
+			"x-forwarded-for",
+			"x-real-ip",
+		];
+		for (const header of sensitiveHeaders) {
+			sanitizedHeaders.delete(header);
+		}
+
+		const sanitizedRequest = new Request(c.req.raw.url, {
+			method: c.req.raw.method,
+			headers: sanitizedHeaders,
+			body: c.req.raw.body,
+			redirect: c.req.raw.redirect,
+		});
+
+		const response = await worker.fetch(sanitizedRequest);
 
 		// Write usage data point (fire-and-forget, 0ms latency impact)
 		ctx.waitUntil(
