@@ -386,12 +386,16 @@ try {
 			});
 			break;
 		}
-		case "domain":
-		case "domains": {
+		case "domain": {
 			const { default: domain } = await import("./commands/domain.ts");
 			await withTelemetry("domain", domain, { subcommand: args[0] })(args[0], args.slice(1), {
 				project: cli.flags.project,
 			});
+			break;
+		}
+		case "domains": {
+			const { default: domains } = await import("./commands/domains.ts");
+			await withTelemetry("domains", domains)({ json: cli.flags.json });
 			break;
 		}
 		case "mcp": {

@@ -2656,6 +2656,56 @@ api.get("/projects/:projectId/logs/stream", async (c) => {
 // Custom Domain Endpoints
 // =====================================================
 
+// GET /v1/domains - List all domains across all projects for the user
+api.get("/domains", async (c) => {
+	const auth = c.get("auth");
+
+	// Get all projects the user has access to via org membership
+	const result = await c.env.DB.prepare(
+		`SELECT cd.*, p.slug as project_slug, p.owner_username
+		 FROM custom_domains cd
+		 JOIN projects p ON cd.project_id = p.id
+		 JOIN org_memberships om ON p.org_id = om.org_id
+		 WHERE om.user_id = ? AND cd.status != 'deleting' AND p.status != 'deleted'
+		 ORDER BY cd.created_at DESC`,
+	)
+		.bind(auth.userId)
+		.all<CustomDomain & { project_slug: string; owner_username: string | null }>();
+
+	// Get org billing info for slot calculation
+	const orgsResult = await c.env.DB.prepare(
+		`SELECT DISTINCT om.org_id, ob.plan_tier
+		 FROM org_memberships om
+		 LEFT JOIN org_billing ob ON om.org_id = ob.org_id
+		 WHERE om.user_id = ?`,
+	)
+		.bind(auth.userId)
+		.all<{ org_id: string; plan_tier: string | null }>();
+
+	// Calculate slots used (only active domains count)
+	const domains = result.results ?? [];
+	const activeCount = domains.filter((d) => d.status === "active").length;
+
+	// Determine max slots from highest plan tier across user's orgs
+	const tiers = (orgsResult.results ?? []).map((o) => o.plan_tier || "free");
+	const hasPro = tiers.includes("pro") || tiers.includes("team");
+	const maxSlots = hasPro ? TIER_LIMITS.pro.custom_domains : TIER_LIMITS.free.custom_domains;
+
+	const formattedDomains = domains.map((d) => ({
+		...formatDomainResponse(d),
+		project_slug: d.project_slug,
+		project_url: `https://${d.owner_username || "user"}-${d.project_slug}.runjack.xyz`,
+	}));
+
+	return c.json({
+		domains: formattedDomains,
+		slots: {
+			used: activeCount,
+			max: maxSlots,
+		},
+	});
+});
+
 // POST /v1/projects/:projectId/domains - Add custom domain
 api.post("/projects/:projectId/domains", async (c) => {
 	const auth = c.get("auth");
