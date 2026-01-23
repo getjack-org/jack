@@ -16,14 +16,75 @@ import {
 import { error, info, success, item } from "../lib/output.ts";
 
 const SKILLS_REPO = "getjack-org/skills";
+const SKILLS_API_URL = `https://api.github.com/repos/${SKILLS_REPO}/contents/skills`;
 const SUPPORTED_AGENTS = ["claude-code", "codex"];
 
-// Hardcoded catalog - could fetch from repo index.json later
-const AVAILABLE_SKILLS = [
-  { name: "add-payments", description: "Add Stripe subscription payments" },
-  { name: "add-auth", description: "Add Better Auth authentication" },
-  { name: "add-ai", description: "Add Workers AI integration" },
-];
+// Cache for fetched skills (per process)
+let cachedSkills: { name: string; description: string }[] | null = null;
+
+interface GitHubContent {
+  name: string;
+  type: string;
+  download_url: string | null;
+}
+
+async function fetchAvailableSkills(): Promise<{ name: string; description: string }[]> {
+  if (cachedSkills) return cachedSkills;
+
+  try {
+    // Fetch directory listing
+    const res = await fetch(SKILLS_API_URL, {
+      headers: { "User-Agent": "jack-cli" },
+    });
+
+    if (!res.ok) {
+      throw new Error(`GitHub API error: ${res.status}`);
+    }
+
+    const contents: GitHubContent[] = await res.json();
+    const skillDirs = contents.filter((c) => c.type === "dir");
+
+    // Fetch descriptions from SKILL.md in parallel
+    const skills = await Promise.all(
+      skillDirs.map(async (dir) => {
+        const description = await fetchSkillDescription(dir.name);
+        return { name: dir.name, description };
+      })
+    );
+
+    cachedSkills = skills;
+    return skills;
+  } catch (err) {
+    // Fallback: return empty list, let skills.sh handle validation
+    return [];
+  }
+}
+
+async function fetchSkillDescription(skillName: string): Promise<string> {
+  try {
+    const url = `https://raw.githubusercontent.com/${SKILLS_REPO}/main/skills/${skillName}/SKILL.md`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "jack-cli" },
+    });
+
+    if (!res.ok) return "";
+
+    const content = await res.text();
+    // Parse YAML frontmatter for description
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (match) {
+      const frontmatter = match[1];
+      const descMatch = frontmatter.match(/description:\s*>?\s*\n?\s*(.+?)(?:\n\s{2,}|$)/s);
+      if (descMatch) {
+        // Get first line of description
+        return descMatch[1].split("\n")[0].trim();
+      }
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
 
 export default async function skills(
   subcommand?: string,
@@ -49,7 +110,7 @@ export default async function skills(
   }
 }
 
-function showHelp(): void {
+async function showHelp(): Promise<void> {
   console.log("");
   info("jack skills - Manage agent skills");
   console.log("");
@@ -58,38 +119,48 @@ function showHelp(): void {
   console.log("  list                List installed skills in current project");
   console.log("  remove <name>       Remove a skill from project");
   console.log("");
-  console.log("Available skills:");
-  for (const skill of AVAILABLE_SKILLS) {
-    console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+  const skills = await fetchAvailableSkills();
+  if (skills.length > 0) {
+    console.log("Available skills:");
+    for (const skill of skills) {
+      console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+    }
+    console.log("");
   }
-  console.log("");
 }
 
 async function runSkill(skillName?: string): Promise<void> {
+  const availableSkills = await fetchAvailableSkills();
+
   if (!skillName) {
     error("Missing skill name");
     info("Usage: jack skills run <name>");
-    console.log("");
-    console.log("Available skills:");
-    for (const skill of AVAILABLE_SKILLS) {
-      console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+    if (availableSkills.length > 0) {
+      console.log("");
+      console.log("Available skills:");
+      for (const skill of availableSkills) {
+        console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+      }
     }
     process.exit(1);
   }
 
   const projectDir = process.cwd();
 
-  // 1. Validate skill exists in catalog
-  const skill = AVAILABLE_SKILLS.find((s) => s.name === skillName);
-  if (!skill) {
-    error(`Skill not found: ${skillName}`);
-    console.log("");
-    console.log("Available skills:");
-    for (const s of AVAILABLE_SKILLS) {
-      console.log(`  ${s.name.padEnd(16)} ${s.description}`);
+  // 1. Validate skill exists in catalog (if we could fetch it)
+  if (availableSkills.length > 0) {
+    const skill = availableSkills.find((s) => s.name === skillName);
+    if (!skill) {
+      error(`Skill not found: ${skillName}`);
+      console.log("");
+      console.log("Available skills:");
+      for (const s of availableSkills) {
+        console.log(`  ${s.name.padEnd(16)} ${s.description}`);
+      }
+      process.exit(1);
     }
-    process.exit(1);
   }
+  // If fetch failed, let skills.sh handle validation
 
   // 2. Check if already installed
   const skillPath = join(projectDir, ".claude/skills", skillName);
@@ -167,24 +238,27 @@ async function runSkill(skillName?: string): Promise<void> {
 async function listSkills(): Promise<void> {
   const projectDir = process.cwd();
   const skillsDir = join(projectDir, ".claude/skills");
+  const availableSkills = await fetchAvailableSkills();
 
   if (!existsSync(skillsDir)) {
     info("No skills installed in this project.");
     console.log("");
     info("Run 'jack skills run <name>' to install and use a skill.");
-    console.log("");
-    console.log("Available skills:");
-    for (const skill of AVAILABLE_SKILLS) {
-      console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+    if (availableSkills.length > 0) {
+      console.log("");
+      console.log("Available skills:");
+      for (const skill of availableSkills) {
+        console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+      }
     }
     return;
   }
 
   // List directories in .claude/skills/
   const entries = await readdir(skillsDir, { withFileTypes: true });
-  const skills = entries.filter((e) => e.isSymbolicLink() || e.isDirectory());
+  const installedSkills = entries.filter((e) => e.isSymbolicLink() || e.isDirectory());
 
-  if (skills.length === 0) {
+  if (installedSkills.length === 0) {
     info("No skills installed in this project.");
     console.log("");
     info("Run 'jack skills run <name>' to install and use a skill.");
@@ -193,9 +267,9 @@ async function listSkills(): Promise<void> {
 
   console.log("");
   info("Installed skills (project):");
-  for (const skill of skills) {
+  for (const skill of installedSkills) {
     const desc =
-      AVAILABLE_SKILLS.find((s) => s.name === skill.name)?.description ?? "";
+      availableSkills.find((s) => s.name === skill.name)?.description ?? "";
     item(`${skill.name.padEnd(16)} ${desc}`);
   }
   console.log("");
