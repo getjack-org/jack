@@ -2,7 +2,7 @@ import { getPreferredLaunchAgent, launchAgent, scanAgents, updateAgent } from ".
 import { debug } from "../lib/debug.ts";
 import { getErrorDetails } from "../lib/errors.ts";
 import { isIntentPhrase } from "../lib/intent.ts";
-import { output, spinner } from "../lib/output.ts";
+import { createReporter, output } from "../lib/output.ts";
 import { createProject } from "../lib/project-operations.ts";
 
 export default async function newProject(
@@ -51,17 +51,7 @@ export default async function newProject(
 		result = await createProject(projectName, {
 			template: options.template,
 			intent: intentPhrase,
-			reporter: {
-				start: output.start,
-				stop: output.stop,
-				spinner,
-				info: output.info,
-				warn: output.warn,
-				error: output.error,
-				success: output.success,
-				box: output.box,
-				celebrate: output.celebrate,
-			},
+			reporter: createReporter(),
 			interactive: !isCi,
 			managed: options.managed,
 			byo: options.byo,

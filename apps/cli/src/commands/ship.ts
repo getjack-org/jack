@@ -1,5 +1,5 @@
 import { getErrorDetails } from "../lib/errors.ts";
-import { output, spinner } from "../lib/output.ts";
+import { createReporter, output } from "../lib/output.ts";
 import { deployProject } from "../lib/project-operations.ts";
 
 export default async function ship(
@@ -9,16 +9,7 @@ export default async function ship(
 	try {
 		const result = await deployProject({
 			projectPath: process.cwd(),
-			reporter: {
-				start: output.start,
-				stop: output.stop,
-				spinner,
-				info: output.info,
-				warn: output.warn,
-				error: output.error,
-				success: output.success,
-				box: output.box,
-			},
+			reporter: createReporter(),
 			interactive: !isCi,
 			includeSecrets: !options.dryRun,
 			includeSync: !options.dryRun,

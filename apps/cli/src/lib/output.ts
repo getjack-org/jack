@@ -1,6 +1,17 @@
 import yoctoSpinner from "yocto-spinner";
+import type { OperationReporter } from "./project-operations.ts";
 
 const isColorEnabled = !process.env.NO_COLOR && process.stderr.isTTY !== false;
+
+/**
+ * Quiet mode detection for AI agents and CI environments.
+ * Reduces token usage by simplifying output (no spinners, no decorative boxes).
+ */
+export const isQuietMode =
+	!process.stderr.isTTY ||
+	process.env.CI === "true" ||
+	process.env.CI === "1" ||
+	process.env.JACK_QUIET === "1";
 
 /**
  * ANSI color codes for terminal output
@@ -22,12 +33,19 @@ let currentSpinner: ReturnType<typeof yoctoSpinner> | null = null;
  */
 export const output = {
 	start(text: string) {
+		if (isQuietMode) {
+			console.error(text);
+			return;
+		}
 		if (currentSpinner) {
 			currentSpinner.stop();
 		}
 		currentSpinner = yoctoSpinner({ text }).start();
 	},
 	stop() {
+		if (isQuietMode) {
+			return;
+		}
 		if (currentSpinner) {
 			currentSpinner.stop();
 			currentSpinner = null;
@@ -46,6 +64,26 @@ export const output = {
  * Create a spinner for long-running operations
  */
 export function spinner(text: string) {
+	if (isQuietMode) {
+		console.error(text);
+		let currentText = text;
+		return {
+			success(message: string) {
+				success(message);
+			},
+			error(message: string) {
+				error(message);
+			},
+			stop() {},
+			get text() {
+				return currentText;
+			},
+			set text(value: string | undefined) {
+				currentText = value ?? "";
+			},
+		};
+	}
+
 	const spin = yoctoSpinner({ text }).start();
 
 	return {
@@ -121,6 +159,9 @@ export function getRandomPurple(): string {
  * Print a boxed message for important info (cyberpunk style)
  */
 export function box(title: string, lines: string[]): void {
+	if (isQuietMode) {
+		return; // Skip decorative boxes in quiet mode
+	}
 	const maxLen = Math.max(title.length, ...lines.map((l) => l.length));
 	const innerWidth = maxLen + 4;
 
@@ -154,6 +195,9 @@ export function box(title: string, lines: string[]): void {
  * Print a celebration box (for final success after setup)
  */
 export function celebrate(title: string, lines: string[]): void {
+	if (isQuietMode) {
+		return; // Skip decorative boxes in quiet mode
+	}
 	const maxLen = Math.max(title.length, ...lines.map((l) => l.length));
 	const innerWidth = maxLen + 4;
 
@@ -187,4 +231,22 @@ export function celebrate(title: string, lines: string[]): void {
 	console.error(`  ${purple}║${gradient}║${reset}`);
 	console.error(`  ${purple}╚${bar}╝${reset}`);
 	console.error("");
+}
+
+/**
+ * Create a standard reporter object for project operations.
+ * Respects quiet mode for reduced output in CI/agent environments.
+ */
+export function createReporter(): OperationReporter {
+	return {
+		start: output.start,
+		stop: output.stop,
+		spinner,
+		info,
+		warn,
+		error,
+		success,
+		box,
+		celebrate,
+	};
 }
