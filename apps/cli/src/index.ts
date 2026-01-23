@@ -455,6 +455,7 @@ try {
 			await withTelemetry("unlink", unlink)();
 			break;
 		}
+		case "skillz":
 		case "skills": {
 			const { default: skills } = await import("./commands/skills.ts");
 			await withTelemetry("skills", skills, { subcommand: args[0] })(args[0], args.slice(1));
