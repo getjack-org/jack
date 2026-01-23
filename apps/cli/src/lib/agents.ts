@@ -6,8 +6,8 @@ import { type AgentConfig, type AgentLaunchConfig, readConfig, writeConfig } fro
 import { debug, isDebug } from "./debug.ts";
 import { restoreTty } from "./tty";
 
-// Re-export AgentConfig for consumers
-export type { AgentConfig } from "./config.ts";
+// Re-export types for consumers
+export type { AgentConfig, AgentLaunchConfig } from "./config.ts";
 
 /**
  * Project file to generate for an agent
