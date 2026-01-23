@@ -15,7 +15,7 @@ import { formatSize } from "./format.ts";
 import { createFileCountProgress, createUploadProgress } from "./progress.ts";
 import type { OperationReporter } from "./project-operations.ts";
 import { getProjectTags } from "./tags.ts";
-import { Events, track } from "./telemetry.ts";
+import { Events, track, trackActivationIfFirst } from "./telemetry.ts";
 import { packageForDeploy } from "./zip-packager.ts";
 
 export interface ManagedCreateResult {
@@ -169,7 +169,10 @@ export async function deployCodeToManagedProject(
 		// Track success
 		track(Events.MANAGED_DEPLOY_COMPLETED, {
 			duration_ms: Date.now() - startTime,
+			project_id: projectId,
 		});
+
+		await trackActivationIfFirst("managed");
 
 		// Fire-and-forget tag sync (non-blocking)
 		getProjectTags(projectPath)

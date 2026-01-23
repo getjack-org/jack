@@ -68,7 +68,7 @@ import { filterNewSecrets, promptSaveSecrets } from "./prompts.ts";
 import { applySchema, getD1Bindings, getD1DatabaseName, hasD1Config } from "./schema.ts";
 import { getSavedSecrets, saveSecrets } from "./secrets.ts";
 import { getProjectNameFromDir, getRemoteManifest } from "./storage/index.ts";
-import { Events, track } from "./telemetry.ts";
+import { Events, track, trackActivationIfFirst } from "./telemetry.ts";
 
 // ============================================================================
 // Type Definitions
@@ -1374,11 +1374,17 @@ export async function createProject(
 				}
 			}
 
+			track(Events.BYO_DEPLOY_STARTED, {});
+			const byoDeployStartTime = Date.now();
+
 			reporter.start("Deploying...");
 
 			const deployResult = await runWranglerDeploy(targetDir);
 
 			if (deployResult.exitCode !== 0) {
+				track(Events.BYO_DEPLOY_FAILED, {
+					duration_ms: Date.now() - byoDeployStartTime,
+				});
 				reporter.stop();
 				reporter.error("Deploy failed");
 				throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
@@ -1435,6 +1441,12 @@ export async function createProject(
 
 			// Generate BYO project ID and link locally
 			const byoProjectId = generateByoProjectId();
+
+			track(Events.BYO_DEPLOY_COMPLETED, {
+				duration_ms: Date.now() - byoDeployStartTime,
+				project_id: byoProjectId,
+			});
+			await trackActivationIfFirst("byo");
 
 			// Link project locally and register path
 			try {
@@ -1758,10 +1770,16 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		// Ensure Cloudflare auth before BYO deploy
 		await ensureCloudflareAuth(interactive, reporter);
 
+		track(Events.BYO_DEPLOY_STARTED, {});
+		const byoDeployStartTime = Date.now();
+
 		const spin = reporter.spinner("Deploying...");
 		const result = await runWranglerDeploy(projectPath);
 
 		if (result.exitCode !== 0) {
+			track(Events.BYO_DEPLOY_FAILED, {
+				duration_ms: Date.now() - byoDeployStartTime,
+			});
 			spin.error("Deploy failed");
 			throw new JackError(JackErrorCode.DEPLOY_FAILED, "Deploy failed", undefined, {
 				exitCode: result.exitCode ?? 1,
@@ -1774,6 +1792,12 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		deployOutput = result.stdout.toString();
 		const urlMatch = deployOutput.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
 		workerUrl = urlMatch ? urlMatch[0] : null;
+
+		track(Events.BYO_DEPLOY_COMPLETED, {
+			duration_ms: Date.now() - byoDeployStartTime,
+			project_id: link?.project_id || null,
+		});
+		await trackActivationIfFirst("byo");
 
 		if (workerUrl) {
 			spin.success(`Live: ${workerUrl}`);
