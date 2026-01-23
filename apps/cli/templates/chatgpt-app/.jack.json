@@ -1,0 +1,10 @@
+{
+  "name": "chatgpt-app",
+  "description": "ChatGPT plugin with MCP server and React widgets",
+  "postDeploy": [
+    {
+      "type": "message",
+      "content": "Your ChatGPT app is deployed!\n\nMCP Endpoint: {{deploymentUrl}}/mcp\n\nAdd this endpoint to your ChatGPT plugin configuration."
+    }
+  ]
+}
