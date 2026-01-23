@@ -21,6 +21,9 @@ const SUPPORTED_AGENTS = ["claude-code", "codex"];
 
 // Cache for fetched skills (per process)
 let cachedSkills: { name: string; description: string }[] | null = null;
+let fetchError: string | null = null;
+
+const FETCH_TIMEOUT_MS = 5000;
 
 interface GitHubContent {
   name: string;
@@ -28,23 +31,40 @@ interface GitHubContent {
   download_url: string | null;
 }
 
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      headers: { "User-Agent": "jack-cli" },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchAvailableSkills(): Promise<{ name: string; description: string }[]> {
   if (cachedSkills) return cachedSkills;
+  if (fetchError) return []; // Don't retry on same process
 
   try {
-    // Fetch directory listing
-    const res = await fetch(SKILLS_API_URL, {
-      headers: { "User-Agent": "jack-cli" },
-    });
+    const res = await fetchWithTimeout(SKILLS_API_URL, FETCH_TIMEOUT_MS);
+
+    if (res.status === 403) {
+      fetchError = "GitHub API rate limit exceeded. Try again later.";
+      return [];
+    }
 
     if (!res.ok) {
-      throw new Error(`GitHub API error: ${res.status}`);
+      fetchError = `GitHub API error: ${res.status}`;
+      return [];
     }
 
     const contents: GitHubContent[] = await res.json();
     const skillDirs = contents.filter((c) => c.type === "dir");
 
-    // Fetch descriptions from SKILL.md in parallel
+    // Fetch descriptions from SKILL.md in parallel (with timeout each)
     const skills = await Promise.all(
       skillDirs.map(async (dir) => {
         const description = await fetchSkillDescription(dir.name);
@@ -55,9 +75,17 @@ async function fetchAvailableSkills(): Promise<{ name: string; description: stri
     cachedSkills = skills;
     return skills;
   } catch (err) {
-    // Fallback: return empty list, let skills.sh handle validation
+    if (err instanceof Error && err.name === "AbortError") {
+      fetchError = "Request timed out. Check your internet connection.";
+    } else {
+      fetchError = "Could not fetch skills catalog.";
+    }
     return [];
   }
+}
+
+function getFetchError(): string | null {
+  return fetchError;
 }
 
 async function fetchSkillDescription(skillName: string): Promise<string> {
@@ -126,6 +154,13 @@ async function showHelp(): Promise<void> {
       console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
     }
     console.log("");
+  } else {
+    const err = getFetchError();
+    if (err) {
+      info(`Could not load skills catalog: ${err}`);
+      info("You can still run: jack skills run <skill-name>");
+      console.log("");
+    }
   }
 }
 
@@ -140,6 +175,12 @@ async function runSkill(skillName?: string): Promise<void> {
       console.log("Available skills:");
       for (const skill of availableSkills) {
         console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+      }
+    } else {
+      const err = getFetchError();
+      if (err) {
+        console.log("");
+        info(`Could not load skills catalog: ${err}`);
       }
     }
     process.exit(1);
@@ -249,6 +290,12 @@ async function listSkills(): Promise<void> {
       console.log("Available skills:");
       for (const skill of availableSkills) {
         console.log(`  ${skill.name.padEnd(16)} ${skill.description}`);
+      }
+    } else {
+      const err = getFetchError();
+      if (err) {
+        console.log("");
+        info(`Could not load skills catalog: ${err}`);
       }
     }
     return;
