@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { RateLimiter } from "./rate-limiter";
 import { createUsageDataPoint } from "./metering";
+import { RateLimiter } from "./rate-limiter";
 import type { Bindings, ProjectConfig } from "./types";
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -61,57 +61,84 @@ app.all("/*", async (c) => {
 		return c.json({ error: "Missing host header" }, 400);
 	}
 
-	// Parse hostname to extract username and slug
-	const parsed = parseHostname(host);
-	if (!parsed) {
-		return c.json(
-			{
-				error: "Invalid host format",
-				expected: "{username}-{slug}.runjack.xyz or {slug}.runjack.xyz",
-			},
-			400,
-		);
-	}
-
-	const { username, slug } = parsed;
-	const fullSubdomain = username ? `${username}-${slug}` : slug;
-
-	const notFoundKey = `notfound:${fullSubdomain}`;
-	const isKnownNotFound = await env.PROJECTS_CACHE.get(notFoundKey);
-	if (isKnownNotFound) {
-		return c.json({ error: "Project not found", subdomain: fullSubdomain }, 404);
-	}
-
 	let config: ProjectConfig | null = null;
 
-	// Look up project config - try multiple strategies
-	if (username) {
-		// Has hyphen: could be new format (username-slug) or legacy format with hyphens
-		// Try new format first: config:{username}:{slug}
-		config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${username}:${slug}`, "json");
+	// Check for custom domains (non-runjack.xyz hosts)
+	const isRunjackHost = host.endsWith(".runjack.xyz");
+	const isLocalhost = host.includes("localhost");
+
+	if (!isRunjackHost && !isLocalhost) {
+		// Custom domain routing
+		const notFoundKey = `notfound:custom:${host}`;
+		const isKnownNotFound = await env.PROJECTS_CACHE.get(notFoundKey);
+		if (isKnownNotFound) {
+			return c.json({ error: "Unknown hostname", hostname: host }, 404);
+		}
+
+		// Look up custom domain config
+		config = await env.PROJECTS_CACHE.get<ProjectConfig>(`custom:${host}`, "json");
 
 		if (!config) {
-			// Fallback to legacy format: treat entire subdomain as slug
-			config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${fullSubdomain}`, "json");
+			// Cache the not-found for 60 seconds
+			await env.PROJECTS_CACHE.put(notFoundKey, "1", { expirationTtl: 60 });
+			return c.json({ error: "Unknown hostname", hostname: host }, 404);
+		}
+
+		if (config.status !== "active") {
+			return c.json({ error: "Project not available" }, 503);
 		}
 	} else {
-		// No hyphen: legacy format with simple slug
-		config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${slug}`, "json");
+		// Standard runjack.xyz subdomain routing
+		// Parse hostname to extract username and slug
+		const parsed = parseHostname(host);
+		if (!parsed) {
+			return c.json(
+				{
+					error: "Invalid host format",
+					expected: "{username}-{slug}.runjack.xyz or {slug}.runjack.xyz",
+				},
+				400,
+			);
+		}
+
+		const { username, slug } = parsed;
+		const fullSubdomain = username ? `${username}-${slug}` : slug;
+
+		const notFoundKey = `notfound:${fullSubdomain}`;
+		const isKnownNotFound = await env.PROJECTS_CACHE.get(notFoundKey);
+		if (isKnownNotFound) {
+			return c.json({ error: "Project not found", subdomain: fullSubdomain }, 404);
+		}
+
+		// Look up project config - try multiple strategies
+		if (username) {
+			// Has hyphen: could be new format (username-slug) or legacy format with hyphens
+			// Try new format first: config:{username}:{slug}
+			config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${username}:${slug}`, "json");
+
+			if (!config) {
+				// Fallback to legacy format: treat entire subdomain as slug
+				config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${fullSubdomain}`, "json");
+			}
+		} else {
+			// No hyphen: legacy format with simple slug
+			config = await env.PROJECTS_CACHE.get<ProjectConfig>(`config:${slug}`, "json");
+
+			if (!config) {
+				// Fallback: maybe it's stored by project ID (for backwards compat)
+				config = await env.PROJECTS_CACHE.get<ProjectConfig>(`project:${slug}`, "json");
+			}
+		}
 
 		if (!config) {
-			// Fallback: maybe it's stored by project ID (for backwards compat)
-			config = await env.PROJECTS_CACHE.get<ProjectConfig>(`project:${slug}`, "json");
+			await env.PROJECTS_CACHE.put(notFoundKey, "1", { expirationTtl: 60 });
+			return c.json({ error: "Project not found", subdomain: fullSubdomain }, 404);
 		}
-	}
 
-	if (!config) {
-		await env.PROJECTS_CACHE.put(notFoundKey, "1", { expirationTtl: 60 });
-		return c.json({ error: "Project not found", subdomain: fullSubdomain }, 404);
-	}
-
-	// Check project status
-	if (config.status !== "active") {
-		return c.json({ error: "Project not available" }, 503);
+		// Check project status
+		if (config.status !== "active") {
+			return c.json({ error: "Project not available" }, 503);
+		}
 	}
 
 	// Check rate limit (use actual project_id from config)
@@ -141,7 +168,7 @@ app.all("/*", async (c) => {
 					createUsageDataPoint({
 						projectId: config.project_id,
 						orgId: config.org_id,
-						tier: "free", // TODO: Get from config when tiers are implemented
+						tier: config.tier || "free",
 						request: c.req.raw,
 						response,
 						startTime,
@@ -169,7 +196,7 @@ app.all("/*", async (c) => {
 					createUsageDataPoint({
 						projectId: config.project_id,
 						orgId: config.org_id,
-						tier: "free",
+						tier: config.tier || "free",
 						request: c.req.raw,
 						response: new Response(null, { status: 503 }),
 						startTime,

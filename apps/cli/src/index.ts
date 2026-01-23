@@ -45,6 +45,7 @@ const cli = meow(
   Advanced
     agents              Manage AI agent configs
     secrets             Manage project secrets
+    domain              Manage custom domains
     skills              Install and run agent skills
     services            Manage databases
     mcp                 MCP server for AI agents
@@ -385,6 +386,14 @@ try {
 			});
 			break;
 		}
+		case "domain":
+		case "domains": {
+			const { default: domain } = await import("./commands/domain.ts");
+			await withTelemetry("domain", domain, { subcommand: args[0] })(args[0], args.slice(1), {
+				project: cli.flags.project,
+			});
+			break;
+		}
 		case "mcp": {
 			const { default: mcp } = await import("./commands/mcp.ts");
 			// Note: Don't use withTelemetry wrapper for MCP serve - it runs indefinitely
@@ -428,10 +437,14 @@ try {
 			await withTelemetry("whoami", whoami)();
 			break;
 		}
-		case "update":
-		case "upgrade": {
+		case "update": {
 			const { default: update } = await import("./commands/update.ts");
 			await withTelemetry("update", update)();
+			break;
+		}
+		case "upgrade": {
+			const { default: upgrade } = await import("./commands/upgrade.ts");
+			await withTelemetry("upgrade", upgrade)();
 			break;
 		}
 		case "feedback": {
