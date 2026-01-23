@@ -35,7 +35,15 @@ export const Events = {
 	AUTO_DETECT_REJECTED: "auto_detect_rejected",
 	// Service events
 	SERVICE_CREATED: "service_created",
+	SERVICE_DELETED: "service_deleted",
 	SQL_EXECUTED: "sql_executed",
+	// AARRR lifecycle events
+	USER_INSTALLED: "user_installed",
+	USER_ACTIVATED: "user_activated",
+	// BYO deploy events (parity with managed)
+	BYO_DEPLOY_STARTED: "byo_deploy_started",
+	BYO_DEPLOY_COMPLETED: "byo_deploy_completed",
+	BYO_DEPLOY_FAILED: "byo_deploy_failed",
 } as const;
 
 type EventName = (typeof Events)[keyof typeof Events];
@@ -121,7 +129,7 @@ export interface UserProperties {
 	config_style?: "byoc" | "jack-cloud";
 }
 
-// Detect environment properties
+// Detect environment properties (for user profile - stable properties)
 export function getEnvironmentProps(): Pick<
 	UserProperties,
 	"shell" | "terminal" | "terminal_width" | "is_tty" | "locale"
@@ -132,6 +140,25 @@ export function getEnvironmentProps(): Pick<
 		terminal_width: process.stdout.columns,
 		is_tty: process.stdout.isTTY ?? false,
 		locale: Intl.DateTimeFormat().resolvedOptions().locale,
+	};
+}
+
+// ============================================
+// INVOCATION CONTEXT (per-event, not per-user)
+// ============================================
+export interface InvocationContext {
+	is_tty: boolean;
+	is_ci: boolean;
+	terminal?: string;
+	shell?: string;
+}
+
+export function getInvocationContext(): InvocationContext {
+	return {
+		is_tty: process.stdout.isTTY ?? false,
+		is_ci: !!process.env.CI,
+		terminal: process.env.TERM_PROGRAM,
+		shell: process.env.SHELL?.split("/").pop(),
 	};
 }
 
@@ -203,11 +230,40 @@ export async function track(event: EventName, properties?: Record<string, unknow
 	}
 }
 
+export async function trackActivationIfFirst(deployMode: "managed" | "byo"): Promise<void> {
+	try {
+		const { getTelemetryConfig, saveTelemetryConfig } = await import("./telemetry-config.ts");
+		const config = await getTelemetryConfig();
+
+		// Already activated? Skip
+		if (config.firstDeployAt) {
+			return;
+		}
+
+		const now = new Date();
+		const firstSeen = config.firstSeenAt ? new Date(config.firstSeenAt) : now;
+		const daysToActivate = Math.floor((now.getTime() - firstSeen.getTime()) / (1000 * 60 * 60 * 24));
+
+		// Fire activation event
+		track(Events.USER_ACTIVATED, {
+			deploy_mode: deployMode,
+			days_to_activate: daysToActivate,
+		});
+
+		// Save activation timestamp
+		config.firstDeployAt = now.toISOString();
+		await saveTelemetryConfig(config);
+	} catch {
+		// Ignore - telemetry should not break CLI
+	}
+}
+
 // ============================================
 // WRAPPER
 // ============================================
 export interface TelemetryOptions {
 	platform?: "cli" | "mcp";
+	subcommand?: string;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Required for flexible command wrapping
@@ -217,9 +273,11 @@ export function withTelemetry<T extends (...args: any[]) => Promise<any>>(
 	options?: TelemetryOptions,
 ): T {
 	const platform = options?.platform ?? "cli";
+	const subcommand = options?.subcommand;
 
 	return (async (...args: Parameters<T>) => {
-		track(Events.COMMAND_INVOKED, { command: commandName, platform });
+		const context = getInvocationContext();
+		track(Events.COMMAND_INVOKED, { command: commandName, platform, ...(subcommand && { subcommand }), ...context });
 		const start = Date.now();
 
 		try {
@@ -227,15 +285,19 @@ export function withTelemetry<T extends (...args: any[]) => Promise<any>>(
 			track(Events.COMMAND_COMPLETED, {
 				command: commandName,
 				platform,
+				...(subcommand && { subcommand }),
 				duration_ms: Date.now() - start,
+				...context,
 			});
 			return result;
 		} catch (error) {
 			track(Events.COMMAND_FAILED, {
 				command: commandName,
 				platform,
+				...(subcommand && { subcommand }),
 				error_type: classifyError(error),
 				duration_ms: Date.now() - start,
+				...context,
 			});
 			throw error;
 		}

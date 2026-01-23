@@ -4,7 +4,7 @@ import pkg from "../package.json";
 import { enableDebug } from "./lib/debug.ts";
 import { isJackError } from "./lib/errors.ts";
 import { info, error as printError } from "./lib/output.ts";
-import { getEnvironmentProps, identify, shutdown, withTelemetry } from "./lib/telemetry.ts";
+import { identify, shutdown, withTelemetry } from "./lib/telemetry.ts";
 
 const cli = meow(
 	`
@@ -45,6 +45,7 @@ const cli = meow(
   Advanced
     agents              Manage AI agent configs
     secrets             Manage project secrets
+    skills              Install and run agent skills
     services            Manage databases
     mcp                 MCP server for AI agents
     telemetry           Usage data settings
@@ -187,15 +188,37 @@ if (cli.flags.debug) {
 
 const [command, ...args] = cli.input;
 
-// Identify user properties for telemetry
-identify({
-	jack_version: pkg.version,
-	os: process.platform,
-	arch: process.arch,
-	node_version: process.version,
-	is_ci: !!process.env.CI,
-	...getEnvironmentProps(),
-});
+// Identify user properties for telemetry (dedupe to once per day)
+(async () => {
+	try {
+		const { getTelemetryConfig, saveTelemetryConfig } = await import("./lib/telemetry-config.ts");
+		const config = await getTelemetryConfig();
+		const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+
+		if (config.lastIdentifyDate === today) {
+			return; // Already identified today
+		}
+
+		identify({
+			jack_version: pkg.version,
+			os: process.platform,
+			arch: process.arch,
+			node_version: process.version,
+		});
+
+		// Update lastIdentifyDate
+		config.lastIdentifyDate = today;
+		await saveTelemetryConfig(config);
+	} catch {
+		// Fallback: just call identify without deduping
+		identify({
+			jack_version: pkg.version,
+			os: process.platform,
+			arch: process.arch,
+			node_version: process.version,
+		});
+	}
+})();
 
 // Start non-blocking version check (skip for update command, CI, and help)
 const skipVersionCheck =
@@ -269,14 +292,14 @@ try {
 		}
 		case "agents": {
 			const { default: agents } = await import("./commands/agents.ts");
-			await withTelemetry("agents", agents)(args[0], args.slice(1), {
+			await withTelemetry("agents", agents, { subcommand: args[0] })(args[0], args.slice(1), {
 				project: cli.flags.project,
 			});
 			break;
 		}
 		case "tag": {
 			const { default: tag } = await import("./commands/tag.ts");
-			await withTelemetry("tag", tag)(args[0], args.slice(1));
+			await withTelemetry("tag", tag, { subcommand: args[0] })(args[0], args.slice(1));
 			break;
 		}
 		case "sync": {
@@ -337,7 +360,7 @@ try {
 			if (cli.flags.cloud) projectArgs.push("--cloud");
 			if (cli.flags.yes) projectArgs.push("--yes");
 			if (cli.flags.force) projectArgs.push("--force");
-			await withTelemetry("projects", projects)(args[0], projectArgs);
+			await withTelemetry("projects", projects, { subcommand: args[0] })(args[0], projectArgs);
 			break;
 		}
 		case "services": {
@@ -346,14 +369,18 @@ try {
 			if (cli.flags.write) serviceArgs.push("--write");
 			if (cli.flags.file) serviceArgs.push("--file", cli.flags.file);
 			if (cli.flags.db) serviceArgs.push("--db", cli.flags.db);
-			await withTelemetry("services", services)(args[0], serviceArgs, {
+
+			// Build subcommand: "db create", "storage list", or just "db"
+			const subcommand = args[0] ? (args[1] ? `${args[0]} ${args[1]}` : args[0]) : undefined;
+
+			await withTelemetry("services", services, { subcommand })(args[0], serviceArgs, {
 				project: cli.flags.project,
 			});
 			break;
 		}
 		case "secrets": {
 			const { default: secrets } = await import("./commands/secrets.ts");
-			await withTelemetry("secrets", secrets)(args[0], args.slice(1), {
+			await withTelemetry("secrets", secrets, { subcommand: args[0] })(args[0], args.slice(1), {
 				project: cli.flags.project,
 			});
 			break;
@@ -378,12 +405,12 @@ try {
 					lsArgs.push("--tag", t);
 				}
 			}
-			await withTelemetry("projects", projects)("list", lsArgs);
+			await withTelemetry("projects", projects, { subcommand: "list" })("list", lsArgs);
 			break;
 		}
 		case "info": {
 			const { default: projects } = await import("./commands/projects.ts");
-			await withTelemetry("projects", projects)("info", args);
+			await withTelemetry("projects", projects, { subcommand: "info" })("info", args);
 			break;
 		}
 		case "login": {
@@ -426,6 +453,11 @@ try {
 		case "unlink": {
 			const { default: unlink } = await import("./commands/unlink.ts");
 			await withTelemetry("unlink", unlink)();
+			break;
+		}
+		case "skills": {
+			const { default: skills } = await import("./commands/skills.ts");
+			await withTelemetry("skills", skills, { subcommand: args[0] })(args[0], args.slice(1));
 			break;
 		}
 		default:
