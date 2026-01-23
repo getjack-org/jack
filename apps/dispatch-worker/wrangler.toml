@@ -2,11 +2,13 @@ name = "jack-dispatch"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
-# Wildcard route for tenant routing
-# Tenant apps live at {slug}.runjack.xyz
-# DNS: Add A record * -> 192.0.2.1 (proxied) in runjack.xyz zone
+# Routes for tenant and custom domain routing
+# Tenant apps: {username}-{slug}.runjack.xyz
+# Custom domains: SSL for SaaS routes here via fallback origin
+# The */* pattern catches ALL traffic including custom hostnames
+# DNS: Add A records for @ and * -> 192.0.2.1 (proxied) in runjack.xyz zone
 routes = [
-  { pattern = "*.runjack.xyz/*", zone_name = "runjack.xyz" }
+  { pattern = "*/*", zone_name = "runjack.xyz" }
 ]
 
 [[kv_namespaces]]

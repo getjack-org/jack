@@ -130,6 +130,38 @@ interface VectorizeIndex {
 }
 
 // =====================================================
+// Custom Hostnames API Types (Cloudflare for SaaS)
+// =====================================================
+
+/**
+ * Custom hostname from Cloudflare API response
+ * Docs: https://developers.cloudflare.com/api/operations/custom-hostname-for-a-zone-list-custom-hostnames
+ */
+export interface CloudflareCustomHostname {
+	id: string;
+	hostname: string;
+	status: "pending" | "active" | "pending_deletion" | "moved" | "blocked" | "deleted";
+	ssl: {
+		status: "pending_validation" | "pending_issuance" | "pending_deployment" | "active";
+		method: string;
+		type: string;
+		certificate_authority: string;
+		validation_errors?: Array<{ message: string }>;
+	};
+	ownership_verification?: {
+		type: "txt";
+		name: string;
+		value: string;
+	};
+	ownership_verification_http?: {
+		http_url: string;
+		http_body: string;
+	};
+	verification_errors?: string[];
+	created_at: string;
+}
+
+// =====================================================
 // Workers Assets API Types & Utilities
 // =====================================================
 
@@ -308,11 +340,20 @@ export interface DispatchScriptBinding {
 export class CloudflareClient {
 	private accountId: string;
 	private apiToken: string;
+	private zoneId: string | null = null;
 	private baseUrl = "https://api.cloudflare.com/client/v4";
 
 	constructor(env: Bindings) {
 		this.accountId = env.CLOUDFLARE_ACCOUNT_ID;
 		this.apiToken = env.CLOUDFLARE_API_TOKEN;
+	}
+
+	/**
+	 * Sets the zone ID for zone-level API operations (e.g., custom hostnames).
+	 * Call this before using custom hostname methods.
+	 */
+	setZoneId(zoneId: string): void {
+		this.zoneId = zoneId;
 	}
 
 	/**
@@ -344,6 +385,120 @@ export class CloudflareClient {
 		}
 
 		return data.result;
+	}
+
+	/**
+	 * Makes an authenticated request to a zone-level Cloudflare API endpoint.
+	 * Used for Custom Hostnames which are zone-scoped, not account-scoped.
+	 */
+	private async zoneRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+		if (!this.zoneId) {
+			throw new Error("Zone ID not configured. Call setZoneId() first.");
+		}
+
+		const url = `${this.baseUrl}/zones/${this.zoneId}${path}`;
+		const options: RequestInit = {
+			method,
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "application/json",
+			},
+		};
+
+		if (body) {
+			options.body = JSON.stringify(body);
+		}
+
+		const response = await fetch(url, options);
+		const data = (await response.json()) as CloudflareResponse<T>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => `[${e.code}] ${e.message}`).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Cloudflare API error: ${errorMsg}`);
+		}
+
+		return data.result;
+	}
+
+	// =====================================================
+	// Custom Hostnames API Methods (Cloudflare for SaaS)
+	// =====================================================
+
+	/**
+	 * Creates a custom hostname for Cloudflare for SaaS.
+	 * The hostname will be validated via HTTP (CNAME) and SSL issued automatically.
+	 *
+	 * @param hostname - The custom hostname (e.g., api.mycompany.com)
+	 * @returns The created custom hostname object
+	 *
+	 * Docs: https://developers.cloudflare.com/api/operations/custom-hostname-for-a-zone-create-custom-hostname
+	 */
+	async createCustomHostname(hostname: string): Promise<CloudflareCustomHostname> {
+		return this.zoneRequest<CloudflareCustomHostname>("POST", "/custom_hostnames", {
+			hostname,
+			ssl: {
+				method: "http",
+				type: "dv",
+			},
+		});
+	}
+
+	/**
+	 * Gets the current status of a custom hostname by its Cloudflare ID.
+	 *
+	 * @param hostnameId - The Cloudflare custom hostname ID
+	 * @returns The custom hostname object with current status
+	 */
+	async getCustomHostname(hostnameId: string): Promise<CloudflareCustomHostname> {
+		return this.zoneRequest<CloudflareCustomHostname>("GET", `/custom_hostnames/${hostnameId}`);
+	}
+
+	/**
+	 * Deletes a custom hostname from Cloudflare.
+	 *
+	 * @param hostnameId - The Cloudflare custom hostname ID
+	 */
+	async deleteCustomHostname(hostnameId: string): Promise<void> {
+		await this.zoneRequest<{ id: string }>("DELETE", `/custom_hostnames/${hostnameId}`);
+	}
+
+	/**
+	 * Lists custom hostnames, optionally filtered by hostname.
+	 * Useful for checking if a hostname already exists.
+	 *
+	 * @param hostname - Optional hostname to filter by (exact match)
+	 * @returns Array of matching custom hostnames
+	 */
+	async listCustomHostnames(hostname?: string): Promise<CloudflareCustomHostname[]> {
+		const params = new URLSearchParams();
+		if (hostname) {
+			params.set("hostname", hostname);
+		}
+		params.set("per_page", "50");
+
+		const queryString = params.toString();
+		const path = `/custom_hostnames${queryString ? `?${queryString}` : ""}`;
+
+		return this.zoneRequest<CloudflareCustomHostname[]>("GET", path);
+	}
+
+	/**
+	 * Refreshes SSL validation for a custom hostname.
+	 * Call this when user reports they've set up DNS but domain isn't active yet.
+	 *
+	 * @param hostnameId - The Cloudflare custom hostname ID
+	 * @returns Updated custom hostname status
+	 */
+	async refreshCustomHostname(hostnameId: string): Promise<CloudflareCustomHostname> {
+		// PATCH with empty body triggers a refresh
+		return this.zoneRequest<CloudflareCustomHostname>(
+			"PATCH",
+			`/custom_hostnames/${hostnameId}`,
+			{},
+		);
 	}
 
 	/**
