@@ -1054,7 +1054,7 @@ api.get("/orgs/:orgId/ai-usage", async (c) => {
 
 // ==================== BILLING ROUTES ====================
 
-// GET /v1/orgs/:orgId/billing - Get billing status
+// GET /v1/orgs/:orgId/billing - Get billing status with entitlements
 api.get("/orgs/:orgId/billing", async (c) => {
 	const auth = c.get("auth");
 	const orgId = c.req.param("orgId");
@@ -1073,7 +1073,20 @@ api.get("/orgs/:orgId/billing", async (c) => {
 	const billingService = new BillingService(c.env);
 	const billing = await billingService.getOrCreateBilling(orgId);
 
-	// Return sanitized billing info (no internal Stripe IDs in response)
+	// Count active custom domains for this org
+	const domainsResult = await c.env.DB.prepare(
+		`SELECT COUNT(*) as count FROM custom_domains cd
+		 JOIN projects p ON cd.project_id = p.id
+		 WHERE p.org_id = ? AND cd.status = 'active'`,
+	)
+		.bind(orgId)
+		.first<{ count: number }>();
+
+	const customDomainsUsed = domainsResult?.count ?? 0;
+	const tier = (billing.plan_tier || "free") as PlanTier;
+	const customDomainsLimit = TIER_LIMITS[tier].custom_domains;
+
+	// Return sanitized billing info with entitlements
 	return c.json({
 		billing: {
 			plan_tier: billing.plan_tier,
@@ -1081,6 +1094,11 @@ api.get("/orgs/:orgId/billing", async (c) => {
 			current_period_end: billing.current_period_end,
 			cancel_at_period_end: billing.cancel_at_period_end === 1,
 			is_paid: billingService.isPaidTier(billing),
+		},
+		entitlements: {
+			custom_domains_limit: customDomainsLimit,
+			custom_domains_used: customDomainsUsed,
+			custom_domains_available: Math.max(0, customDomainsLimit - customDomainsUsed),
 		},
 	});
 });
