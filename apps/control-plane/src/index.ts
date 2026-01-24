@@ -2711,6 +2711,7 @@ api.get("/domains", async (c) => {
 
 	const formattedDomains = domains.map((d) => ({
 		...formatDomainResponse(d),
+		project_id: d.project_id,
 		project_slug: d.project_slug,
 		project_url: `https://${d.owner_username || "user"}-${d.project_slug}.runjack.xyz`,
 	}));

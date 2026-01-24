@@ -134,17 +134,29 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 
 	// Show slot usage
 	const { used, max } = data.slots;
-	const slotColor = used >= max ? colors.yellow : colors.green;
-	console.error(`  ${colors.bold}Custom Domains${colors.reset}  ${slotColor}${used}/${max} slots used${colors.reset}`);
-	console.error("");
+	const available = max - used;
 
 	if (data.domains.length === 0) {
-		info("No custom domains configured");
-		console.error("");
-		info("Add a domain: jack domain add <hostname>");
+		// Empty state - focus on what's available
+		if (max === 0) {
+			console.error(`  ${colors.bold}Custom Domains${colors.reset}  ${colors.yellow}Free plan${colors.reset}`);
+			console.error("");
+			info("Custom domains require a Pro plan");
+			info("Upgrade: jack upgrade");
+		} else {
+			console.error(`  ${colors.bold}Custom Domains${colors.reset}  ${colors.green}${available} slots available${colors.reset}`);
+			console.error("");
+			info("Connect your domain to any project:");
+			console.error(`  jack domain add ${colors.cyan}api.yourcompany.com${colors.reset} -p ${colors.cyan}<project>${colors.reset}`);
+		}
 		console.error("");
 		return;
 	}
+
+	// Has domains - show usage
+	const slotColor = used >= max ? colors.yellow : colors.green;
+	console.error(`  ${colors.bold}Custom Domains${colors.reset}  ${slotColor}${used}/${max} slots${colors.reset}`);
+	console.error("");
 
 	// Group by status
 	const active = data.domains.filter((d) => d.status === "active");
@@ -190,9 +202,12 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 		console.error("");
 	}
 
-	// Footer hints
-	info("jack domain add <hostname> -p <project>  to add a domain");
-	info("jack domain -p <project>                 to see project domain status");
+	// Footer hints - show available slots if any
+	if (available > 0) {
+		info(`${available} slot${available > 1 ? "s" : ""} available. Add: jack domain add <hostname> -p <project>`);
+	} else {
+		info("All slots used. Remove a domain to free a slot: jack domain rm <hostname>");
+	}
 	console.error("");
 }
 
