@@ -472,34 +472,55 @@ async function removeDomain(args: string[], options: DomainOptions): Promise<voi
 		process.exit(1);
 	}
 
-	const { projectId } = await resolveProjectContext(options);
-
-	// First, list domains to find the ID
 	output.start("Finding domain...");
 
-	const listResponse = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/domains`);
+	// If no project specified, look up domain globally (hostnames are unique)
+	let projectId: string;
+	let domainId: string;
 
-	if (!listResponse.ok) {
-		output.stop();
-		const err = (await listResponse.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
+	if (options.project) {
+		// Project specified - use the existing flow
+		const ctx = await resolveProjectContext(options);
+		projectId = ctx.projectId;
+
+		const listResponse = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/domains`);
+		if (!listResponse.ok) {
+			output.stop();
+			error(`Failed to list domains for project`);
+			process.exit(1);
+		}
+		const listData = (await listResponse.json()) as ListDomainsResponse;
+		const domain = listData.domains.find((d) => d.hostname === hostname);
+		if (!domain) {
+			output.stop();
+			error(`Domain not found: ${hostname}`);
+			info("Run 'jack domains' to see all configured domains");
+			process.exit(1);
+		}
+		domainId = domain.id;
+	} else {
+		// No project specified - look up globally (hostnames are unique)
+		const globalResponse = await authFetch(`${getControlApiUrl()}/v1/domains`);
+		if (!globalResponse.ok) {
+			output.stop();
+			error("Failed to list domains");
+			process.exit(1);
+		}
+		const globalData = (await globalResponse.json()) as {
+			domains: Array<{ id: string; hostname: string; project_id: string; project_slug: string }>;
 		};
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to list domains: ${listResponse.status}`,
-		);
+		const domain = globalData.domains.find((d) => d.hostname === hostname);
+		if (!domain) {
+			output.stop();
+			error(`Domain not found: ${hostname}`);
+			info("Run 'jack domains' to see all configured domains");
+			process.exit(1);
+		}
+		domainId = domain.id;
+		projectId = domain.project_id;
 	}
-
-	const listData = (await listResponse.json()) as ListDomainsResponse;
-	const domain = listData.domains.find((d) => d.hostname === hostname);
 
 	output.stop();
-
-	if (!domain) {
-		error(`Domain not found: ${hostname}`);
-		info("Run 'jack domain' to see configured domains");
-		process.exit(1);
-	}
 
 	// Confirm removal
 	console.error("");
@@ -513,7 +534,7 @@ async function removeDomain(args: string[], options: DomainOptions): Promise<voi
 	output.start("Removing domain...");
 
 	const deleteResponse = await authFetch(
-		`${getControlApiUrl()}/v1/projects/${projectId}/domains/${domain.id}`,
+		`${getControlApiUrl()}/v1/projects/${projectId}/domains/${domainId}`,
 		{ method: "DELETE" },
 	);
 
