@@ -45,6 +45,28 @@ export const CONFIG_DIR = process.env.JACK_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 /**
+ * Default Jack home directory for projects
+ */
+export const DEFAULT_JACK_HOME = join(homedir(), ".jack", "projects");
+
+/**
+ * Get the Jack home directory for projects.
+ * Supports environment variable override via JACK_HOME.
+ * @returns The resolved Jack home path (~ expanded to home directory)
+ */
+export function getJackHome(): string {
+	const envHome = process.env.JACK_HOME;
+	if (envHome) {
+		// Expand ~ to home directory if present
+		if (envHome.startsWith("~")) {
+			return join(homedir(), envHome.slice(1));
+		}
+		return envHome;
+	}
+	return DEFAULT_JACK_HOME;
+}
+
+/**
  * Ensure config directory exists
  */
 async function ensureConfigDir(): Promise<void> {

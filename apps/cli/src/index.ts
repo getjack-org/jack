@@ -15,7 +15,7 @@ const cli = meow(
 
   Getting Started
     init                Set up jack (run once)
-    new [name]          Create and deploy a project
+    new <name> [path]   Create and deploy a project
     vibe "<phrase>"     Create from an idea
     ship                Push changes to production
 
@@ -245,7 +245,7 @@ try {
 		case "new":
 		case "in": {
 			const { default: newProject } = await import("./commands/new.ts");
-			await withTelemetry("new", newProject)(args[0], {
+			await withTelemetry("new", newProject)(args[0], args[1], {
 				template: cli.flags.template,
 				intent: cli.flags.message,
 				managed: cli.flags.managed,
@@ -259,7 +259,7 @@ try {
 		case "vibe": {
 			const { default: newProject } = await import("./commands/new.ts");
 			// vibe always treats first arg as intent phrase
-			await withTelemetry("vibe", newProject)(undefined, {
+			await withTelemetry("vibe", newProject)(undefined, undefined, {
 				template: cli.flags.template,
 				intent: args[0],
 			});
