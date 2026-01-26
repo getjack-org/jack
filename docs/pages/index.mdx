@@ -10,25 +10,23 @@
   .dark .hero-logo .logo-light { display: none; }
 `}</style>
 
-## **Ship before you forget why you started.**
+# Ship before you forget why you started.
 
-jack removes the friction between your idea and a live URL.
+Ever find yourself with a dozen half-finished projects scattered across your machine? Each one was going to be *the thing*, but then you had to set up env vars, configure secrets, figure out deployment... and suddenly it's 2am. Again. (We don't judge.)
 
-## Install
-
-```bash
-bun add -g @getjack/jack
-```
-
-Then create and deploy your first project:
+Your AI wrote the app. Now it's rotting in localhost because deploys are *a whole thing*.
 
 ```bash
 jack new my-app
 ```
 
-Or try without installing: `bunx @getjack/jack new my-app`
+That's it. Live URL. No config files, no deployment ceremony, no context-switching to dashboards.
 
-You'll need [Bun](https://bun.sh) installed.
+```bash
+bun add -g @getjack/jack
+```
+
+Or try without installing: `bunx @getjack/jack new my-app`
 
 <div style={{ display: 'flex', gap: '1.5rem', margin: '1.5rem 0', fontSize: '1.1rem' }}>
   <a href="https://www.npmjs.com/package/@getjack/jack">npm</a>
@@ -38,15 +36,38 @@ You'll need [Bun](https://bun.sh) installed.
 
 <img src="/jack-demo.gif" alt="jack demo" style={{ margin: '1rem 0 2rem', borderRadius: '12px', width: '100%' }} />
 
+---
+
+## Philosophy
+
+**Infrastructure should disappear.** The best deploy tooling is the kind you don't think about. `jack new` works immediately—no accounts, no config, no ceremony. If you need to read docs before shipping your first project, we've failed.
+
+**Creation is free.** You'll have dozens of experiments. That's the point. jack never blocks you from creating because old projects exist. `jack ls` shows everything; cleanup is optional, never forced.
+
+**No lock-in.** Everything jack creates is standard tooling—wrangler.jsonc, package.json, TypeScript. Your projects work without jack installed. We earn continued use through convenience, not capture.
+
+---
+
+## Who this is for
+
+Vibecoders. People who ship experiments constantly. Solo devs with more ideas than weekends.
+
+You move fast. AI makes it worse—now you can prototype anything in an afternoon. But each prototype needs its own env vars, secrets, deploy config.
+
+jack handles the boring parts. You stay in flow.
+
+---
+
 ## Why jack?
 
-- **Instant deployment** — `jack new` creates AND deploys. Live URL in seconds.
-- **Works with your agent** — Every project includes AI context files so your agent understands the stack.
-- **Roaming secrets** — Configure once, use across all projects. No more per-project secret ceremony.
-- **Project tracking** — 100 experiments scattered everywhere? `jack ls` finds them all.
-- **No lock-in** — Standard config files, standard TypeScript. Your projects work without jack installed.
+- **Instant deployment** — `jack new` creates AND deploys. One command, live URL.
+- **Works with your agent** — Every project includes context files so your AI understands the stack.
+- **Roaming secrets** — Configure once, use across all projects. No per-project ceremony.
+- **Project tracking** — Projects scattered everywhere? `jack ls` finds them all.
 
-## Zero-Config Deploys
+---
+
+## Zero-config deploys
 
 `jack ship` auto-detects your framework. No config files needed.
 
@@ -54,31 +75,31 @@ You'll need [Bun](https://bun.sh) installed.
 jack ship
 ```
 
+That's the deploy.
+
 | Supported | Coming Soon |
 |-----------|-------------|
 | Vite, Hono, SvelteKit | Astro, React Router, Nuxt, TanStack |
 
-[How it works →](/commands/ship)
-
 ---
 
-## Your Personal Template Library
+## Every deploy becomes a template
 
-Every deploy becomes a forkable template. Build on your own work:
-
-Ship a project:
-
-```bash
-jack ship
-```
-
-Later, start something new from it:
+Ship something, then start something new from it:
 
 ```bash
 jack new my-new-thing -t my-existing-project
 ```
 
-No extra steps. Private by default. [Learn more →](/commands/new#forking-projects)
+Build on your own work. Private by default.
+
+---
+
+## From experiment to production
+
+Your experiment worked. Now what?
+
+jack projects are standard tooling—wrangler.jsonc, package.json, TypeScript. No proprietary config. When you're ready to grow, swap in a custom domain and everything works with wrangler directly. Graduate when you want, not when we let you.
 
 ---
 
@@ -87,35 +108,39 @@ No extra steps. Private by default. [Learn more →](/commands/new#forking-proje
 | Command | What it does |
 |---------|--------------|
 | `jack new <name>` | Create and deploy a new project |
-| `jack ship` | Deploy current project |
-| `jack ls` | Show all your projects |
+| `jack ship` | Redeploy current project |
+| `jack ls` | List all your projects |
 | `jack open` | Open project in browser |
 
 [Full command reference →](/commands)
 
 ---
 
-## Who This Is For
+## For the impatient
 
-Builders who ship constantly. You spin up new projects all the time, and suddenly you have dozens scattered across your machine—each with its own env vars, secrets, and deploy setup you've already forgotten.
+```bash
+alias j='jack'
+alias jn='jack new'
+alias js='jack ship'
+```
 
-jack keeps you organized. One command to ship, one place to find everything, zero setup overhead. Stay creative, skip the ceremony.
+For when even `jack` feels too long.
 
 ---
 
-## Philosophy
+## Why "jack"?
 
-In Gibson's *Neuromancer*, "jacking in" means plugging directly into cyberspace. The body becomes irrelevant—you're pure thought in the matrix.
+In Gibson's *Neuromancer*, jacking in meant plugging directly into cyberspace. The body becomes irrelevant—you're pure thought in the matrix.
 
-jack handles the infrastructure so you stay in creative flow. The boring parts disappear. You just build.
+jack handles the infrastructure so you stay in creative flow.
+
+Infrastructure disappears. Creativity stays.
 
 ---
 
 ## For AI Agents
 
-jack docs are optimized for LLMs. These absolute URLs are copy/paste-ready for agents:
+Docs optimized for LLMs:
 
-- [https://docs.getjack.org/llms.txt](https://docs.getjack.org/llms.txt) — Summary for quick context
-- [https://docs.getjack.org/llms-full.txt](https://docs.getjack.org/llms-full.txt) — Full documentation
-
-These files are auto-generated at the root of the docs site.
+- [https://docs.getjack.org/llms.txt](https://docs.getjack.org/llms.txt) — Quick context
+- [https://docs.getjack.org/llms-full.txt](https://docs.getjack.org/llms-full.txt) — Full docs
