@@ -1939,7 +1939,10 @@ api.delete("/projects/:projectId", async (c) => {
 					const message = cfError instanceof Error ? cfError.message : String(cfError);
 					// Treat "not found" as success (already deleted)
 					if (!message.includes("not found") && !message.includes("does not exist")) {
-						console.error(`Failed to delete custom hostname ${domain.hostname} from Cloudflare:`, cfError);
+						console.error(
+							`Failed to delete custom hostname ${domain.hostname} from Cloudflare:`,
+							cfError,
+						);
 					}
 				}
 			}
@@ -3238,10 +3241,7 @@ api.post("/projects/:projectId/domains", async (c) => {
 				409,
 			);
 		}
-		return c.json(
-			{ error: "domain_taken", message: "Domain is already registered" },
-			409,
-		);
+		return c.json({ error: "domain_taken", message: "Domain is already registered" }, 409);
 	}
 
 	// Check project doesn't already have a domain (v1: 1 domain per project)

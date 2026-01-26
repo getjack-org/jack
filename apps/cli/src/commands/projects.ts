@@ -113,8 +113,7 @@ async function listProjects(args: string[]): Promise<void> {
 
 	// Parse --sort flag (default: updated)
 	const sortFlag = extractFlagValue(args, "--sort");
-	const sortOrder: SortOrder =
-		sortFlag === "name" || sortFlag === "created" ? sortFlag : "updated";
+	const sortOrder: SortOrder = sortFlag === "name" || sortFlag === "created" ? sortFlag : "updated";
 
 	// Extract positional filter (first arg that's not a flag or flag value)
 	const flagsWithValues = ["--status", "--tag", "--sort"];

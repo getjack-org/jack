@@ -76,11 +76,7 @@ export function fuzzyMatch(query: string, target: string): number {
  * Filter and sort items by fuzzy match score.
  * Returns only items with score > 0, sorted by score descending.
  */
-export function fuzzyFilter<T>(
-	query: string,
-	items: T[],
-	getText: (item: T) => string,
-): T[] {
+export function fuzzyFilter<T>(query: string, items: T[], getText: (item: T) => string): T[] {
 	if (!query) return items;
 
 	const scored = items
