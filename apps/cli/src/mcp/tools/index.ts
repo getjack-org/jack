@@ -15,6 +15,13 @@ import {
 	wrapResultsForMcp,
 } from "../../lib/services/db-execute.ts";
 import { listDatabases } from "../../lib/services/db-list.ts";
+import {
+	assignDomain,
+	connectDomain,
+	disconnectDomain,
+	listDomains,
+	unassignDomain,
+} from "../../lib/services/domain-operations.ts";
 import { createStorageBucket } from "../../lib/services/storage-create.ts";
 import { deleteStorageBucket } from "../../lib/services/storage-delete.ts";
 import { getStorageBucketInfo } from "../../lib/services/storage-info.ts";
@@ -187,6 +194,25 @@ const TailLogsSchema = z.object({
 		.optional()
 		.default(2_000)
 		.describe("How long to listen before returning (default: 2000ms, max: 10000ms)"),
+});
+
+const ListDomainsSchema = z.object({});
+
+const ConnectDomainSchema = z.object({
+	hostname: z.string().describe("The domain hostname to connect (e.g., 'app.example.com')"),
+});
+
+const AssignDomainSchema = z.object({
+	hostname: z.string().describe("The domain hostname to assign"),
+	project_slug: z.string().describe("The project slug to assign the domain to"),
+});
+
+const UnassignDomainSchema = z.object({
+	hostname: z.string().describe("The domain hostname to unassign from its project"),
+});
+
+const DisconnectDomainSchema = z.object({
+	hostname: z.string().describe("The domain hostname to disconnect (fully remove)"),
 });
 
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
@@ -510,6 +536,79 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							},
 						},
 						required: ["name"],
+					},
+				},
+				{
+					name: "list_domains",
+					description:
+						"List all custom domains for the current user, including their status and assigned projects.",
+					inputSchema: {
+						type: "object",
+						properties: {},
+					},
+				},
+				{
+					name: "connect_domain",
+					description:
+						"Reserve a custom domain slot. This is the first step before assigning the domain to a project.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							hostname: {
+								type: "string",
+								description: "The domain hostname to connect (e.g., 'app.example.com')",
+							},
+						},
+						required: ["hostname"],
+					},
+				},
+				{
+					name: "assign_domain",
+					description:
+						"Assign a reserved domain to a project. The domain must be connected first. Returns DNS verification instructions.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							hostname: {
+								type: "string",
+								description: "The domain hostname to assign",
+							},
+							project_slug: {
+								type: "string",
+								description: "The project slug to assign the domain to",
+							},
+						},
+						required: ["hostname", "project_slug"],
+					},
+				},
+				{
+					name: "unassign_domain",
+					description:
+						"Unassign a domain from its project, keeping the domain slot reserved for future use.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							hostname: {
+								type: "string",
+								description: "The domain hostname to unassign from its project",
+							},
+						},
+						required: ["hostname"],
+					},
+				},
+				{
+					name: "disconnect_domain",
+					description:
+						"Fully remove a domain, releasing the slot. Use this when you no longer need the domain.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							hostname: {
+								type: "string",
+								description: "The domain hostname to disconnect (fully remove)",
+							},
+						},
+						required: ["hostname"],
 					},
 				},
 			],
@@ -954,10 +1053,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 									return {
 										success: false,
 										error: err.message,
-										suggestion:
-											"Destructive operations (DROP, TRUNCATE, ALTER, DELETE without WHERE) " +
-											"must be run via CLI with explicit confirmation: " +
-											`jack services db execute "${sql.slice(0, 50)}..." --write`,
+										suggestion: `Destructive operations (DROP, TRUNCATE, ALTER, DELETE without WHERE) must be run via CLI with explicit confirmation: jack services db execute "${sql.slice(0, 50)}..." --write`,
 										risk_level: "destructive",
 									};
 								}
@@ -1308,6 +1404,157 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					);
 
 					const result = await wrappedDeleteStorageBucket(projectPath, args.name);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "list_domains": {
+					ListDomainsSchema.parse(request.params.arguments ?? {});
+
+					const wrappedListDomains = withTelemetry(
+						"list_domains",
+						async () => {
+							const result = await listDomains();
+							return {
+								domains: result.domains.map((d) => ({
+									id: d.id,
+									hostname: d.hostname,
+									status: d.status,
+									ssl_status: d.ssl_status,
+									project_id: d.project_id,
+									project_slug: d.project_slug,
+									created_at: d.created_at,
+								})),
+								slots: result.slots,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedListDomains();
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "connect_domain": {
+					const args = ConnectDomainSchema.parse(request.params.arguments ?? {});
+
+					const wrappedConnectDomain = withTelemetry(
+						"connect_domain",
+						async (hostname: string) => {
+							const result = await connectDomain(hostname);
+							return {
+								id: result.id,
+								hostname: result.hostname,
+								status: result.status,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedConnectDomain(args.hostname);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "assign_domain": {
+					const args = AssignDomainSchema.parse(request.params.arguments ?? {});
+
+					const wrappedAssignDomain = withTelemetry(
+						"assign_domain",
+						async (hostname: string, projectSlug: string) => {
+							const result = await assignDomain(hostname, projectSlug);
+							return {
+								id: result.id,
+								hostname: result.hostname,
+								status: result.status,
+								ssl_status: result.ssl_status,
+								project_id: result.project_id,
+								project_slug: result.project_slug,
+								verification: result.verification,
+								ownership_verification: result.ownership_verification,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedAssignDomain(args.hostname, args.project_slug);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "unassign_domain": {
+					const args = UnassignDomainSchema.parse(request.params.arguments ?? {});
+
+					const wrappedUnassignDomain = withTelemetry(
+						"unassign_domain",
+						async (hostname: string) => {
+							const result = await unassignDomain(hostname);
+							return {
+								id: result.id,
+								hostname: result.hostname,
+								status: result.status,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedUnassignDomain(args.hostname);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "disconnect_domain": {
+					const args = DisconnectDomainSchema.parse(request.params.arguments ?? {});
+
+					const wrappedDisconnectDomain = withTelemetry(
+						"disconnect_domain",
+						async (hostname: string) => {
+							const result = await disconnectDomain(hostname);
+							return {
+								success: result.success,
+								hostname: result.hostname,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedDisconnectDomain(args.hostname);
 
 					return {
 						content: [
