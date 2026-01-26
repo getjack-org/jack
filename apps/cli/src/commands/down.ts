@@ -90,7 +90,7 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		// Check if found only on control plane (orphaned managed project)
 		if (resolved?.sources.controlPlane && !resolved.sources.filesystem) {
 			console.error("");
-			info(`Found "${name}" on jack cloud, linking locally...`);
+			info(`Found "${name}" on jack cloud`);
 		}
 
 		// Guard against mismatched resolutions when an explicit name is provided
@@ -117,6 +117,7 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			// Get the project ID from link or resolved data
 			const projectId = link?.project_id || resolved?.remote?.projectId;
 			const runjackUrl = resolved?.url || null;
+			const localPath = resolved?.localPath || null;
 
 			if (!projectId) {
 				error("Cannot determine project ID for managed deletion");
@@ -124,18 +125,19 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			}
 
 			// Route to managed deletion flow
-			const deleteSuccess = await managedDown({ projectId, runjackUrl }, name, flags);
+			const deleteSuccess = await managedDown({ projectId, runjackUrl, localPath }, name, flags);
 			if (!deleteSuccess) {
 				process.exit(0); // User cancelled
 			}
 
-			// Clean up local tracking state
-			const localPath = resolved?.localPath || process.cwd();
-			try {
-				await unlinkProject(localPath);
-				await unregisterPath(projectId, localPath);
-			} catch {
-				// Non-fatal: local cleanup failed but cloud deletion succeeded
+			// Clean up local tracking state (only if project has local path)
+			if (resolved?.localPath) {
+				try {
+					await unlinkProject(resolved.localPath);
+					await unregisterPath(projectId, resolved.localPath);
+				} catch {
+					// Non-fatal: local cleanup failed but cloud deletion succeeded
+				}
 			}
 			return;
 		}

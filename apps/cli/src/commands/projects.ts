@@ -6,8 +6,8 @@ import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import {
 	type ProjectListItem,
-	type SortOrder,
 	STATUS_ICONS,
+	type SortOrder,
 	buildTagColorMap,
 	colors,
 	filterByStatus,

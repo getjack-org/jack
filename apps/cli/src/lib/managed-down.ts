@@ -3,8 +3,10 @@
  * Mirrors BYO down.ts flow but uses control plane APIs.
  */
 
+import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getJackHome } from "./config.ts";
 import {
 	deleteManagedProject,
 	exportManagedDatabase,
@@ -20,6 +22,7 @@ export interface ManagedDownFlags {
 export interface ManagedProjectInfo {
 	projectId: string;
 	runjackUrl: string | null;
+	localPath: string | null;
 }
 
 export async function managedDown(
@@ -92,8 +95,10 @@ export async function managedDown(
 	// Auto-export database if it exists (no prompt)
 	let exportPath: string | null = null;
 	if (hasDatabase) {
-		exportPath = join(process.cwd(), `${projectName}-backup.sql`);
-		output.start(`Exporting database to ${exportPath}...`);
+		const backupDir = project.localPath ?? join(getJackHome(), projectName);
+		mkdirSync(backupDir, { recursive: true });
+		exportPath = join(backupDir, `${projectName}-backup.sql`);
+		output.start("Exporting database...");
 
 		try {
 			const exportResult = await exportManagedDatabase(projectId);
@@ -132,7 +137,7 @@ export async function managedDown(
 		console.error("");
 		success(`Undeployed '${projectName}'`);
 		if (exportPath) {
-			info(`Backup saved to ./${projectName}-backup.sql`);
+			info(`Backup saved to ${exportPath}`);
 		}
 		console.error("");
 		return true;
