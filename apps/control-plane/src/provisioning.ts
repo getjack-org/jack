@@ -216,6 +216,12 @@ export class ProvisioningService {
 				.bind(projectId)
 				.run();
 
+			// Get tier from org_billing
+			const billing = await this.db
+				.prepare("SELECT plan_tier FROM org_billing WHERE org_id = ?")
+				.bind(orgId)
+				.first<{ plan_tier: string }>();
+
 			// Write ProjectConfig to KV cache
 			const projectConfig: ProjectConfig = {
 				project_id: projectId,
@@ -226,6 +232,7 @@ export class ProvisioningService {
 				content_bucket_name: enableContentBucket ? resourceNames.r2Content : null,
 				owner_username: ownerUsername,
 				status: "active",
+				tier: (billing?.plan_tier as "free" | "pro" | "team") || "free",
 				updated_at: new Date().toISOString(),
 			};
 
@@ -374,6 +381,12 @@ export class ProvisioningService {
 				// Get existing cache to preserve d1_database_id if lookup returns nothing
 				const existingCache = await this.cacheService.getProjectConfig(projectId);
 
+				// Get tier from org_billing
+				const billing = await this.db
+					.prepare("SELECT plan_tier FROM org_billing WHERE org_id = ?")
+					.bind(projectRecord.org_id)
+					.first<{ plan_tier: string }>();
+
 				const projectConfig: ProjectConfig = {
 					project_id: projectId,
 					org_id: projectRecord.org_id,
@@ -383,6 +396,7 @@ export class ProvisioningService {
 					content_bucket_name: resourceNames.r2Content,
 					owner_username: projectRecord.owner_username,
 					status: "active",
+					tier: (billing?.plan_tier as "free" | "pro" | "team") || "free",
 					updated_at: new Date().toISOString(),
 				};
 				await this.cacheService.setProjectConfig(projectConfig);
@@ -797,10 +811,10 @@ export class ProvisioningService {
 			};
 		}
 
-			const rpm = limits.requests_per_minute ?? existingConfig.limits?.requests_per_minute;
-			if (rpm === undefined) return;
-			await this.cacheService.updateProjectConfig(projectId, {
-				limits: { requests_per_minute: rpm },
-			});
-		}
+		const rpm = limits.requests_per_minute ?? existingConfig.limits?.requests_per_minute;
+		if (rpm === undefined) return;
+		await this.cacheService.updateProjectConfig(projectId, {
+			limits: { requests_per_minute: rpm },
+		});
 	}
+}
