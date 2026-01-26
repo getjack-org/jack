@@ -30,3 +30,9 @@ api-debug-*/
 api-profile-*/
 test-*/
 
+.agents/
+.codex/
+.github/
+.mcp.json
+.opencode
+.cursor
