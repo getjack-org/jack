@@ -114,6 +114,7 @@ export interface LogSession {
 
 // Custom domain status enum (maps to Cloudflare states plus Jack states)
 export type CustomDomainStatus =
+	| "claimed" // Domain slot claimed by org, not yet assigned to a project
 	| "pending" // Request submitted, awaiting Cloudflare API response
 	| "pending_owner" // Cloudflare created hostname, awaiting DNS ownership verification
 	| "pending_ssl" // Ownership verified, awaiting SSL certificate issuance
@@ -133,7 +134,7 @@ export type CustomDomainSslStatus =
 // Custom domain interface matching DB schema
 export interface CustomDomain {
 	id: string;
-	project_id: string;
+	project_id: string | null;
 	org_id: string;
 	hostname: string;
 	cloudflare_id: string | null;
