@@ -116,8 +116,12 @@ async function runPicker(
 	return new Promise((resolve) => {
 		let query = "";
 		let cursor = 0;
+		let scrollOffset = 0;
 		let filteredLocal = localProjects;
 		let filteredCloud = cloudOnlyProjects;
+
+		// Calculate visible window size (leave room for header, footer, cloud header)
+		const getMaxVisible = () => Math.max(5, (process.stdout.rows || 20) - 8);
 
 		// Calculate total items for navigation
 		const getTotalItems = () => filteredLocal.length + filteredCloud.length;
@@ -147,8 +151,32 @@ async function runPicker(
 			}
 		};
 
+		// Adjust scroll offset to keep cursor visible
+		const adjustScroll = () => {
+			const maxVisible = getMaxVisible();
+			const total = getTotalItems();
+
+			// If all items fit, no scrolling needed
+			if (total <= maxVisible) {
+				scrollOffset = 0;
+				return;
+			}
+
+			// Keep cursor within visible window
+			if (cursor < scrollOffset) {
+				scrollOffset = cursor;
+			} else if (cursor >= scrollOffset + maxVisible) {
+				scrollOffset = cursor - maxVisible + 1;
+			}
+
+			// Clamp scroll offset
+			scrollOffset = Math.max(0, Math.min(scrollOffset, total - maxVisible));
+		};
+
 		// Render the picker UI
 		const render = () => {
+			adjustScroll();
+
 			// Clear screen and move cursor to top
 			process.stderr.write("\x1b[2J\x1b[H");
 
@@ -157,29 +185,85 @@ async function runPicker(
 				`${colors.brightCyan}${colors.bold}Select a project${colors.reset} ${colors.dim}↑↓ move · enter select · esc cancel${colors.reset}\n\n`,
 			);
 
-			let lineIndex = 0;
+			const maxVisible = getMaxVisible();
+			const total = getTotalItems();
+			const showScrollUp = scrollOffset > 0;
+			const showScrollDown = scrollOffset + maxVisible < total;
 
-			// Local projects section
-			if (filteredLocal.length > 0) {
-				for (const project of filteredLocal) {
+			// Show scroll-up indicator
+			if (showScrollUp) {
+				process.stderr.write(`  ${colors.dim}↑ ${scrollOffset} more above${colors.reset}\n`);
+			}
+
+			// Build combined list for scrolling
+			const allItems: { project: ProjectListItem; isCloud: boolean; isCloudHeader?: boolean }[] = [];
+
+			for (const project of filteredLocal) {
+				allItems.push({ project, isCloud: false });
+			}
+
+			if (filteredCloud.length > 0) {
+				// Add cloud header as a special item
+				allItems.push({ project: filteredCloud[0]!, isCloud: true, isCloudHeader: true });
+				for (const project of filteredCloud) {
+					allItems.push({ project, isCloud: true });
+				}
+			}
+
+			// Render visible window
+			let renderedCount = 0;
+			let lineIndex = 0;
+			let cloudHeaderShown = false;
+
+			for (const project of filteredLocal) {
+				if (lineIndex >= scrollOffset && renderedCount < maxVisible) {
 					const isSelected = lineIndex === cursor;
 					const line = formatPickerLine(project, isSelected, false);
 					process.stderr.write(`${line}\n`);
+					renderedCount++;
+				}
+				lineIndex++;
+			}
+
+			// Cloud-only section
+			if (filteredCloud.length > 0) {
+				// Check if cloud header should be visible
+				const cloudStartIndex = filteredLocal.length;
+				const cloudEndIndex = cloudStartIndex + filteredCloud.length;
+
+				// Show header if any cloud items are in the visible window
+				if (cloudEndIndex > scrollOffset && cloudStartIndex < scrollOffset + maxVisible) {
+					// Only show header if we haven't filled up yet and cloud section is visible
+					if (renderedCount < maxVisible && lineIndex >= scrollOffset) {
+						process.stderr.write(
+							`\n  ${colors.brightMagenta}☁ cloud-only${colors.reset} ${colors.dim}(will restore on select)${colors.reset}\n`,
+						);
+						cloudHeaderShown = true;
+					}
+				}
+
+				for (const project of filteredCloud) {
+					if (lineIndex >= scrollOffset && renderedCount < maxVisible) {
+						// Show cloud header just before first visible cloud item if not shown yet
+						if (!cloudHeaderShown && lineIndex === cloudStartIndex) {
+							process.stderr.write(
+								`\n  ${colors.brightMagenta}☁ cloud-only${colors.reset} ${colors.dim}(will restore on select)${colors.reset}\n`,
+							);
+							cloudHeaderShown = true;
+						}
+						const isSelected = lineIndex === cursor;
+						const line = formatPickerLine(project, isSelected, true);
+						process.stderr.write(`${line}\n`);
+						renderedCount++;
+					}
 					lineIndex++;
 				}
 			}
 
-			// Cloud-only section header and projects
-			if (filteredCloud.length > 0) {
-				process.stderr.write(
-					`\n  ${colors.brightMagenta}☁ cloud-only${colors.reset} ${colors.dim}(will restore on select)${colors.reset}\n`,
-				);
-				for (const project of filteredCloud) {
-					const isSelected = lineIndex === cursor;
-					const line = formatPickerLine(project, isSelected, true);
-					process.stderr.write(`${line}\n`);
-					lineIndex++;
-				}
+			// Show scroll-down indicator
+			if (showScrollDown) {
+				const remaining = total - scrollOffset - maxVisible;
+				process.stderr.write(`  ${colors.dim}↓ ${remaining} more below${colors.reset}\n`);
 			}
 
 			// Empty state
