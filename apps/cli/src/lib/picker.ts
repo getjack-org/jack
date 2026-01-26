@@ -44,6 +44,10 @@ const colors = {
 	cyan: isColorEnabled ? "\x1b[36m" : "",
 	bold: isColorEnabled ? "\x1b[1m" : "",
 	inverse: isColorEnabled ? "\x1b[7m" : "",
+	// Bright/neon colors for visual pop
+	brightCyan: isColorEnabled ? "\x1b[96m" : "",
+	brightMagenta: isColorEnabled ? "\x1b[95m" : "",
+	brightGreen: isColorEnabled ? "\x1b[92m" : "",
 };
 
 // ============================================================================
@@ -150,7 +154,7 @@ async function runPicker(
 
 			// Header
 			process.stderr.write(
-				`${colors.bold}Select a project${colors.reset} ${colors.dim}(arrows to move, enter to select, esc to cancel)${colors.reset}\n\n`,
+				`${colors.brightCyan}${colors.bold}Select a project${colors.reset} ${colors.dim}↑↓ move · enter select · esc cancel${colors.reset}\n\n`,
 			);
 
 			let lineIndex = 0;
@@ -167,7 +171,9 @@ async function runPicker(
 
 			// Cloud-only section header and projects
 			if (filteredCloud.length > 0) {
-				process.stderr.write(`\n  ${colors.dim}[cloud-only]${colors.reset}\n`);
+				process.stderr.write(
+					`\n  ${colors.brightMagenta}☁ cloud-only${colors.reset} ${colors.dim}(will restore on select)${colors.reset}\n`,
+				);
 				for (const project of filteredCloud) {
 					const isSelected = lineIndex === cursor;
 					const line = formatPickerLine(project, isSelected, true);
@@ -182,9 +188,10 @@ async function runPicker(
 			}
 
 			// Search input
-			process.stderr.write(
-				`\n  ${colors.dim}Type to filter:${colors.reset} ${query}${colors.dim}_${colors.reset}\n`,
-			);
+			const searchPrompt = query
+				? `${colors.brightCyan}/${colors.reset} ${query}${colors.dim}▌${colors.reset}`
+				: `${colors.dim}/ type to filter${colors.reset}`;
+			process.stderr.write(`\n  ${searchPrompt}\n`);
 		};
 
 		// Format a single picker line
@@ -193,23 +200,19 @@ async function runPicker(
 			isSelected: boolean,
 			isCloudOnly: boolean,
 		): string => {
-			const prefix = isSelected ? `${colors.green}>${colors.reset}` : " ";
-			const name = project.name.padEnd(20);
+			const prefix = isSelected ? `${colors.brightCyan}▸${colors.reset}` : " ";
+			const name = project.name.padEnd(22);
 			const time = project.updatedAt
-				? formatRelativeTime(project.updatedAt).padEnd(14)
-				: "".padEnd(14);
+				? colors.dim + formatRelativeTime(project.updatedAt).padEnd(10) + colors.reset
+				: "".padEnd(10);
 
-			let location: string;
-			if (isCloudOnly) {
-				location = `${colors.dim}(will restore from cloud)${colors.reset}`;
-			} else if (project.localPath) {
+			let location = "";
+			if (!isCloudOnly && project.localPath) {
 				location = colors.dim + shortenPath(project.localPath) + colors.reset;
-			} else {
-				location = "";
 			}
 
-			const nameColor = isSelected ? colors.bold : "";
-			return `  ${prefix} ${nameColor}${name}${colors.reset} ${colors.dim}${time}${colors.reset} ${location}`;
+			const nameColor = isSelected ? colors.brightGreen + colors.bold : "";
+			return `  ${prefix} ${nameColor}${name}${colors.reset} ${time} ${location}`;
 		};
 
 		// Handle keyboard input
