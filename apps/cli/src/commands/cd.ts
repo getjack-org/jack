@@ -123,11 +123,13 @@ export default async function cd(projectName?: string): Promise<void> {
 			}
 
 			if (err instanceof CloneCollisionError) {
-				// Directory exists but not linked - refuse to use unknown files
-				error(`Directory exists: ${err.targetDir}`);
+				// Directory exists but not linked - help user decide what to do
+				error("Directory exists but isn't linked to this project");
+				console.error("");
 				console.error(`  cd ${err.targetDir}`);
-				console.error("  To link existing files: jack link");
-				console.error("  To replace with cloud:  jack clone --force");
+				console.error("");
+				console.error("  jack link   keep local files, connect to cloud");
+				console.error("  jack clone  replace local with cloud version");
 				process.exit(1);
 			}
 
