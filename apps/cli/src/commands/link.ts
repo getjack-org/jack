@@ -9,14 +9,10 @@
 
 import { existsSync } from "node:fs";
 import { isLoggedIn } from "../lib/auth/index.ts";
-import {
-	type ManagedProject,
-	findProjectBySlug,
-	listManagedProjects,
-} from "../lib/control-plane.ts";
-import { isCancel, promptSelectValue } from "../lib/hooks.ts";
+import { findProjectBySlug } from "../lib/control-plane.ts";
 import { error, info, output, success } from "../lib/output.ts";
 import { registerPath } from "../lib/paths-index.ts";
+import { isTTY, pickProject, requireTTY } from "../lib/picker.ts";
 import { generateByoProjectId, linkProject, readProjectLink } from "../lib/project-link.ts";
 
 export interface LinkFlags {
@@ -105,51 +101,28 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 		return;
 	}
 
-	// Interactive mode - list and select project
-	output.start("Loading projects...");
-	let projects: ManagedProject[] = [];
-	try {
-		projects = await listManagedProjects();
-	} catch (err) {
-		output.stop();
-		error("Failed to load projects");
-		if (err instanceof Error) {
-			info(err.message);
-		}
-		process.exit(1);
-	}
-	output.stop();
+	// Interactive mode - use fuzzy picker with cloud-only projects
+	requireTTY();
 
-	if (projects.length === 0) {
-		error("No projects found");
-		info("Create one with: jack new");
-		info("Or link to your Cloudflare account: jack link --byo");
-		process.exit(1);
-	}
+	const result = await pickProject({ cloudOnly: true });
 
-	console.error("");
-	const choice = await promptSelectValue(
-		"Select a project to link:",
-		projects.map((p) => ({
-			value: p.id,
-			label: `${p.slug} (${p.status})`,
-		})),
-	);
-
-	if (isCancel(choice)) {
+	if (result.action === "cancel") {
 		info("Cancelled");
 		process.exit(0);
 	}
 
-	const selected = projects.find((p) => p.id === choice);
-	if (!selected) {
-		error("No project selected");
+	const selected = result.project;
+
+	// Need project ID - fetch from control plane by slug
+	const project = await findProjectBySlug(selected.name);
+	if (!project) {
+		error(`Could not find project: ${selected.name}`);
 		process.exit(1);
 	}
 
 	output.start("Linking project...");
-	await linkProject(process.cwd(), selected.id, "managed");
-	await registerPath(selected.id, process.cwd());
+	await linkProject(process.cwd(), project.id, "managed");
+	await registerPath(project.id, process.cwd());
 	output.stop();
-	success(`Linked to: ${selected.slug}`);
+	success(`Linked to: ${selected.name}`);
 }

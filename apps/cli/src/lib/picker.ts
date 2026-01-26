@@ -12,7 +12,7 @@
 import { isCancel } from "@clack/core";
 import { formatRelativeTime } from "./format.ts";
 import { fuzzyFilter } from "./fuzzy.ts";
-import { shortenPath, type ProjectListItem, toListItems, sortByUpdated } from "./project-list.ts";
+import { type ProjectListItem, shortenPath, sortByUpdated, toListItems } from "./project-list.ts";
 import { listAllProjects } from "./project-resolver.ts";
 import { restoreTty } from "./tty.ts";
 
@@ -27,6 +27,10 @@ export interface PickerResult {
 
 export interface PickerCancelResult {
 	action: "cancel";
+}
+
+export interface PickProjectOptions {
+	cloudOnly?: boolean;
 }
 
 // ============================================================================
@@ -55,10 +59,12 @@ const colors = {
 // ============================================================================
 
 /**
- * Check if we're running in an interactive TTY environment
+ * Check if we're running in an interactive TTY environment.
+ * Only checks stdin - stdout may be a pipe (e.g., shell wrapper capturing output)
+ * while still being interactive (user can type, picker UI goes to stderr).
  */
 export function isTTY(): boolean {
-	return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+	return Boolean(process.stdin.isTTY);
 }
 
 /**
@@ -78,8 +84,9 @@ export function requireTTY(): void {
 
 /**
  * Interactive project picker using @clack/core primitives
+ * @param options.cloudOnly - If true, only shows cloud-only projects (for linking)
  */
-export async function pickProject(): Promise<PickerResult | PickerCancelResult> {
+export async function pickProject(options?: PickProjectOptions): Promise<PickerResult | PickerCancelResult> {
 	// Fetch all projects
 	let allProjects: ProjectListItem[];
 	try {
@@ -90,15 +97,22 @@ export async function pickProject(): Promise<PickerResult | PickerCancelResult> 
 		process.exit(1);
 	}
 
-	if (allProjects.length === 0) {
+	// Separate local and cloud-only projects
+	const cloudOnlyProjects = allProjects.filter((p) => p.isCloudOnly);
+	const localProjects = options?.cloudOnly ? [] : allProjects.filter((p) => p.isLocal);
+
+	// Check for empty state
+	if (options?.cloudOnly && cloudOnlyProjects.length === 0) {
+		console.error("No cloud-only projects to link.");
+		console.error("Run 'jack new <name>' to create a project.");
+		process.exit(1);
+	}
+
+	if (!options?.cloudOnly && allProjects.length === 0) {
 		console.error("No projects found.");
 		console.error("Run 'jack new <name>' to create your first project.");
 		process.exit(1);
 	}
-
-	// Separate local and cloud-only projects
-	const localProjects = allProjects.filter((p) => p.isLocal);
-	const cloudOnlyProjects = allProjects.filter((p) => p.isCloudOnly);
 
 	// Run the interactive picker
 	const result = await runPicker(localProjects, cloudOnlyProjects);
@@ -121,7 +135,8 @@ async function runPicker(
 		let filteredCloud = cloudOnlyProjects;
 
 		// Calculate visible window size (leave room for header, footer, cloud header)
-		const getMaxVisible = () => Math.max(5, (process.stdout.rows || 20) - 8);
+		// Use stderr.rows since UI is on stderr (stdout may be a pipe)
+		const getMaxVisible = () => Math.max(5, (process.stderr.rows || process.stdout.rows || 20) - 8);
 
 		// Calculate total items for navigation
 		const getTotalItems = () => filteredLocal.length + filteredCloud.length;
@@ -196,7 +211,8 @@ async function runPicker(
 			}
 
 			// Build combined list for scrolling
-			const allItems: { project: ProjectListItem; isCloud: boolean; isCloudHeader?: boolean }[] = [];
+			const allItems: { project: ProjectListItem; isCloud: boolean; isCloudHeader?: boolean }[] =
+				[];
 
 			for (const project of filteredLocal) {
 				allItems.push({ project, isCloud: false });

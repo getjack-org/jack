@@ -16,6 +16,8 @@ import { CloneCollisionError, ProjectNotFoundError, cloneProject } from "../lib/
 import { getJackHome } from "../lib/config.ts";
 import { fuzzyFilter } from "../lib/fuzzy.ts";
 import { error } from "../lib/output.ts";
+import { registerPath } from "../lib/paths-index.ts";
+import { linkProject } from "../lib/project-link.ts";
 import { type ResolvedProject, listAllProjects } from "../lib/project-resolver.ts";
 import {
 	detectShell,
@@ -103,6 +105,12 @@ export default async function cd(projectName?: string): Promise<void> {
 				skipPrompts: true,
 			});
 
+			// Link and register the cloned project
+			if (result.projectId) {
+				await linkProject(result.path, result.projectId, "managed");
+				await registerPath(result.projectId, result.path);
+			}
+
 			// Print the cloned path
 			console.log(result.path);
 			maybeShowShellHint(result.path);
@@ -115,10 +123,12 @@ export default async function cd(projectName?: string): Promise<void> {
 			}
 
 			if (err instanceof CloneCollisionError) {
-				// Directory already exists - use it (silent recovery)
-				console.log(err.targetDir);
-				maybeShowShellHint(err.targetDir);
-				process.exit(0);
+				// Directory exists but not linked - refuse to use unknown files
+				error(`Directory exists: ${err.targetDir}`);
+				console.error(`  cd ${err.targetDir}`);
+				console.error("  To link existing files: jack link");
+				console.error("  To replace with cloud:  jack clone --force");
+				process.exit(1);
 			}
 
 			// Check for "no source backup" error (orphan project)
