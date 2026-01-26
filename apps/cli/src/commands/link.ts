@@ -9,10 +9,10 @@
 
 import { existsSync } from "node:fs";
 import { isLoggedIn } from "../lib/auth/index.ts";
-import { findProjectBySlug } from "../lib/control-plane.ts";
+import { findProjectById, findProjectBySlug } from "../lib/control-plane.ts";
 import { error, info, output, success } from "../lib/output.ts";
 import { registerPath } from "../lib/paths-index.ts";
-import { isTTY, pickProject, requireTTY } from "../lib/picker.ts";
+import { pickProject, requireTTY } from "../lib/picker.ts";
 import { generateByoProjectId, linkProject, readProjectLink } from "../lib/project-link.ts";
 
 export interface LinkFlags {
@@ -23,8 +23,17 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 	// Check if already linked
 	const existingLink = await readProjectLink(process.cwd());
 	if (existingLink) {
+		// Try to look up project name for better UX
+		let projectDisplay = existingLink.project_id;
+		if (existingLink.deploy_mode === "managed") {
+			const project = await findProjectById(existingLink.project_id);
+			if (project) {
+				projectDisplay = project.slug;
+			}
+		}
+
 		error("This directory is already linked");
-		info(`Project ID: ${existingLink.project_id}`);
+		info(`Linked to: ${projectDisplay}`);
 		info("To re-link, first run: jack unlink");
 		process.exit(1);
 	}

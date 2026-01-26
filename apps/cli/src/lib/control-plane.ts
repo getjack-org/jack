@@ -368,6 +368,28 @@ export async function listManagedProjects(): Promise<ManagedProject[]> {
 }
 
 /**
+ * Find a managed project by ID.
+ */
+export async function findProjectById(projectId: string): Promise<ManagedProject | null> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${encodeURIComponent(projectId)}`,
+	);
+
+	if (response.status === 404) {
+		return null;
+	}
+
+	if (!response.ok) {
+		return null; // Silent fail - just can't look up the name
+	}
+
+	const data = (await response.json()) as { project: ManagedProject };
+	return data.project;
+}
+
+/**
  * Find a managed project by slug.
  */
 export async function findProjectBySlug(slug: string): Promise<ManagedProject | null> {
