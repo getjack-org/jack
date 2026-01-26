@@ -12,15 +12,15 @@
 
 # Ship before you forget why you started.
 
-Your AI wrote the app. Cursor built the API. Claude scaffolded the whole thing.
+Ever find yourself with a dozen half-finished projects scattered across your machine? Each one was going to be *the thing*, but then you had to set up env vars, configure secrets, figure out deployment... and suddenly it's 2am and you're debugging TOML syntax instead of building.
 
-Now it's sitting in localhost because deploys are *a whole thing*.
+Your AI wrote the app. Now it's rotting in localhost because deploys are *a whole thing*.
 
 ```bash
 jack new my-app
 ```
 
-That's it. You have a live URL.
+That's it. Live URL. No config files, no deployment ceremony, no context-switching to dashboards.
 
 ```bash
 bun add -g @getjack/jack
@@ -38,13 +38,32 @@ Or try without installing: `bunx @getjack/jack new my-app`
 
 ---
 
+## Philosophy
+
+**Infrastructure should disappear.** The best deploy tooling is the kind you don't think about. `jack new` works immediately—no accounts, no config, no ceremony. If you need to read docs before shipping your first project, we've failed.
+
+**Creation is free.** You'll have dozens of experiments. That's the point. jack never blocks you from creating because old projects exist. `jack ls` shows everything; cleanup is optional, never forced.
+
+**No lock-in.** Everything jack creates is standard tooling—wrangler.jsonc, package.json, TypeScript. Your projects work without jack installed. We earn continued use through convenience, not capture.
+
+---
+
+## Who this is for
+
+Vibecoders. People who ship experiments constantly. Solo devs with more ideas than weekends.
+
+You move fast. AI makes it worse—now you can prototype anything in an afternoon. But each prototype needs its own env vars, secrets, deploy config. The ceremony piles up. Creative momentum dies.
+
+jack handles the boring parts. You stay in flow.
+
+---
+
 ## Why jack?
 
 - **Instant deployment** — `jack new` creates AND deploys. One command, live URL.
 - **Works with your agent** — Every project includes context files so your AI understands the stack.
 - **Roaming secrets** — Configure once, use across all projects. No per-project ceremony.
 - **Project tracking** — Projects scattered everywhere? `jack ls` finds them all.
-- **No lock-in** — Standard config files, standard TypeScript. Works without jack installed.
 
 ---
 
@@ -86,16 +105,6 @@ Build on your own work. Private by default.
 | `jack open` | Open project in browser |
 
 [Full command reference →](/commands)
-
----
-
-## Who this is for
-
-You spin up projects constantly. AI makes it worse—now you can prototype anything in an afternoon.
-
-But each project needs env vars, secrets, deploy config. The ceremony piles up.
-
-jack handles the boring parts. You stay in flow.
 
 ---
 
