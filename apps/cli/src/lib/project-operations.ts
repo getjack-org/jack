@@ -6,6 +6,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { $ } from "bun";
 import {
@@ -40,6 +41,7 @@ import {
 	slugify,
 	writeWranglerConfig,
 } from "./config-generator.ts";
+import { getJackHome } from "./config.ts";
 import { deleteManagedProject, listManagedProjects } from "./control-plane.ts";
 import { debug, isDebug, printTimingSummary, timerEnd, timerStart } from "./debug.ts";
 import { ensureWranglerInstalled, validateModeAvailability } from "./deploy-mode.ts";
@@ -81,6 +83,7 @@ export interface CreateProjectOptions {
 	interactive?: boolean;
 	managed?: boolean; // Force managed deploy mode
 	byo?: boolean; // Force BYO deploy mode
+	targetDir?: string; // Explicit target directory (overrides JACK_HOME default)
 }
 
 export interface CreateProjectResult {
@@ -756,6 +759,7 @@ export async function createProject(
 		intent: intentPhrase,
 		reporter: providedReporter,
 		interactive: interactiveOption,
+		targetDir: targetDirOption,
 	} = options;
 	const reporter = providedReporter ?? noopReporter;
 	const hasReporter = Boolean(providedReporter);
@@ -772,10 +776,20 @@ export async function createProject(
 
 	// Fast local validation first - check directory before any network calls
 	const nameWasProvided = name !== undefined;
+	const targetDirProvided = targetDirOption !== undefined;
+
 	if (nameWasProvided) {
-		const targetDir = resolve(name);
-		if (existsSync(targetDir)) {
-			throw new JackError(JackErrorCode.VALIDATION_ERROR, `Directory ${name} already exists`);
+		// Compute the effective target directory for validation
+		// Priority: explicit targetDir > JACK_HOME default
+		const effectiveTargetDir = targetDirProvided
+			? resolve(targetDirOption, name)
+			: join(getJackHome(), name);
+		if (existsSync(effectiveTargetDir)) {
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				`Folder exists at ${effectiveTargetDir}/`,
+				"Remove it first, or use 'jack ship' if it's a project.",
+			);
 		}
 	}
 
@@ -809,11 +823,35 @@ export async function createProject(
 
 	// Generate or use provided name
 	const projectName = name ?? generateProjectName();
-	const targetDir = resolve(projectName);
+
+	// Compute target directory:
+	// - If explicit targetDir provided: resolve(targetDir, projectName)
+	// - Otherwise: use JACK_HOME (~/.jack/projects/) as default
+	let targetDir: string;
+	if (targetDirProvided) {
+		targetDir = resolve(targetDirOption, projectName);
+	} else {
+		// Default: use JACK_HOME
+		const jackHome = getJackHome();
+		try {
+			await mkdir(jackHome, { recursive: true });
+		} catch (err) {
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				`Cannot create JACK_HOME at ${jackHome}`,
+				"Check permissions or set JACK_HOME environment variable to a writable location.",
+			);
+		}
+		targetDir = join(jackHome, projectName);
+	}
 
 	// Check directory doesn't exist (only needed for auto-generated names now)
 	if (!nameWasProvided && existsSync(targetDir)) {
-		throw new JackError(JackErrorCode.VALIDATION_ERROR, `Directory ${projectName} already exists`);
+		throw new JackError(
+			JackErrorCode.VALIDATION_ERROR,
+			`Folder exists at ${targetDir}/`,
+			"Remove it first, or use 'jack ship' if it's a project.",
+		);
 	}
 
 	// Early slug availability check for managed mode (only if user provided explicit name)

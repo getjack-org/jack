@@ -7,6 +7,7 @@ import { createProject } from "../lib/project-operations.ts";
 
 export default async function newProject(
 	nameOrPhrase?: string,
+	pathArg?: string,
 	options: {
 		template?: string;
 		intent?: string;
@@ -55,6 +56,7 @@ export default async function newProject(
 			interactive: !isCi,
 			managed: options.managed,
 			byo: options.byo,
+			targetDir: pathArg || undefined,
 		});
 	} catch (error) {
 		const details = getErrorDetails(error);
