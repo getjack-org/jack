@@ -178,6 +178,9 @@ const cli = meow(
 			db: {
 				type: "string",
 			},
+			sort: {
+				type: "string",
+			},
 		},
 	},
 );
@@ -405,12 +408,17 @@ try {
 		case "ls": {
 			const { default: projects } = await import("./commands/projects.ts");
 			const lsArgs: string[] = [];
+			// First positional arg after 'ls' is the optional filter
+			if (args[0] && !args[0].startsWith("--")) {
+				lsArgs.push(args[0]);
+			}
 			if (cli.flags.local) lsArgs.push("--local");
 			if (cli.flags.deployed) lsArgs.push("--deployed");
 			if (cli.flags.cloud) lsArgs.push("--cloud");
 			if (cli.flags.all) lsArgs.push("--all");
 			if (cli.flags.json) lsArgs.push("--json");
 			if (cli.flags.status) lsArgs.push("--status", cli.flags.status);
+			if (cli.flags.sort) lsArgs.push("--sort", cli.flags.sort);
 			if (cli.flags.tag) {
 				for (const t of cli.flags.tag) {
 					lsArgs.push("--tag", t);

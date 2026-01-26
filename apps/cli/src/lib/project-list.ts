@@ -25,6 +25,8 @@ export interface ProjectListItem {
 	url: string | null;
 	localPath: string | null;
 	updatedAt: string | null;
+	createdAt: string | null;
+	linkedAt: string | null; // For BYO projects without updatedAt, used as fallback for recency sorting
 	isLocal: boolean;
 	isCloudOnly: boolean;
 	errorMessage?: string;
@@ -131,6 +133,9 @@ export function toListItems(projects: ResolvedProject[]): ProjectListItem[] {
 		url: proj.url || null,
 		localPath: proj.localPath || null,
 		updatedAt: proj.updatedAt || null,
+		createdAt: proj.createdAt || null,
+		// For BYO projects, createdAt is the linked_at timestamp
+		linkedAt: proj.deployMode === "byo" ? proj.createdAt || null : null,
 		isLocal: !!proj.localPath && proj.sources.filesystem,
 		isCloudOnly: !proj.localPath && proj.sources.controlPlane,
 		errorMessage: proj.errorMessage,
@@ -143,19 +148,75 @@ export function toListItems(projects: ResolvedProject[]): ProjectListItem[] {
 // ============================================================================
 
 /**
+ * Sort types for project listing
+ */
+export type SortOrder = "updated" | "name" | "created";
+
+/**
+ * Get the effective date for recency sorting
+ * Falls back to linkedAt for BYO projects without updatedAt
+ */
+function getRecencyDate(item: ProjectListItem): string | null {
+	return item.updatedAt || item.linkedAt || null;
+}
+
+/**
  * Sort by updatedAt descending (most recent first)
- * Items without updatedAt are sorted to the end
+ * Items without updatedAt fall back to linkedAt (for BYO projects)
+ * Items without any date are sorted to the end, then alphabetically
  */
 export function sortByUpdated(items: ProjectListItem[]): ProjectListItem[] {
 	return [...items].sort((a, b) => {
+		const aDate = getRecencyDate(a);
+		const bDate = getRecencyDate(b);
+
 		// Items without dates go to the end
-		if (!a.updatedAt && !b.updatedAt) return a.name.localeCompare(b.name);
-		if (!a.updatedAt) return 1;
-		if (!b.updatedAt) return -1;
+		if (!aDate && !bDate) return a.name.localeCompare(b.name);
+		if (!aDate) return 1;
+		if (!bDate) return -1;
 
 		// Most recent first
-		return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+		return new Date(bDate).getTime() - new Date(aDate).getTime();
 	});
+}
+
+/**
+ * Sort alphabetically by name (ascending)
+ */
+export function sortByName(items: ProjectListItem[]): ProjectListItem[] {
+	return [...items].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Sort by createdAt descending (most recently created first)
+ * Items without createdAt are sorted to the end, then alphabetically
+ */
+export function sortByCreated(items: ProjectListItem[]): ProjectListItem[] {
+	return [...items].sort((a, b) => {
+		// Items without dates go to the end
+		if (!a.createdAt && !b.createdAt) return a.name.localeCompare(b.name);
+		if (!a.createdAt) return 1;
+		if (!b.createdAt) return -1;
+
+		// Most recent first
+		return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+	});
+}
+
+/**
+ * Sort items by the specified order
+ */
+export function sortItems(items: ProjectListItem[], order: SortOrder): ProjectListItem[] {
+	switch (order) {
+		case "updated":
+			return sortByUpdated(items);
+		case "name":
+			return sortByName(items);
+		case "created":
+			return sortByCreated(items);
+		default:
+			return sortByUpdated(items);
+	}
 }
 
 /**
