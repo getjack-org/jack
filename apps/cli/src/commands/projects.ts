@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { fuzzyFilter } from "../lib/fuzzy.ts";
 import { promptSelect } from "../lib/hooks.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import {
 	type ProjectListItem,
+	type SortOrder,
 	STATUS_ICONS,
 	buildTagColorMap,
 	colors,
@@ -16,6 +18,7 @@ import {
 	formatTagsInline,
 	groupProjects,
 	sortByUpdated,
+	sortItems,
 	toListItems,
 } from "../lib/project-list.ts";
 import { cleanupStaleProjects, scanStaleProjects } from "../lib/project-operations.ts";
@@ -63,9 +66,18 @@ export default async function projects(subcommand?: string, args: string[] = [])
 }
 
 /**
- * Extract a flag value from args (e.g., --status live -> "live")
+ * Extract a flag value from args (e.g., --status live -> "live" or --sort=name -> "name")
  */
 function extractFlagValue(args: string[], flag: string): string | null {
+	// Check for --flag=value syntax
+	const prefix = `${flag}=`;
+	for (const arg of args) {
+		if (arg.startsWith(prefix)) {
+			return arg.slice(prefix.length) || null;
+		}
+	}
+
+	// Check for --flag value syntax
 	const idx = args.indexOf(flag);
 	if (idx !== -1 && idx + 1 < args.length) {
 		return args[idx + 1] ?? null;
@@ -99,6 +111,21 @@ async function listProjects(args: string[]): Promise<void> {
 	const localOnly = args.includes("--local");
 	const cloudOnly = args.includes("--cloud");
 
+	// Parse --sort flag (default: updated)
+	const sortFlag = extractFlagValue(args, "--sort");
+	const sortOrder: SortOrder =
+		sortFlag === "name" || sortFlag === "created" ? sortFlag : "updated";
+
+	// Extract positional filter (first arg that's not a flag or flag value)
+	const flagsWithValues = ["--status", "--tag", "--sort"];
+	const nameFilter = args.find((arg, idx) => {
+		if (arg.startsWith("--") || arg.startsWith("-")) return false;
+		// Check if previous arg was a flag that takes a value
+		const prevArg = args[idx - 1];
+		if (prevArg && flagsWithValues.includes(prevArg)) return false;
+		return true;
+	});
+
 	// Fetch all projects from registry and control plane
 	outputSpinner.start("Loading projects...");
 	const projects: ResolvedProject[] = await listAllProjects();
@@ -107,7 +134,18 @@ async function listProjects(args: string[]): Promise<void> {
 	// Convert to list items
 	let items = toListItems(projects);
 
-	// Apply filters
+	// Apply fuzzy name filter first (uses updatedAt for tiebreaker via sort stability)
+	if (nameFilter) {
+		// Sort by updatedAt descending before fuzzy filter so tiebreaker favors recent
+		items.sort((a, b) => {
+			const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+			const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+			return bTime - aTime;
+		});
+		items = fuzzyFilter(nameFilter, items, (item) => item.name);
+	}
+
+	// Apply other filters
 	if (statusFilter) items = filterByStatus(items, statusFilter);
 	if (localOnly) items = items.filter((i) => i.isLocal);
 	if (cloudOnly) items = items.filter((i) => i.isCloudOnly);
@@ -128,6 +166,9 @@ async function listProjects(args: string[]): Promise<void> {
 		return;
 	}
 
+	// Apply sorting
+	items = sortItems(items, sortOrder);
+
 	// JSON output to stdout (pipeable)
 	if (jsonOutput) {
 		console.log(JSON.stringify(items, null, 2));
@@ -146,8 +187,10 @@ async function listProjects(args: string[]): Promise<void> {
 
 /**
  * Render the grouped view (default)
+ * Note: items are already sorted by the caller
  */
 function renderGroupedView(items: ProjectListItem[]): void {
+	// Group projects while preserving the sort order within each group
 	const groups = groupProjects(items);
 	const total = items.length;
 	const CLOUD_LIMIT = 5;
@@ -173,13 +216,11 @@ function renderGroupedView(items: ProjectListItem[]): void {
 		console.error(formatLocalSection(groups.local, { tagColorMap }));
 	}
 
-	// Section 3: Cloud-only (show last N by updatedAt)
+	// Section 3: Cloud-only (show first N from already-sorted list)
 	if (groups.cloudOnly.length > 0) {
-		const sorted = sortByUpdated(groups.cloudOnly);
-
 		console.error("");
 		console.error(
-			formatCloudSection(sorted, {
+			formatCloudSection(groups.cloudOnly, {
 				limit: CLOUD_LIMIT,
 				total: groups.cloudOnly.length,
 				tagColorMap,
@@ -200,13 +241,16 @@ function renderGroupedView(items: ProjectListItem[]): void {
 
 /**
  * Render flat table (for --all mode)
+ * Note: items are already sorted by the caller
  */
 function renderFlatTable(items: ProjectListItem[]): void {
-	// Sort: errors first, then by name
+	// Keep errors at the top while preserving relative order within each group
 	const sorted = [...items].sort((a, b) => {
-		if (a.status === "error" && b.status !== "error") return -1;
-		if (a.status !== "error" && b.status === "error") return 1;
-		return a.name.localeCompare(b.name);
+		const aIsError = a.status === "error" || a.status === "auth-expired";
+		const bIsError = b.status === "error" || b.status === "auth-expired";
+		if (aIsError && !bIsError) return -1;
+		if (!aIsError && bIsError) return 1;
+		return 0; // Preserve existing sort order
 	});
 
 	// Build consistent tag color map
