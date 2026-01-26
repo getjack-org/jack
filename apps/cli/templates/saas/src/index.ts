@@ -75,21 +75,23 @@ app.get("/api/subscription-status", async (c) => {
 		// Get subscriptions for this customer (active or scheduled to cancel)
 		const subscriptions = await stripeClient.subscriptions.list({
 			customer: customers.data[0].id,
-			limit: 10,  // Get more to find the right one
-			expand: ["data.default_payment_method"],  // Force fresh data
+			limit: 10, // Get more to find the right one
+			expand: ["data.default_payment_method"], // Force fresh data
 		});
 
 		// Find active or trialing subscription (even if set to cancel at period end)
-		const sub = subscriptions.data.find(
-			(s) => s.status === "active" || s.status === "trialing"
-		);
+		const sub = subscriptions.data.find((s) => s.status === "active" || s.status === "trialing");
 
 		if (!sub) {
-			console.log(`[subscription-status] No active subscriptions for customer: ${customers.data[0].id}`);
+			console.log(
+				`[subscription-status] No active subscriptions for customer: ${customers.data[0].id}`,
+			);
 			return c.json({ subscription: null });
 		}
 
-		console.log(`[subscription-status] Found: id=${sub.id}, status=${sub.status}, cancel_at_period_end=${sub.cancel_at_period_end}`);
+		console.log(
+			`[subscription-status] Found: id=${sub.id}, status=${sub.status}, cancel_at_period_end=${sub.cancel_at_period_end}`,
+		);
 
 		return c.json({
 			subscription: {
@@ -104,10 +106,13 @@ app.get("/api/subscription-status", async (c) => {
 		});
 	} catch (err) {
 		console.error("[subscription-status] Error:", err);
-		return c.json({
-			error: "Failed to fetch subscription status",
-			details: err instanceof Error ? err.message : String(err)
-		}, 500);
+		return c.json(
+			{
+				error: "Failed to fetch subscription status",
+				details: err instanceof Error ? err.message : String(err),
+			},
+			500,
+		);
 	}
 });
 
@@ -154,17 +159,20 @@ app.post("/api/resubscribe", async (c) => {
 		}
 
 		// Also clear the local cancelAt in Better Auth's database
-		await c.env.DB.prepare(
-			"UPDATE subscription SET cancelAt = NULL WHERE stripeSubscriptionId = ?"
-		).bind(sub.id).run();
+		await c.env.DB.prepare("UPDATE subscription SET cancelAt = NULL WHERE stripeSubscriptionId = ?")
+			.bind(sub.id)
+			.run();
 
 		return c.json({ success: true });
 	} catch (err) {
 		console.error("[resubscribe] Error:", err);
-		return c.json({
-			error: "Failed to resubscribe",
-			details: err instanceof Error ? err.message : String(err),
-		}, 500);
+		return c.json(
+			{
+				error: "Failed to resubscribe",
+				details: err instanceof Error ? err.message : String(err),
+			},
+			500,
+		);
 	}
 });
 
@@ -190,7 +198,8 @@ app.get("/api/billing-portal", async (c) => {
 		return c.json({ error: "No billing account found" }, 404);
 	}
 
-	const returnUrl = c.req.header("origin") || c.req.header("referer") || c.env.BETTER_AUTH_URL || "/";
+	const returnUrl =
+		c.req.header("origin") || c.req.header("referer") || c.env.BETTER_AUTH_URL || "/";
 
 	const portalSession = await stripeClient.billingPortal.sessions.create({
 		customer: customers.data[0].id,

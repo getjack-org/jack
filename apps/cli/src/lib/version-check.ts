@@ -87,9 +87,7 @@ function isNewerVersion(latest: string, current: string): boolean {
  * Returns the latest version if newer, null otherwise
  * @param skipCache - If true, bypass the cache and always fetch from npm
  */
-export async function checkForUpdate(
-	skipCache = false,
-): Promise<string | null> {
+export async function checkForUpdate(skipCache = false): Promise<string | null> {
 	const currentVersion = getCurrentVersion();
 	const now = Date.now();
 

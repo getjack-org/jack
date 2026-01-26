@@ -216,7 +216,8 @@ export function detectProjectType(projectPath: string): DetectionResult {
 	// Check for monorepo - user is in wrong directory
 	if (pkg?.workspaces) {
 		const workspaces = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces.packages;
-		const hint = workspaces.length > 0 ? workspaces[0]?.replace("/*", "/your-app") : "apps/your-app";
+		const hint =
+			workspaces.length > 0 ? workspaces[0]?.replace("/*", "/your-app") : "apps/your-app";
 		return {
 			type: "unknown",
 			error: `This is a monorepo root, not a deployable project.\n\ncd into a package first:\n  cd ${hint}\n  jack ship`,
@@ -414,7 +415,9 @@ export async function validateProject(projectPath: string): Promise<ValidationRe
 
 				fileCount++;
 				if (fileCount > MAX_FILES) {
-					throw new Error(`Project has more than ${MAX_FILES} files (excluding node_modules, .git, etc.)`);
+					throw new Error(
+						`Project has more than ${MAX_FILES} files (excluding node_modules, .git, etc.)`,
+					);
 				}
 
 				const stats = await stat(absolutePath);

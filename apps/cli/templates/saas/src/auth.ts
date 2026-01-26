@@ -1,8 +1,8 @@
-import { betterAuth } from "better-auth";
 import { stripe } from "@better-auth/stripe";
-import Stripe from "stripe";
+import { betterAuth } from "better-auth";
 import { Kysely } from "kysely";
 import { D1Dialect } from "kysely-d1";
+import Stripe from "stripe";
 
 // Env type is defined in index.ts and passed from the worker
 type Env = {
@@ -29,7 +29,9 @@ export function createAuth(env: Env) {
 
 		if (missingConfig.length > 0) {
 			console.error(`[Stripe] Missing required config: ${missingConfig.join(", ")}`);
-			console.error("[Stripe] Subscriptions will not work correctly. Set these secrets via: jack secrets set <KEY> <value>");
+			console.error(
+				"[Stripe] Subscriptions will not work correctly. Set these secrets via: jack secrets set <KEY> <value>",
+			);
 		}
 
 		// Only enable Stripe plugin if we have the minimum required config
@@ -49,7 +51,9 @@ export function createAuth(env: Env) {
 				}),
 			);
 		} else {
-			console.error("[Stripe] Plugin DISABLED - STRIPE_WEBHOOK_SECRET is required for reliable subscription sync");
+			console.error(
+				"[Stripe] Plugin DISABLED - STRIPE_WEBHOOK_SECRET is required for reliable subscription sync",
+			);
 		}
 	}
 

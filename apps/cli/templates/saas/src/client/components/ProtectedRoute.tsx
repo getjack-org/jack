@@ -1,7 +1,14 @@
-import { ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 import { authClient } from "../lib/auth-client";
 
-type Route = "/" | "/login" | "/signup" | "/pricing" | "/dashboard" | "/forgot-password" | "/reset-password";
+type Route =
+	| "/"
+	| "/login"
+	| "/signup"
+	| "/pricing"
+	| "/dashboard"
+	| "/forgot-password"
+	| "/reset-password";
 
 interface ProtectedRouteProps {
 	children: ReactNode;

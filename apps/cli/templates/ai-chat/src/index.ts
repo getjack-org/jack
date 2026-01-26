@@ -14,7 +14,9 @@ interface Env {
 function getAI(env: Env) {
 	// Prefer jack cloud proxy if available (for metering)
 	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
-		return createJackAI(env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>);
+		return createJackAI(
+			env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
+		);
 	}
 	// Fallback to direct binding for local dev
 	if (env.AI) {
@@ -115,14 +117,11 @@ export default {
 				// Stream response using Llama 3.2 1B - cheapest model with good quality
 				// See: https://developers.cloudflare.com/workers-ai/models/
 				const ai = getAI(env);
-				const stream = await ai.run(
-					"@cf/meta/llama-3.2-1b-instruct",
-					{
-						messages,
-						stream: true,
-						max_tokens: 1024,
-					},
-				);
+				const stream = await ai.run("@cf/meta/llama-3.2-1b-instruct", {
+					messages,
+					stream: true,
+					max_tokens: 1024,
+				});
 
 				return new Response(stream, {
 					headers: {
@@ -133,10 +132,7 @@ export default {
 				});
 			} catch (err) {
 				console.error("Chat error:", err);
-				return Response.json(
-					{ error: "Something went wrong. Please try again." },
-					{ status: 500 },
-				);
+				return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
 			}
 		}
 

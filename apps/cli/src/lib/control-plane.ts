@@ -112,7 +112,11 @@ export async function createManagedProject(
 		requestBody.use_prebuilt = options.usePrebuilt;
 	}
 
-	debug("Creating managed project", { name, template: options?.template, usePrebuilt: options?.usePrebuilt });
+	debug("Creating managed project", {
+		name,
+		template: options?.template,
+		usePrebuilt: options?.usePrebuilt,
+	});
 	const start = Date.now();
 
 	const response = await authFetch(`${getControlApiUrl()}/v1/projects`, {
@@ -234,9 +238,7 @@ export interface ManagedProject {
 export async function getManagedDatabaseInfo(projectId: string): Promise<DatabaseInfoResponse> {
 	const { authFetch } = await import("./auth/index.ts");
 
-	const response = await authFetch(
-		`${getControlApiUrl()}/v1/projects/${projectId}/database/info`,
-	);
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/database/info`);
 
 	if (response.status === 404) {
 		throw new Error("No database found for this project");

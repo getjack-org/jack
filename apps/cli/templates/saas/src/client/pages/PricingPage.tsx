@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { authClient } from "../lib/auth-client";
 import { toast } from "sonner";
+import { ThemeToggle } from "../components/ThemeToggle";
+import { Button } from "../components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -9,12 +10,20 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { ThemeToggle } from "../components/ThemeToggle";
-import { plans, getPlanName, isPaidPlan, type PlanId, type PlanConfig } from "../lib/plans";
+import { authClient } from "../lib/auth-client";
+import { type PlanConfig, type PlanId, getPlanName, isPaidPlan, plans } from "../lib/plans";
 
 interface PricingPageProps {
-	navigate: (route: "/" | "/login" | "/signup" | "/pricing" | "/dashboard" | "/forgot-password" | "/reset-password") => void;
+	navigate: (
+		route:
+			| "/"
+			| "/login"
+			| "/signup"
+			| "/pricing"
+			| "/dashboard"
+			| "/forgot-password"
+			| "/reset-password",
+	) => void;
 }
 
 export default function PricingPage({ navigate }: PricingPageProps) {
@@ -45,7 +54,7 @@ export default function PricingPage({ navigate }: PricingPageProps) {
 					try {
 						const subscription = await authClient.subscription.list();
 						const activeSub = subscription?.data?.find(
-							(s: { status: string }) => s.status === "active" || s.status === "trialing"
+							(s: { status: string }) => s.status === "active" || s.status === "trialing",
 						);
 						if (activeSub?.plan) {
 							setCurrentPlan(activeSub.plan as PlanId);
@@ -283,7 +292,10 @@ export default function PricingPage({ navigate }: PricingPageProps) {
 							<p className="text-sm text-yellow-800 dark:text-yellow-200">
 								<strong>Your subscription is set to cancel.</strong> You'll have access to{" "}
 								{getPlanName(currentPlan || "free")} features until{" "}
-								{periodEnd ? new Date(periodEnd).toLocaleDateString() : "the end of your billing period"}.
+								{periodEnd
+									? new Date(periodEnd).toLocaleDateString()
+									: "the end of your billing period"}
+								.
 							</p>
 							<Button variant="outline" size="sm" asChild className="shrink-0">
 								<a href="/api/billing-portal">Manage in Stripe</a>
@@ -320,9 +332,7 @@ export default function PricingPage({ navigate }: PricingPageProps) {
 									<CardTitle className="text-2xl">{plan.name}</CardTitle>
 									<div className="mt-2">
 										<span className="text-4xl font-bold">{plan.price}</span>
-										{plan.id !== "free" && (
-											<span className="text-muted-foreground">/month</span>
-										)}
+										{plan.id !== "free" && <span className="text-muted-foreground">/month</span>}
 									</div>
 									<CardDescription className="mt-2">{plan.description}</CardDescription>
 								</CardHeader>

@@ -37,10 +37,7 @@ const tomlSanitizer = (content: string): string => {
 	const allStripFields = ["database_id", "id", "queue_id", "namespace_id", "index_id"];
 	let result = content;
 	for (const field of allStripFields) {
-		result = result.replace(
-			new RegExp(`^\\s*${field}\\s*=\\s*["'][^"']*["']\\s*$`, "gm"),
-			""
-		);
+		result = result.replace(new RegExp(`^\\s*${field}\\s*=\\s*["'][^"']*["']\\s*$`, "gm"), "");
 	}
 	return result;
 };
@@ -147,7 +144,9 @@ const jsoncTestCases = [
 	},
 	{
 		name: "Queue with queue_id",
-		input: { queues: { producers: [{ binding: "QUEUE", queue_name: "my-queue", queue_id: "q-123" }] } },
+		input: {
+			queues: { producers: [{ binding: "QUEUE", queue_name: "my-queue", queue_id: "q-123" }] },
+		},
 		// NOTE: queues.producers is nested - does our sanitizer handle this?
 		expectFields: { queues: { producers: [{ binding: "QUEUE", queue_name: "my-queue" }] } },
 	},
@@ -198,7 +197,9 @@ const configWithUnknown = {
 
 const sanitizedUnknown = sanitizeConfig(configWithUnknown);
 
-if ((sanitizedUnknown.future_binding_type as Array<{some_id?: string}>)?.[0]?.some_id === "xyz-789") {
+if (
+	(sanitizedUnknown.future_binding_type as Array<{ some_id?: string }>)?.[0]?.some_id === "xyz-789"
+) {
 	console.log("⚠ Unknown binding types are NOT sanitized (passed through as-is)");
 	console.log("  This is expected behavior but could leak IDs for new binding types");
 } else {

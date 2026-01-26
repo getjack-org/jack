@@ -257,11 +257,7 @@ function removeVectorizeEntryFromContent(content: string, indexName: string): st
 /**
  * Remove the entire vectorize property when it becomes empty.
  */
-function removeVectorizeProperty(
-	content: string,
-	propertyStart: number,
-	arrayEnd: number,
-): string {
+function removeVectorizeProperty(content: string, propertyStart: number, arrayEnd: number): string {
 	let removeStart = propertyStart;
 	let removeEnd = arrayEnd + 1;
 

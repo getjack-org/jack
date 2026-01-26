@@ -438,7 +438,10 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 
 	// Confirm deletion
 	const { promptSelect } = await import("../lib/hooks.ts");
-	const choice = await promptSelect(["Yes, delete", "No, cancel"], `Delete database '${dbInfo.name}'?`);
+	const choice = await promptSelect(
+		["Yes, delete", "No, cancel"],
+		`Delete database '${dbInfo.name}'?`,
+	);
 
 	if (choice !== 0) {
 		info("Cancelled");
@@ -989,7 +992,11 @@ async function storageInfo(args: string[], options: ServiceOptions): Promise<voi
 
 		if (!bucketInfo) {
 			console.error("");
-			error(bucketName ? `Bucket "${bucketName}" not found` : "No storage buckets found for this project");
+			error(
+				bucketName
+					? `Bucket "${bucketName}" not found`
+					: "No storage buckets found for this project",
+			);
 			info("Create one with: jack services storage create");
 			console.error("");
 			return;
@@ -999,7 +1006,9 @@ async function storageInfo(args: string[], options: ServiceOptions): Promise<voi
 		success(`Bucket: ${bucketInfo.name}`);
 		console.error("");
 		item(`Binding: ${bucketInfo.binding}`);
-		item(`Source: ${bucketInfo.source === "control-plane" ? "managed (jack cloud)" : "BYO (wrangler)"}`);
+		item(
+			`Source: ${bucketInfo.source === "control-plane" ? "managed (jack cloud)" : "BYO (wrangler)"}`,
+		);
 		console.error("");
 	} catch (err) {
 		outputSpinner.stop();
@@ -1137,7 +1146,10 @@ async function storageDelete(args: string[], options: ServiceOptions): Promise<v
 
 	// Confirm deletion
 	const { promptSelect } = await import("../lib/hooks.ts");
-	const choice = await promptSelect(["Yes, delete", "No, cancel"], `Delete bucket '${bucketName}'?`);
+	const choice = await promptSelect(
+		["Yes, delete", "No, cancel"],
+		`Delete bucket '${bucketName}'?`,
+	);
 
 	if (choice !== 0) {
 		info("Cancelled");

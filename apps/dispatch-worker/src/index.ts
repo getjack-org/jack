@@ -113,7 +113,9 @@ app.all("/*", async (c) => {
 
 		if (!config) {
 			// Log suspicious activity for monitoring potential subdomain takeover attempts
-			console.log(`[security] Unknown custom hostname: ${host}, IP: ${c.req.header("cf-connecting-ip")}`);
+			console.log(
+				`[security] Unknown custom hostname: ${host}, IP: ${c.req.header("cf-connecting-ip")}`,
+			);
 			// Cache the not-found for 60 seconds
 			await env.PROJECTS_CACHE.put(notFoundKey, "1", { expirationTtl: 60 });
 			return c.json({ error: "Unknown hostname", hostname: host }, 404);

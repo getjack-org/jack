@@ -68,11 +68,7 @@ async function demo1_simpleSpinner() {
 	const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 	let i = 0;
 
-	const stages = [
-		"Syncing source to storage...",
-		"Uploading files...",
-		"Finalizing...",
-	];
+	const stages = ["Syncing source to storage...", "Uploading files...", "Finalizing..."];
 
 	for (const stage of stages) {
 		for (let j = 0; j < 10; j++) {
@@ -106,7 +102,7 @@ async function demo2_progressBar() {
 
 		clearLine();
 		process.stderr.write(
-			`${colors.cyan}↑${colors.reset} Uploading ${colors.dim}[${barA}]${colors.reset} ${progress}% ${colors.dim}(${formatSize(current)} / ${formatSize(total)})${colors.reset}`
+			`${colors.cyan}↑${colors.reset} Uploading ${colors.dim}[${barA}]${colors.reset} ${progress}% ${colors.dim}(${formatSize(current)} / ${formatSize(total)})${colors.reset}`,
 		);
 		await sleep(80);
 	}
@@ -155,7 +151,7 @@ async function demo3_fileCounter() {
 		for (let j = 0; j < 5; j++) {
 			clearLine();
 			process.stderr.write(
-				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading ${colors.dim}(${i + 1}/${files.length})${colors.reset} ${files[i]}`
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading ${colors.dim}(${i + 1}/${files.length})${colors.reset} ${files[i]}`,
 			);
 			await sleep(60);
 		}
@@ -194,7 +190,7 @@ async function demo4_delayedProgress() {
 		if (elapsed < delayMs) {
 			// Just spinner for first 2 seconds
 			process.stderr.write(
-				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading...`
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading...`,
 			);
 		} else {
 			// Show progress after 2 seconds
@@ -203,7 +199,7 @@ async function demo4_delayedProgress() {
 			}
 			const pct = Math.round(progress * 100);
 			process.stderr.write(
-				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading... ${colors.dim}${pct}% (${formatSize(current)} / ${formatSize(total)})${colors.reset}`
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading... ${colors.dim}${pct}% (${formatSize(current)} / ${formatSize(total)})${colors.reset}`,
 			);
 		}
 
@@ -239,7 +235,7 @@ async function demo5_stagedProgress() {
 			clearLine();
 			const stageInfo = `${colors.dim}(${s + 1}/${stages.length})${colors.reset}`;
 			process.stderr.write(
-				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} ${stage.name} ${stageInfo}`
+				`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} ${stage.name} ${stageInfo}`,
 			);
 			await sleep(50);
 		}
@@ -261,11 +257,17 @@ async function demo6_debugOutput() {
 	console.error("");
 	console.error(`${colors.dim}[0ms]${colors.reset} Starting source upload`);
 	console.error(`${colors.dim}[12ms]${colors.reset} Scanning project files...`);
-	console.error(`${colors.dim}[45ms]${colors.reset} Found 42 files (${formatSize(5.4 * 1024 * 1024)} total)`);
+	console.error(
+		`${colors.dim}[45ms]${colors.reset} Found 42 files (${formatSize(5.4 * 1024 * 1024)} total)`,
+	);
 	console.error(`${colors.dim}[52ms]${colors.reset} Creating source.zip...`);
-	console.error(`${colors.dim}[180ms]${colors.reset} Compressed to ${formatSize(1.2 * 1024 * 1024)}`);
+	console.error(
+		`${colors.dim}[180ms]${colors.reset} Compressed to ${formatSize(1.2 * 1024 * 1024)}`,
+	);
 	console.error(`${colors.dim}[185ms]${colors.reset} Uploading to control-plane...`);
-	console.error(`${colors.dim}[2340ms]${colors.reset} ${colors.green}Upload complete${colors.reset}`);
+	console.error(
+		`${colors.dim}[2340ms]${colors.reset} ${colors.green}Upload complete${colors.reset}`,
+	);
 	console.error("");
 
 	await sleep(1000);
@@ -274,12 +276,22 @@ async function demo6_debugOutput() {
 	console.error(`${colors.dim}Style B: Tree structure${colors.reset}`);
 	console.error("");
 	console.error(`${colors.cyan}→${colors.reset} Uploading source`);
-	console.error(`  ${colors.dim}├─${colors.reset} src/index.ts ${colors.dim}(2.1KB)${colors.reset}`);
-	console.error(`  ${colors.dim}├─${colors.reset} src/lib/auth.ts ${colors.dim}(4.5KB)${colors.reset}`);
-	console.error(`  ${colors.dim}├─${colors.reset} src/lib/database.ts ${colors.dim}(3.2KB)${colors.reset}`);
+	console.error(
+		`  ${colors.dim}├─${colors.reset} src/index.ts ${colors.dim}(2.1KB)${colors.reset}`,
+	);
+	console.error(
+		`  ${colors.dim}├─${colors.reset} src/lib/auth.ts ${colors.dim}(4.5KB)${colors.reset}`,
+	);
+	console.error(
+		`  ${colors.dim}├─${colors.reset} src/lib/database.ts ${colors.dim}(3.2KB)${colors.reset}`,
+	);
 	console.error(`  ${colors.dim}├─${colors.reset} ... ${colors.dim}(38 more files)${colors.reset}`);
-	console.error(`  ${colors.dim}└─${colors.reset} package.json ${colors.dim}(1.1KB)${colors.reset}`);
-	console.error(`${colors.green}✓${colors.reset} 42 files uploaded (${formatSize(5.4 * 1024 * 1024)})`);
+	console.error(
+		`  ${colors.dim}└─${colors.reset} package.json ${colors.dim}(1.1KB)${colors.reset}`,
+	);
+	console.error(
+		`${colors.green}✓${colors.reset} 42 files uploaded (${formatSize(5.4 * 1024 * 1024)})`,
+	);
 	console.error("");
 
 	await sleep(1000);
@@ -287,8 +299,12 @@ async function demo6_debugOutput() {
 	// Style C: Compact with summary
 	console.error(`${colors.dim}Style C: Compact summary${colors.reset}`);
 	console.error("");
-	console.error(`${colors.cyan}→${colors.reset} Source: 42 files, ${formatSize(5.4 * 1024 * 1024)} → ${formatSize(1.2 * 1024 * 1024)} compressed`);
-	console.error(`${colors.cyan}→${colors.reset} Largest: src/assets/logo.png (${formatSize(245 * 1024)})`);
+	console.error(
+		`${colors.cyan}→${colors.reset} Source: 42 files, ${formatSize(5.4 * 1024 * 1024)} → ${formatSize(1.2 * 1024 * 1024)} compressed`,
+	);
+	console.error(
+		`${colors.cyan}→${colors.reset} Largest: src/assets/logo.png (${formatSize(245 * 1024)})`,
+	);
 	console.error(`${colors.green}✓${colors.reset} Uploaded in 2.3s`);
 }
 
@@ -302,10 +318,16 @@ async function demo7_largeUploadWarning() {
 	const purple = getRandomPurple();
 
 	// Non-blocking warning
-	console.error(`${colors.yellow}!${colors.reset} Large upload detected: ${formatSize(340 * 1024 * 1024)}`);
+	console.error(
+		`${colors.yellow}!${colors.reset} Large upload detected: ${formatSize(340 * 1024 * 1024)}`,
+	);
 	console.error(`  ${colors.dim}Consider adding to .jackignore:${colors.reset}`);
-	console.error(`  ${colors.dim}  - public/videos/  (${formatSize(280 * 1024 * 1024)})${colors.reset}`);
-	console.error(`  ${colors.dim}  - assets/raw/     (${formatSize(45 * 1024 * 1024)})${colors.reset}`);
+	console.error(
+		`  ${colors.dim}  - public/videos/  (${formatSize(280 * 1024 * 1024)})${colors.reset}`,
+	);
+	console.error(
+		`  ${colors.dim}  - assets/raw/     (${formatSize(45 * 1024 * 1024)})${colors.reset}`,
+	);
 	console.error("");
 
 	// Continue anyway
@@ -316,7 +338,7 @@ async function demo7_largeUploadWarning() {
 		clearLine();
 		const pct = Math.round((i / 30) * 100);
 		process.stderr.write(
-			`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading... ${colors.dim}${pct}%${colors.reset}`
+			`${colors.cyan}${frames[frame++ % frames.length]}${colors.reset} Uploading... ${colors.dim}${pct}%${colors.reset}`,
 		);
 		await sleep(100);
 	}
@@ -333,10 +355,18 @@ async function main() {
 	const purple = getRandomPurple();
 
 	console.error("");
-	console.error(`${purple}╔════════════════════════════════════════════════════════════╗${colors.reset}`);
-	console.error(`${purple}║${colors.bold}  JACK PROGRESS INDICATOR DEMO                              ${colors.reset}${purple}║${colors.reset}`);
-	console.error(`${purple}║${colors.dim}  Testing visual options for upload feedback                ${colors.reset}${purple}║${colors.reset}`);
-	console.error(`${purple}╚════════════════════════════════════════════════════════════╝${colors.reset}`);
+	console.error(
+		`${purple}╔════════════════════════════════════════════════════════════╗${colors.reset}`,
+	);
+	console.error(
+		`${purple}║${colors.bold}  JACK PROGRESS INDICATOR DEMO                              ${colors.reset}${purple}║${colors.reset}`,
+	);
+	console.error(
+		`${purple}║${colors.dim}  Testing visual options for upload feedback                ${colors.reset}${purple}║${colors.reset}`,
+	);
+	console.error(
+		`${purple}╚════════════════════════════════════════════════════════════╝${colors.reset}`,
+	);
 
 	await demo1_simpleSpinner();
 	await sleep(800);
@@ -360,15 +390,23 @@ async function main() {
 
 	sectionHeader("Summary");
 	console.error(`${colors.cyan}→${colors.reset} Option 1: Current approach - simple spinner`);
-	console.error(`${colors.cyan}→${colors.reset} Option 2: Progress bar - good for single large file`);
+	console.error(
+		`${colors.cyan}→${colors.reset} Option 2: Progress bar - good for single large file`,
+	);
 	console.error(`${colors.cyan}→${colors.reset} Option 3: File counter - good for many files`);
-	console.error(`${colors.cyan}→${colors.reset} Option 4: Delayed progress - SPIRIT.md aligned (recommended)`);
+	console.error(
+		`${colors.cyan}→${colors.reset} Option 4: Delayed progress - SPIRIT.md aligned (recommended)`,
+	);
 	console.error(`${colors.cyan}→${colors.reset} Option 5: Staged progress - multi-step operations`);
 	console.error(`${colors.cyan}→${colors.reset} Option 6: Debug output - enhanced --debug flag`);
-	console.error(`${colors.cyan}→${colors.reset} Option 7: Large upload warning - non-blocking alert`);
+	console.error(
+		`${colors.cyan}→${colors.reset} Option 7: Large upload warning - non-blocking alert`,
+	);
 	console.error("");
 
-	console.error(`${colors.dim}Recommendation: Option 4 (delayed) + Option 6 Style C (debug) + Option 7 (warning)${colors.reset}`);
+	console.error(
+		`${colors.dim}Recommendation: Option 4 (delayed) + Option 6 Style C (debug) + Option 7 (warning)${colors.reset}`,
+	);
 	console.error("");
 }
 

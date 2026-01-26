@@ -242,7 +242,9 @@ export async function trackActivationIfFirst(deployMode: "managed" | "byo"): Pro
 
 		const now = new Date();
 		const firstSeen = config.firstSeenAt ? new Date(config.firstSeenAt) : now;
-		const daysToActivate = Math.floor((now.getTime() - firstSeen.getTime()) / (1000 * 60 * 60 * 24));
+		const daysToActivate = Math.floor(
+			(now.getTime() - firstSeen.getTime()) / (1000 * 60 * 60 * 24),
+		);
 
 		// Fire activation event
 		track(Events.USER_ACTIVATED, {
@@ -277,7 +279,12 @@ export function withTelemetry<T extends (...args: any[]) => Promise<any>>(
 
 	return (async (...args: Parameters<T>) => {
 		const context = getInvocationContext();
-		track(Events.COMMAND_INVOKED, { command: commandName, platform, ...(subcommand && { subcommand }), ...context });
+		track(Events.COMMAND_INVOKED, {
+			command: commandName,
+			platform,
+			...(subcommand && { subcommand }),
+			...context,
+		});
 		const start = Date.now();
 
 		try {

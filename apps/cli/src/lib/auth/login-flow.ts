@@ -2,13 +2,13 @@
  * Shared login flow for CLI and programmatic use
  */
 import { text } from "@clack/prompts";
-import { isCancel } from "../hooks.ts";
 import {
 	checkUsernameAvailable,
 	getCurrentUserProfile,
 	registerUser,
 	setUsername,
 } from "../control-plane.ts";
+import { isCancel } from "../hooks.ts";
 import { promptSelect } from "../hooks.ts";
 import { celebrate, error, info, spinner, success, warn } from "../output.ts";
 import { identifyUser } from "../telemetry.ts";

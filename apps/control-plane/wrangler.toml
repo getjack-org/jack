@@ -55,7 +55,10 @@ dataset = "jack_usage"
 
 # Note: Run `wrangler d1 create jack-control-db` first
 # Then add the database_id here
-# Secrets:
+# Secrets (set via wrangler secret put <NAME>):
 # - WORKOS_API_KEY
 # - CLOUDFLARE_API_TOKEN
 # - CLOUDFLARE_ACCOUNT_ID
+# - CLOUDFLARE_ZONE_ID
+# - STRIPE_SECRET_KEY      # Stripe API secret key (sk_live_xxx or sk_test_xxx)
+# - STRIPE_WEBHOOK_SECRET  # Stripe webhook signing secret (whsec_xxx)

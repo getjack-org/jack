@@ -29,7 +29,9 @@ const projectId = args["project-id"];
 console.log("=".repeat(60));
 console.log("D1 Database Handling Validation");
 console.log("=".repeat(60));
-console.log(`Mode: ${isLive ? "LIVE (testing deployed control plane)" : "CODE REVIEW (checking fixes in code)"}`);
+console.log(
+	`Mode: ${isLive ? "LIVE (testing deployed control plane)" : "CODE REVIEW (checking fixes in code)"}`,
+);
 console.log("");
 
 if (!isLive) {
@@ -47,8 +49,8 @@ if (!isLive) {
 	const indexPath = `${projectRoot}/apps/control-plane/src/index.ts`;
 	const indexContent = await Bun.file(indexPath).text();
 
-	const has404Handling = indexContent.includes("could not be found") &&
-						   indexContent.includes("cloudflare_deleted");
+	const has404Handling =
+		indexContent.includes("could not be found") && indexContent.includes("cloudflare_deleted");
 
 	if (has404Handling) {
 		console.log("✓ Delete endpoint handles 404s gracefully");
@@ -68,8 +70,9 @@ if (!isLive) {
 	const deploymentPath = `${projectRoot}/apps/control-plane/src/deployment-service.ts`;
 	const deploymentContent = await Bun.file(deploymentPath).text();
 
-	const hasBindingFilter = deploymentContent.includes("binding_name = ?") &&
-							 deploymentContent.includes("intent.d1.binding");
+	const hasBindingFilter =
+		deploymentContent.includes("binding_name = ?") &&
+		deploymentContent.includes("intent.d1.binding");
 	const hasFallback = deploymentContent.includes("ORDER BY created_at ASC LIMIT 1");
 
 	if (hasBindingFilter) {
@@ -99,7 +102,6 @@ if (!isLive) {
 	} else {
 		console.log("✗ Some fixes are missing - see above");
 	}
-
 } else {
 	// Live testing mode
 	console.log("Testing against deployed control plane...\n");
@@ -112,7 +114,9 @@ if (!isLive) {
 	}
 
 	// Import CLI modules for testing
-	const { fetchProjectResources, deleteProjectResource } = await import("./src/lib/control-plane.ts");
+	const { fetchProjectResources, deleteProjectResource } = await import(
+		"./src/lib/control-plane.ts"
+	);
 
 	console.log(`Testing project: ${projectId}\n`);
 
@@ -120,7 +124,7 @@ if (!isLive) {
 	console.log("Current D1 resources:");
 	console.log("-".repeat(40));
 	const resources = await fetchProjectResources(projectId);
-	const d1Resources = resources.filter(r => r.resource_type === "d1");
+	const d1Resources = resources.filter((r) => r.resource_type === "d1");
 
 	if (d1Resources.length === 0) {
 		console.log("No D1 resources found. Create one to test:");
@@ -147,7 +151,7 @@ if (!isLive) {
 	console.log("Bug 2 Test: Binding resolution");
 	console.log("-".repeat(40));
 
-	const resourcesWithDB = d1Resources.filter(r => r.binding_name === "DB");
+	const resourcesWithDB = d1Resources.filter((r) => r.binding_name === "DB");
 	if (resourcesWithDB.length > 1) {
 		console.log(`⚠ Multiple D1 resources with binding 'DB': ${resourcesWithDB.length}`);
 		console.log("  With the fix, deployment will use the one with matching binding_name");

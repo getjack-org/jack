@@ -9,12 +9,12 @@
 
 import { existsSync } from "node:fs";
 import { isLoggedIn } from "../lib/auth/index.ts";
-import { isCancel, promptSelectValue } from "../lib/hooks.ts";
 import {
 	type ManagedProject,
 	findProjectBySlug,
 	listManagedProjects,
 } from "../lib/control-plane.ts";
+import { isCancel, promptSelectValue } from "../lib/hooks.ts";
 import { error, info, output, success } from "../lib/output.ts";
 import { registerPath } from "../lib/paths-index.ts";
 import { generateByoProjectId, linkProject, readProjectLink } from "../lib/project-link.ts";

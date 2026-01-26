@@ -803,6 +803,12 @@ export class DeploymentService {
 					.first<{ provider_id: string }>()
 			: null;
 
+		// Get tier from org_billing
+		const billing = await this.db
+			.prepare("SELECT plan_tier FROM org_billing WHERE org_id = ?")
+			.bind(project.org_id)
+			.first<{ plan_tier: string }>();
+
 		const projectConfig: ProjectConfig = {
 			project_id: projectId,
 			org_id: project.org_id,
@@ -812,6 +818,7 @@ export class DeploymentService {
 			content_bucket_name: r2Resource?.provider_id || null,
 			owner_username: project.owner_username,
 			status: "active",
+			tier: (billing?.plan_tier as "free" | "pro" | "team") || "free",
 			updated_at: new Date().toISOString(),
 		};
 
@@ -870,7 +877,11 @@ export class DeploymentService {
 		if (!project) throw new Error(`Project ${projectId} not found`);
 
 		// Resolve bindings from manifest intent (uses manifest bindings, not legacy getBindingsForProject)
-		const bindings = await this.resolveBindingsFromManifest(projectId, project.org_id, manifest.bindings);
+		const bindings = await this.resolveBindingsFromManifest(
+			projectId,
+			project.org_id,
+			manifest.bindings,
+		);
 
 		// Extract all modules from the ZIP (main module and additional modules like WASM)
 		const { mainModule, additionalModules } = await this.extractAllModules(

@@ -1,20 +1,35 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import DashboardPage from "./pages/DashboardPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 // Page imports
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
-import SignupPage from "./pages/SignupPage";
 import PricingPage from "./pages/PricingPage";
-import DashboardPage from "./pages/DashboardPage";
-import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
-import { ProtectedRoute } from "./components/ProtectedRoute";
+import SignupPage from "./pages/SignupPage";
 
-type Route = "/" | "/login" | "/signup" | "/pricing" | "/dashboard" | "/forgot-password" | "/reset-password";
+type Route =
+	| "/"
+	| "/login"
+	| "/signup"
+	| "/pricing"
+	| "/dashboard"
+	| "/forgot-password"
+	| "/reset-password";
 
 function getRouteFromHash(): Route {
 	const hash = window.location.hash.split("?")[0].slice(1) || "/";
-	const validRoutes: Route[] = ["/", "/login", "/signup", "/pricing", "/dashboard", "/forgot-password", "/reset-password"];
+	const validRoutes: Route[] = [
+		"/",
+		"/login",
+		"/signup",
+		"/pricing",
+		"/dashboard",
+		"/forgot-password",
+		"/reset-password",
+	];
 	return validRoutes.includes(hash as Route) ? (hash as Route) : "/";
 }
 

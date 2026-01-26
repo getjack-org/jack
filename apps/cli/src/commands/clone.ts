@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { isCancel, promptSelectValue } from "../lib/hooks.ts";
 import { downloadProjectSource, fetchProjectTags } from "../lib/control-plane.ts";
 import { formatSize } from "../lib/format.ts";
+import { isCancel, promptSelectValue } from "../lib/hooks.ts";
 import { box, error, info, spinner, success } from "../lib/output.ts";
 import { registerPath } from "../lib/paths-index.ts";
 import { linkProject, updateProjectLink } from "../lib/project-link.ts";

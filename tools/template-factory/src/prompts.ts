@@ -5,7 +5,7 @@ import type { TemplateIntent } from "./types";
  * This prompt guides Claude to interview the user and produce a complete spec
  */
 export function generateSpecPrompt(intent: TemplateIntent): string {
-  return `
+	return `
 You are helping create a new Jack template. Your job is to gather requirements
 and produce a detailed specification document.
 
@@ -125,11 +125,11 @@ Once you have enough information, produce the spec document.
  * This prompt guides Claude to generate all template files
  */
 export function generateImplementationPrompt(
-  specDraft: string,
-  templatesDir: string,
-  specName: string
+	specDraft: string,
+	templatesDir: string,
+	specName: string,
 ): string {
-  return `
+	return `
 You are implementing a new Jack template based on the approved specification.
 
 ## Specification
@@ -301,7 +301,7 @@ Start implementing now. Create each file using the appropriate tool.
  * Generate prompt for fixing type errors
  */
 export function generateTypeFixPrompt(templatePath: string, errors: string): string {
-  return `
+	return `
 Fix the following TypeScript errors in the template at ${templatePath}:
 
 \`\`\`
@@ -322,24 +322,24 @@ Read the relevant files, make the fixes, and run tsc again to verify.
  * Generate prompt for smoke testing
  */
 export function generateSmokeTestPrompt(
-  deployUrl: string,
-  endpoints: Array<{ path: string; method: string; expectedStatus: number }>
+	deployUrl: string,
+	endpoints: Array<{ path: string; method: string; expectedStatus: number }>,
 ): string {
-  return `
+	return `
 Run smoke tests against the deployed template.
 
 Base URL: ${deployUrl}
 
 Tests:
 ${endpoints
-  .map(
-    (e, i) => `
+	.map(
+		(e, i) => `
 ${i + 1}. ${e.method} ${e.path}
    Expected: ${e.expectedStatus}
    Command: curl -s -o /dev/null -w "%{http_code}" -X ${e.method} ${deployUrl}${e.path}
-`
-  )
-  .join("\n")}
+`,
+	)
+	.join("\n")}
 
 For each test:
 1. Run the curl command

@@ -1,11 +1,20 @@
-import { useState, useEffect } from "react";
-import { authClient } from "../lib/auth-client";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Button } from "../components/ui/button";
+import { authClient } from "../lib/auth-client";
 
 interface ResetPasswordPageProps {
-	navigate: (route: "/" | "/login" | "/signup" | "/pricing" | "/dashboard" | "/forgot-password" | "/reset-password") => void;
+	navigate: (
+		route:
+			| "/"
+			| "/login"
+			| "/signup"
+			| "/pricing"
+			| "/dashboard"
+			| "/forgot-password"
+			| "/reset-password",
+	) => void;
 }
 
 export default function ResetPasswordPage({ navigate }: ResetPasswordPageProps) {
@@ -92,9 +101,7 @@ export default function ResetPasswordPage({ navigate }: ResetPasswordPageProps) 
 						<p className="text-muted-foreground mb-6">
 							This password reset link is invalid or has expired. Please request a new one.
 						</p>
-						<Button onClick={() => navigate("/forgot-password")}>
-							Request new reset link
-						</Button>
+						<Button onClick={() => navigate("/forgot-password")}>Request new reset link</Button>
 					</div>
 				</div>
 			</div>
@@ -167,11 +174,7 @@ export default function ResetPasswordPage({ navigate }: ResetPasswordPageProps) 
 						<Button type="submit" className="w-full" disabled={isLoading}>
 							{isLoading ? (
 								<>
-									<svg
-										className="animate-spin -ml-1 mr-2 h-4 w-4"
-										fill="none"
-										viewBox="0 0 24 24"
-									>
+									<svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
 										<circle
 											className="opacity-25"
 											cx="12"

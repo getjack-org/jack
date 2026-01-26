@@ -38,7 +38,7 @@
     },
     "apps/cli": {
       "name": "@getjack/jack",
-      "version": "0.1.23",
+      "version": "0.1.28",
       "bin": {
         "jack": "./src/index.ts",
       },
@@ -63,6 +63,7 @@
         "@getjack/auth": "workspace:*",
         "fflate": "^0.8.2",
         "hono": "^4.6.0",
+        "stripe": "^17.5.0",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^4.20241205.0",
@@ -78,6 +79,14 @@
         "@cloudflare/workers-types": "^4.20241205.0",
         "typescript": "^5.0.0",
         "wrangler": "^4.0.0",
+      },
+    },
+    "apps/log-worker": {
+      "name": "@getjack/log-worker",
+      "devDependencies": {
+        "@cloudflare/workers-types": "^4.20241205.0",
+        "typescript": "^5.0.0",
+        "wrangler": "^4.14.4",
       },
     },
     "apps/telemetry-worker": {
@@ -282,6 +291,8 @@
     "@getjack/dispatch-worker": ["@getjack/dispatch-worker@workspace:apps/dispatch-worker"],
 
     "@getjack/jack": ["@getjack/jack@workspace:apps/cli"],
+
+    "@getjack/log-worker": ["@getjack/log-worker@workspace:apps/log-worker"],
 
     "@getjack/telemetry-worker": ["@getjack/telemetry-worker@workspace:apps/telemetry-worker"],
 
@@ -1642,6 +1653,8 @@
     "strip-ansi-cjs": ["strip-ansi@6.0.1", "", { "dependencies": { "ansi-regex": "^5.0.1" } }, "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A=="],
 
     "strip-final-newline": ["strip-final-newline@2.0.0", "", {}, "sha512-BrpvfNAE3dcvq7ll3xVumzjKjZQ5tI1sEUIKr3Uoks0XUl45St3FlatVqef9prk4jRDzhW6WZg+3bk93y6pLjA=="],
+
+    "stripe": ["stripe@17.7.0", "", { "dependencies": { "@types/node": ">=8.1.0", "qs": "^6.11.0" } }, "sha512-aT2BU9KkizY9SATf14WhhYVv2uOapBWX0OFWF4xvcj1mPaNotlSc2CsxpS4DS46ZueSppmCF5BX1sNYBtwBvfw=="],
 
     "style-to-js": ["style-to-js@1.1.21", "", { "dependencies": { "style-to-object": "1.0.14" } }, "sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ=="],
 

@@ -6,9 +6,9 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { addD1Binding, getExistingD1Bindings, type D1BindingConfig } from "./wrangler-config.ts";
+import { join } from "node:path";
+import { type D1BindingConfig, addD1Binding, getExistingD1Bindings } from "./wrangler-config.ts";
 
 // ============================================================================
 // Test Helpers

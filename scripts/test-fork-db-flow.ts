@@ -9,8 +9,8 @@
  * 4. Identify where DB setup fails
  */
 
-import { getControlApiUrl } from "../apps/cli/src/lib/control-plane.ts";
 import { unzipSync } from "fflate";
+import { getControlApiUrl } from "../apps/cli/src/lib/control-plane.ts";
 import { parseJsonc } from "../apps/cli/src/lib/jsonc.ts";
 
 const TEST_TEMPLATE = process.argv[2] || "lennard/template-pwa";
@@ -92,11 +92,13 @@ async function main() {
 		process.exit(1);
 	}
 
-	const d1Databases = config.d1_databases as Array<{
-		binding: string;
-		database_name?: string;
-		database_id?: string;
-	}> | undefined;
+	const d1Databases = config.d1_databases as
+		| Array<{
+				binding: string;
+				database_name?: string;
+				database_id?: string;
+		  }>
+		| undefined;
 
 	if (!d1Databases || d1Databases.length === 0) {
 		console.log("   ✓ No D1 databases configured");

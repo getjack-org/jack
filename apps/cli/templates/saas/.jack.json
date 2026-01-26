@@ -1,7 +1,12 @@
 {
 	"name": "saas",
 	"description": "SaaS starter (Auth + Payments + React)",
-	"secrets": ["STRIPE_SECRET_KEY", "BETTER_AUTH_SECRET", "STRIPE_PRO_PRICE_ID", "STRIPE_ENTERPRISE_PRICE_ID"],
+	"secrets": [
+		"STRIPE_SECRET_KEY",
+		"BETTER_AUTH_SECRET",
+		"STRIPE_PRO_PRICE_ID",
+		"STRIPE_ENTERPRISE_PRICE_ID"
+	],
 	"capabilities": ["db"],
 	"requires": ["DB"],
 	"intent": {

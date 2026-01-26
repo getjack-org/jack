@@ -1,11 +1,20 @@
 import { useState } from "react";
-import { authClient } from "../lib/auth-client";
 import { toast } from "sonner";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Button } from "../components/ui/button";
+import { authClient } from "../lib/auth-client";
 
 interface ForgotPasswordPageProps {
-	navigate: (route: "/" | "/login" | "/signup" | "/pricing" | "/dashboard" | "/forgot-password" | "/reset-password") => void;
+	navigate: (
+		route:
+			| "/"
+			| "/login"
+			| "/signup"
+			| "/pricing"
+			| "/dashboard"
+			| "/forgot-password"
+			| "/reset-password",
+	) => void;
 }
 
 export default function ForgotPasswordPage({ navigate }: ForgotPasswordPageProps) {

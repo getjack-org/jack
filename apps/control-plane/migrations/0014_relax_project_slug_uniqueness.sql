@@ -1,7 +1,8 @@
 -- Migration: Allow reusing project slugs after delete (within an org)
 -- Rebuild projects table to drop UNIQUE(org_id, slug) constraint
+-- Note: D1 requires defer_foreign_keys instead of foreign_keys=OFF
 
-PRAGMA foreign_keys=OFF;
+PRAGMA defer_foreign_keys=on;
 
 CREATE TABLE projects_new (
   id TEXT PRIMARY KEY,
@@ -60,7 +61,7 @@ FROM projects;
 DROP TABLE projects;
 ALTER TABLE projects_new RENAME TO projects;
 
-PRAGMA foreign_keys=ON;
+-- defer_foreign_keys automatically resets at end of transaction
 
 CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
 CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);

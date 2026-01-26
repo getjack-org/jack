@@ -167,9 +167,7 @@ export class LogStreamDO {
 	}
 
 	private async handleIngest(request: Request): Promise<Response> {
-		const body = (await request.json().catch(() => null)) as
-			| { events?: TailEvent[] }
-			| null;
+		const body = (await request.json().catch(() => null)) as { events?: TailEvent[] } | null;
 		const events = Array.isArray(body?.events) ? body.events : [];
 
 		for (const ev of events) {
@@ -193,4 +191,3 @@ export class LogStreamDO {
 		return new Response("Not found", { status: 404 });
 	}
 }
-

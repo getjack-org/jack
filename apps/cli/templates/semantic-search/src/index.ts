@@ -1,5 +1,5 @@
-import { createJackAI, type JackAI } from "./jack-ai";
-import { createJackVectorize, type JackVectorize } from "./jack-vectorize";
+import { type JackAI, createJackAI } from "./jack-ai";
+import { type JackVectorize, createJackVectorize } from "./jack-vectorize";
 
 interface Env {
 	// Direct bindings (for local dev with wrangler)
@@ -26,7 +26,9 @@ type AIClient = {
 function getAI(env: Env): AIClient {
 	// Prefer jack cloud proxy if available (for metering)
 	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
-		return createJackAI(env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>) as AIClient;
+		return createJackAI(
+			env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
+		) as AIClient;
 	}
 	// Fallback to direct binding for local dev
 	if (env.AI) {
@@ -37,7 +39,9 @@ function getAI(env: Env): AIClient {
 
 // Minimal Vectorize interface
 type VectorizeClient = {
-	insert: (vectors: { id: string; values: number[]; metadata?: Record<string, unknown> }[]) => Promise<unknown>;
+	insert: (
+		vectors: { id: string; values: number[]; metadata?: Record<string, unknown> }[],
+	) => Promise<unknown>;
 	query: (
 		vector: number[],
 		options?: { topK?: number; returnMetadata?: "none" | "indexed" | "all" },

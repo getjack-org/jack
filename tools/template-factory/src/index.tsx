@@ -9,9 +9,9 @@
  *   bun run factory --resume  # Resume previous execution
  */
 
-import { mkdirSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { createSmithersDB, createSmithersRoot } from "smithers-orchestrator";
-import { TemplateFactory, STATE_KEYS } from "./TemplateFactory";
+import { STATE_KEYS, TemplateFactory } from "./TemplateFactory";
 import type { TemplateIntent } from "./types";
 
 // =============================================================================
@@ -27,35 +27,35 @@ const TEMPLATES_DIR = "./apps/cli/templates";
 // =============================================================================
 
 interface CliArgs {
-  intent?: string;
-  resume?: boolean;
-  executionId?: string;
-  help?: boolean;
+	intent?: string;
+	resume?: boolean;
+	executionId?: string;
+	help?: boolean;
 }
 
 function parseArgs(): CliArgs {
-  const args = process.argv.slice(2);
-  const result: CliArgs = {};
+	const args = process.argv.slice(2);
+	const result: CliArgs = {};
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
 
-    if (arg === "--help" || arg === "-h") {
-      result.help = true;
-    } else if (arg === "--resume" || arg === "-r") {
-      result.resume = true;
-    } else if (arg === "--execution" || arg === "-e") {
-      result.executionId = args[++i];
-    } else if (!arg.startsWith("-")) {
-      result.intent = arg;
-    }
-  }
+		if (arg === "--help" || arg === "-h") {
+			result.help = true;
+		} else if (arg === "--resume" || arg === "-r") {
+			result.resume = true;
+		} else if (arg === "--execution" || arg === "-e") {
+			result.executionId = args[++i];
+		} else if (!arg.startsWith("-")) {
+			result.intent = arg;
+		}
+	}
 
-  return result;
+	return result;
 }
 
 function printHelp(): void {
-  console.log(`
+	console.log(`
 Jack Template Factory - Create new built-in templates with AI
 
 USAGE:
@@ -87,108 +87,109 @@ The workflow is fully autonomous - just run and wait!
 // =============================================================================
 
 async function main(): Promise<void> {
-  const args = parseArgs();
+	const args = parseArgs();
 
-  if (args.help) {
-    printHelp();
-    process.exit(0);
-  }
+	if (args.help) {
+		printHelp();
+		process.exit(0);
+	}
 
-  if (!args.resume && !args.intent) {
-    console.error("Error: Please provide a template description or use --resume");
-    console.error('Example: bun run factory "Simple landing page"');
-    process.exit(1);
-  }
+	if (!args.resume && !args.intent) {
+		console.error("Error: Please provide a template description or use --resume");
+		console.error('Example: bun run factory "Simple landing page"');
+		process.exit(1);
+	}
 
-  // Initialize database
-  console.log("Initializing Smithers database...");
+	// Initialize database
+	console.log("Initializing Smithers database...");
 
-  if (!existsSync(FACTORY_DB_DIR)) {
-    mkdirSync(FACTORY_DB_DIR, { recursive: true });
-  }
+	if (!existsSync(FACTORY_DB_DIR)) {
+		mkdirSync(FACTORY_DB_DIR, { recursive: true });
+	}
 
-  const db = createSmithersDB({ path: FACTORY_DB_PATH });
+	const db = createSmithersDB({ path: FACTORY_DB_PATH });
 
-  // Determine execution ID
-  let executionId: string;
-  let isResume = false;
+	// Determine execution ID
+	let executionId: string;
+	let isResume = false;
 
-  if (args.resume || args.executionId) {
-    if (args.executionId) {
-      executionId = args.executionId;
-    } else {
-      const lastExecution = db.state.get("factory:lastExecutionId");
-      if (!lastExecution) {
-        console.error("No previous execution found to resume");
-        process.exit(1);
-      }
-      executionId = lastExecution as string;
-    }
-    isResume = true;
-    console.log(`Resuming execution: ${executionId}`);
-  } else {
-    // Fresh start - clear all state
-    console.log("Starting fresh execution...");
-    db.db.run("DELETE FROM state WHERE key LIKE 'factory:%' OR key LIKE 'human:%' OR key LIKE 'stepIndex_%' OR key IN ('currentPhaseIndex', 'ralphCount', 'phase', 'data')");
+	if (args.resume || args.executionId) {
+		if (args.executionId) {
+			executionId = args.executionId;
+		} else {
+			const lastExecution = db.state.get("factory:lastExecutionId");
+			if (!lastExecution) {
+				console.error("No previous execution found to resume");
+				process.exit(1);
+			}
+			executionId = lastExecution as string;
+		}
+		isResume = true;
+		console.log(`Resuming execution: ${executionId}`);
+	} else {
+		// Fresh start - clear all state
+		console.log("Starting fresh execution...");
+		db.db.run(
+			"DELETE FROM state WHERE key LIKE 'factory:%' OR key LIKE 'human:%' OR key LIKE 'stepIndex_%' OR key IN ('currentPhaseIndex', 'ralphCount', 'phase', 'data')",
+		);
 
-    executionId = db.execution.start(
-      `Template: ${args.intent!.slice(0, 40)}`,
-      "template-factory"
-    );
-    db.state.set("factory:lastExecutionId", executionId);
-    console.log(`Started execution: ${executionId}`);
-  }
+		executionId = db.execution.start(`Template: ${args.intent!.slice(0, 40)}`, "template-factory");
+		db.state.set("factory:lastExecutionId", executionId);
+		console.log(`Started execution: ${executionId}`);
+	}
 
-  const intent: TemplateIntent = {
-    description: args.intent || (db.state.get(`${executionId}:intent`) as string) || "",
-  };
+	const intent: TemplateIntent = {
+		description: args.intent || (db.state.get(`${executionId}:intent`) as string) || "",
+	};
 
-  if (args.intent) {
-    db.state.set(`${executionId}:intent`, args.intent);
-  }
+	if (args.intent) {
+		db.state.set(`${executionId}:intent`, args.intent);
+	}
 
-  console.log("\n" + "=".repeat(60));
-  console.log(`Template: ${intent.description}`);
-  console.log("=".repeat(60) + "\n");
+	console.log("\n" + "=".repeat(60));
+	console.log(`Template: ${intent.description}`);
+	console.log("=".repeat(60) + "\n");
 
-  const root = createSmithersRoot();
+	const root = createSmithersRoot();
 
-  try {
-    await root.mount(() => (
-      <TemplateFactory
-        db={db}
-        executionId={executionId}
-        intent={intent}
-        templatesDir={TEMPLATES_DIR}
-        onComplete={(result) => {
-          console.log("\n" + "=".repeat(60));
-          if (result.success) {
-            console.log(`SUCCESS: Template "${result.templateName}" created!`);
-            console.log(`\nNext steps:`);
-            console.log(`  1. Review worktree: .worktrees/template/${result.templateName}/apps/cli/templates/${result.templateName}/`);
-            console.log(`  2. Merge branch: git merge template/${result.templateName}`);
-            console.log(`  3. Test: jack new my-test -t ${result.templateName}`);
-          } else {
-            console.log(`FAILED: ${result.error}`);
-          }
-          console.log("=".repeat(60));
-          // Exit after completion
-          setTimeout(() => process.exit(result.success ? 0 : 1), 500);
-        }}
-      />
-    ));
+	try {
+		await root.mount(() => (
+			<TemplateFactory
+				db={db}
+				executionId={executionId}
+				intent={intent}
+				templatesDir={TEMPLATES_DIR}
+				onComplete={(result) => {
+					console.log("\n" + "=".repeat(60));
+					if (result.success) {
+						console.log(`SUCCESS: Template "${result.templateName}" created!`);
+						console.log(`\nNext steps:`);
+						console.log(
+							`  1. Review worktree: .worktrees/template/${result.templateName}/apps/cli/templates/${result.templateName}/`,
+						);
+						console.log(`  2. Merge branch: git merge template/${result.templateName}`);
+						console.log(`  3. Test: jack new my-test -t ${result.templateName}`);
+					} else {
+						console.log(`FAILED: ${result.error}`);
+					}
+					console.log("=".repeat(60));
+					// Exit after completion
+					setTimeout(() => process.exit(result.success ? 0 : 1), 500);
+				}}
+			/>
+		));
 
-    console.log("\nWorkflow completed.");
-  } catch (error) {
-    console.error("\nWorkflow error:", error);
-    console.log(`\nTo resume: bun run factory --resume`);
-    process.exit(1);
-  } finally {
-    await db.close();
-  }
+		console.log("\nWorkflow completed.");
+	} catch (error) {
+		console.error("\nWorkflow error:", error);
+		console.log(`\nTo resume: bun run factory --resume`);
+		process.exit(1);
+	} finally {
+		await db.close();
+	}
 }
 
 main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
+	console.error("Fatal error:", error);
+	process.exit(1);
 });

@@ -68,10 +68,7 @@ const tests = [
 			"r2_buckets":[{"binding":"R2","bucket_name":"bucket"}]
 		}`,
 		check: (r: string) =>
-			!r.includes("d1-id") &&
-			!r.includes("kv-id") &&
-			r.includes("bucket") &&
-			r.includes("mydb"),
+			!r.includes("d1-id") && !r.includes("kv-id") && r.includes("bucket") && r.includes("mydb"),
 	},
 	{
 		name: "Non-JSON file unchanged",

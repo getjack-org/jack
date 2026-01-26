@@ -1,6 +1,6 @@
 import { text } from "@clack/prompts";
-import { isCancel } from "./hooks.ts";
 import type { DetectedSecret } from "./env-parser.ts";
+import { isCancel } from "./hooks.ts";
 import { promptSelectValue } from "./hooks.ts";
 import { info, success, warn } from "./output.ts";
 import { getSavedSecrets, getSecretsPath, maskSecret, saveSecrets } from "./secrets.ts";
