@@ -54,6 +54,72 @@ jack uses a shared core so CLI and MCP stay aligned:
 
 Tradeoff: the library may do more IO to prevent drift; wrappers stay thin.
 
+## Adding New Features: CLI + MCP Parity Checklist
+
+**CRITICAL:** When adding new CLI commands, always consider MCP parity. AI agents using MCP should have the same capabilities as humans using CLI.
+
+### The Pattern
+
+```
+CLI Command  ─┐
+              ├──▶  Shared Service Layer  ──▶  Control Plane API
+MCP Tool     ─┘     (lib/services/*.ts)
+```
+
+### Checklist for New Features
+
+1. **Create shared service function** in `src/lib/services/`:
+   ```typescript
+   // src/lib/services/domain-operations.ts
+   export async function connectDomain(hostname: string, options: { interactive?: boolean }): Promise<ConnectDomainResult>
+   ```
+
+2. **Wire CLI command** in `src/commands/`:
+   - Call shared service with `interactive: true`
+   - Add human-readable output (success/error messages)
+   - Handle prompts and confirmations
+
+3. **Wire MCP tool** in `src/mcp/tools/index.ts`:
+   - Call same shared service with `interactive: false`
+   - Return structured JSON response
+   - Add Zod schema for validation
+
+4. **Update MCP tools table** in this file (see "Available MCP Tools" section)
+
+### Anti-Pattern (What NOT to Do)
+
+```typescript
+// ❌ BAD: Direct API calls in CLI command
+// This creates CLI-only features with no MCP coverage
+async function connectDomain(hostname: string) {
+  const response = await authFetch(`${getControlApiUrl()}/v1/domains`, {
+    method: "POST",
+    body: JSON.stringify({ hostname }),
+  });
+  // ... render output
+}
+```
+
+```typescript
+// ✅ GOOD: Shared service layer
+// src/lib/services/domain-operations.ts
+export async function connectDomain(hostname: string): Promise<ConnectDomainResult> {
+  const response = await authFetch(`${getControlApiUrl()}/v1/domains`, { ... });
+  return { domain: data.domain }; // Return data, don't render
+}
+
+// CLI calls: await connectDomain(hostname); success(`Connected ${hostname}`);
+// MCP calls: return formatSuccessResponse(await connectDomain(hostname));
+```
+
+### Current Coverage Gaps
+
+Features with CLI but no MCP (technical debt):
+- `jack domain connect/assign/unassign/disconnect` - needs `src/lib/services/domain-operations.ts`
+- `jack domains` - needs shared list function
+
+When fixing gaps, extract the API calls from the CLI command into a shared service first.
+
 ## Telemetry System
 
 **IMPORTANT:** jack has a telemetry system using PostHog. When adding or modifying commands:
@@ -207,12 +273,30 @@ jack mcp serve --project /path/to/app  # Explicit project path
 
 ### Available MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `create_project` | Create and deploy a new project (wraps `jack new`) |
-| `deploy_project` | Deploy current project (wraps `jack ship`) |
-| `get_project_status` | Get deployment state, URL, last deploy time |
-| `list_projects` | List all projects from registry |
+| Tool | CLI Equivalent | Description |
+|------|----------------|-------------|
+| `create_project` | `jack new` | Create and deploy a new project |
+| `deploy_project` | `jack ship` | Deploy current project |
+| `get_project_status` | `jack info` | Get deployment state, URL, last deploy time |
+| `list_projects` | `jack ls` | List all projects from registry |
+| `create_database` | `jack services db create` | Create D1 database |
+| `list_databases` | `jack services db list` | List project databases |
+| `execute_sql` | `jack services db execute` | Execute SQL queries |
+| `create_vectorize_index` | `jack services vectorize create` | Create vector index |
+| `list_vectorize_indexes` | `jack services vectorize list` | List project indexes |
+| `delete_vectorize_index` | `jack services vectorize delete` | Delete index |
+| `get_vectorize_info` | `jack services vectorize info` | Get index metadata |
+| `create_storage_bucket` | `jack services storage create` | Create R2 bucket |
+| `list_storage_buckets` | `jack services storage list` | List project buckets |
+| `delete_storage_bucket` | `jack services storage delete` | Delete bucket |
+| `get_storage_info` | `jack services storage info` | Get bucket info |
+| `start_log_session` | `jack logs` | Start real-time log session |
+| `tail_logs` | `jack logs` | Collect log samples |
+
+**Missing MCP tools (CLI-only):**
+- `jack domain connect/assign/unassign/disconnect` - custom domain management
+- `jack domains` - list all domains
+- `jack secrets` - manage project secrets
 
 ### Available MCP Resources
 
