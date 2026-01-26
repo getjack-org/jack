@@ -7,10 +7,10 @@
  */
 
 import { password as passwordPrompt } from "@clack/prompts";
-import { isCancel } from "../lib/hooks.ts";
 import { $ } from "bun";
 import { getControlApiUrl } from "../lib/control-plane.ts";
 import { JackError, JackErrorCode } from "../lib/errors.ts";
+import { isCancel } from "../lib/hooks.ts";
 import { error, info, output, success, warn } from "../lib/output.ts";
 import { type LocalProjectLink, readProjectLink } from "../lib/project-link.ts";
 import { getProjectNameFromDir } from "../lib/storage/index.ts";
@@ -25,6 +25,10 @@ export default async function secrets(
 	options: SecretsOptions = {},
 ): Promise<void> {
 	if (!subcommand) {
+		return await listSecrets(options);
+	}
+
+	if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
 		return showHelp();
 	}
 

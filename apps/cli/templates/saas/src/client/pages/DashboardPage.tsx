@@ -1,18 +1,33 @@
 import { useEffect, useState } from "react";
+import { ThemeToggle } from "../components/ThemeToggle";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { useAuth } from "../hooks/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { ThemeToggle } from "../components/ThemeToggle";
 import { getPlanName } from "../lib/plans";
 
 interface DashboardPageProps {
-	navigate: (route: "/" | "/login" | "/signup" | "/pricing" | "/dashboard" | "/forgot-password" | "/reset-password") => void;
+	navigate: (
+		route:
+			| "/"
+			| "/login"
+			| "/signup"
+			| "/pricing"
+			| "/dashboard"
+			| "/forgot-password"
+			| "/reset-password",
+	) => void;
 }
 
 export default function DashboardPage({ navigate }: DashboardPageProps) {
 	const { user, signOut } = useAuth();
-	const { plan, isSubscribed, isCancelling, periodEnd, isLoading: isSubscriptionLoading } = useSubscription();
+	const {
+		plan,
+		isSubscribed,
+		isCancelling,
+		periodEnd,
+		isLoading: isSubscriptionLoading,
+	} = useSubscription();
 	const [showUpgradeSuccess, setShowUpgradeSuccess] = useState(false);
 
 	// Check for upgrade success
@@ -103,19 +118,33 @@ export default function DashboardPage({ navigate }: DashboardPageProps) {
 							className="absolute top-4 right-4 text-white/80 hover:text-white"
 						>
 							<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M6 18L18 6M6 6l12 12"
+								/>
 							</svg>
 						</button>
 						<div className="flex items-start gap-4">
 							<div className="flex-shrink-0 w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
 								<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+									<path
+										strokeLinecap="round"
+										strokeLinejoin="round"
+										strokeWidth={2}
+										d="M5 13l4 4L19 7"
+									/>
 								</svg>
 							</div>
 							<div className="flex-1">
 								<h2 className="text-xl font-bold mb-1">You're all set!</h2>
 								<p className="text-white/90 mb-4">
-									Your upgrade to <span className="font-semibold">{plan === "enterprise" ? "Enterprise" : "Pro"}</span> is complete. Here's what you just unlocked:
+									Your upgrade to{" "}
+									<span className="font-semibold">
+										{plan === "enterprise" ? "Enterprise" : "Pro"}
+									</span>{" "}
+									is complete. Here's what you just unlocked:
 								</p>
 								<div className="grid gap-2 sm:grid-cols-3 mb-4">
 									<div className="bg-white/10 rounded-lg p-3">
@@ -184,7 +213,10 @@ export default function DashboardPage({ navigate }: DashboardPageProps) {
 									</p>
 									<p className="text-sm text-yellow-700 dark:text-yellow-300">
 										You'll have access to {getPlanName(currentPlan)} features until{" "}
-										{periodEnd ? new Date(periodEnd).toLocaleDateString() : "the end of your billing period"}.
+										{periodEnd
+											? new Date(periodEnd).toLocaleDateString()
+											: "the end of your billing period"}
+										.
 									</p>
 								</div>
 								<Button variant="outline" onClick={() => navigate("/pricing")}>

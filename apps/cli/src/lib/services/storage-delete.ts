@@ -59,7 +59,7 @@ export async function deleteStorageBucket(
 		throw new Error(`Bucket "${bucketName}" not found in this project.`);
 	}
 
-	let deleted = true;
+	const deleted = true;
 
 	if (link.deploy_mode === "managed") {
 		// Managed mode: delete via control plane (don't call wrangler - user may not have CF auth)

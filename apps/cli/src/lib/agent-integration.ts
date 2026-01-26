@@ -147,8 +147,7 @@ async function appendJackMdReferences(projectPath: string): Promise<string[]> {
 
 			if (headingMatch && headingMatch.index !== undefined) {
 				const insertPos = headingMatch.index + headingMatch[0].length;
-				newContent =
-					content.slice(0, insertPos) + "\n" + referenceBlock + content.slice(insertPos);
+				newContent = content.slice(0, insertPos) + "\n" + referenceBlock + content.slice(insertPos);
 			} else {
 				newContent = referenceBlock + content;
 			}

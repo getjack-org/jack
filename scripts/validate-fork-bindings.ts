@@ -160,9 +160,7 @@ const proposedTests = [
 			"r2_buckets":[{"binding":"R2","bucket_name":"bucket"}]
 		}`,
 		check: (result: string) =>
-			!result.includes("d1-id") &&
-			!result.includes("kv-id") &&
-			result.includes("bucket"),
+			!result.includes("d1-id") && !result.includes("kv-id") && result.includes("bucket"),
 	},
 ];
 

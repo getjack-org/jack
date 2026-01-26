@@ -643,11 +643,7 @@ function findObjectEndAfter(content: string, fromPos: number): number {
 /**
  * Remove the entire r2_buckets property when it becomes empty.
  */
-function removeR2BucketsProperty(
-	content: string,
-	propertyStart: number,
-	arrayEnd: number,
-): string {
+function removeR2BucketsProperty(content: string, propertyStart: number, arrayEnd: number): string {
 	let removeStart = propertyStart;
 	let removeEnd = arrayEnd + 1;
 

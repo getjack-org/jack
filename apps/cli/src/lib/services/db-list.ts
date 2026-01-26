@@ -63,7 +63,10 @@ export async function listDatabases(projectDir: string): Promise<DatabaseListEnt
 		// Get metadata based on deploy mode
 		if (isManaged && managedDbInfo) {
 			// For managed: use control plane data (match by ID or name)
-			if (managedDbInfo.id === binding.database_id || managedDbInfo.name.includes(binding.database_name)) {
+			if (
+				managedDbInfo.id === binding.database_id ||
+				managedDbInfo.name.includes(binding.database_name)
+			) {
 				entry.sizeBytes = managedDbInfo.sizeBytes;
 				entry.numTables = managedDbInfo.numTables;
 			}

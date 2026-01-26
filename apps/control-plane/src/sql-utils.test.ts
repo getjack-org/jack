@@ -21,9 +21,7 @@ describe("sql-utils", () => {
 
 			it("allows SELECT with JOIN", () => {
 				expect(
-					getNonReadOperation(
-						"SELECT u.name, o.id FROM users u JOIN orders o ON u.id = o.user_id",
-					),
+					getNonReadOperation("SELECT u.name, o.id FROM users u JOIN orders o ON u.id = o.user_id"),
 				).toBeNull();
 			});
 

@@ -17,9 +17,9 @@
  * @see /docs/internal/specs/binding-proxy-worker.md
  */
 
-import type { Env } from "./types";
 import { AIHandler } from "./handlers/ai";
 import { VectorizeHandler } from "./handlers/vectorize";
+import type { Env } from "./types";
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

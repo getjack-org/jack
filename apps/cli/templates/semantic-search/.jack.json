@@ -14,11 +14,7 @@
 			{
 				"action": "box",
 				"title": "{{name}}",
-				"lines": [
-					"{{url}}",
-					"",
-					"jack open  to view in browser"
-				]
+				"lines": ["{{url}}", "", "jack open  to view in browser"]
 			}
 		]
 	}

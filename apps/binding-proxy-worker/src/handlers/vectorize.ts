@@ -1,6 +1,6 @@
-import type { Env, VectorizeProxyRequest, VectorizeUsageDataPoint } from "../types";
 import { MeteringService } from "../metering";
 import { QuotaManager } from "../quota";
+import type { Env, VectorizeProxyRequest, VectorizeUsageDataPoint } from "../types";
 
 /**
  * Vectorize Proxy Handler - receives fetch requests from user workers and forwards to real Vectorize.
@@ -48,7 +48,9 @@ export class VectorizeHandler {
 
 		if (!projectId || !orgId) {
 			return Response.json(
-				{ error: "Missing project context headers. This proxy is for jack cloud deployments only." },
+				{
+					error: "Missing project context headers. This proxy is for jack cloud deployments only.",
+				},
 				{ status: 400 },
 			);
 		}

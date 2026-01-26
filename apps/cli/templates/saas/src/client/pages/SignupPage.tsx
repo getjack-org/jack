@@ -1,9 +1,18 @@
 import { useState } from "react";
-import { authClient } from "../lib/auth-client";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { authClient } from "../lib/auth-client";
 
 interface SignupPageProps {
-	navigate: (route: "/" | "/login" | "/signup" | "/pricing" | "/dashboard" | "/forgot-password" | "/reset-password") => void;
+	navigate: (
+		route:
+			| "/"
+			| "/login"
+			| "/signup"
+			| "/pricing"
+			| "/dashboard"
+			| "/forgot-password"
+			| "/reset-password",
+	) => void;
 }
 
 export default function SignupPage({ navigate }: SignupPageProps) {

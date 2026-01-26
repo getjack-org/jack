@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { authClient } from "../lib/auth-client";
 
 type Subscription = {
@@ -8,7 +8,7 @@ type Subscription = {
 	stripeCustomerId?: string;
 	stripeSubscriptionId?: string;
 	cancelAtPeriodEnd?: boolean;
-	cancelAt?: Date | string | null;  // Better Auth uses this
+	cancelAt?: Date | string | null; // Better Auth uses this
 	periodEnd?: Date | string | null;
 };
 
@@ -60,11 +60,12 @@ export function useSubscription() {
 	const isCancelling =
 		stripeStatus?.cancelAtPeriodEnd ||
 		activeSubscription?.cancelAtPeriodEnd ||
-		!!activeSubscription?.cancelAt ||  // Better Auth sets cancelAt date when cancelling
+		!!activeSubscription?.cancelAt || // Better Auth sets cancelAt date when cancelling
 		false;
 
 	// Get period end from either source
-	const periodEnd = stripeStatus?.periodEnd ||
+	const periodEnd =
+		stripeStatus?.periodEnd ||
 		(activeSubscription?.periodEnd ? String(activeSubscription.periodEnd) : null);
 
 	return {

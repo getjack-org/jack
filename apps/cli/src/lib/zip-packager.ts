@@ -54,9 +54,7 @@ export interface ManifestData {
 	};
 }
 
-export interface ZipProgressCallback {
-	(current: number, total: number): void;
-}
+export type ZipProgressCallback = (current: number, total: number) => void;
 
 /**
  * Creates a ZIP archive from source directory

@@ -387,7 +387,7 @@ function findLastObjectEndInArray(content: string, startIndex: number, endIndex:
 function shouldAddCommaBefore(content: string): boolean {
 	// Strip trailing comments and whitespace to find last meaningful char
 	let i = content.length - 1;
-	let inLineComment = false;
+	const inLineComment = false;
 
 	// First pass: find where any trailing line comment starts
 	for (let j = content.length - 1; j >= 0; j--) {

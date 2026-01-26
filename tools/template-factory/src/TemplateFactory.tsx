@@ -1,11 +1,11 @@
 import {
-  SmithersProvider,
-  Claude,
-  Phase,
-  Step,
-  While,
-  Worktree,
-  useSmithers,
+	Claude,
+	Phase,
+	SmithersProvider,
+	Step,
+	While,
+	Worktree,
+	useSmithers,
 } from "smithers-orchestrator";
 import type { SmithersDB } from "smithers-orchestrator";
 import type { TemplateIntent } from "./types";
@@ -15,15 +15,15 @@ import type { TemplateIntent } from "./types";
 // =============================================================================
 
 export const STATE_KEYS = {
-  specComplete: "factory:spec:complete",
-  specContent: "factory:spec:content",
-  templateName: "factory:template:name",
-  implementComplete: "factory:impl:complete",
-  typeCheckPassed: "factory:impl:typecheck",
-  lintPassed: "factory:impl:lint",
-  deployUrl: "factory:validate:url",
-  validateComplete: "factory:validate:complete",
-  finalized: "factory:finalized",
+	specComplete: "factory:spec:complete",
+	specContent: "factory:spec:content",
+	templateName: "factory:template:name",
+	implementComplete: "factory:impl:complete",
+	typeCheckPassed: "factory:impl:typecheck",
+	lintPassed: "factory:impl:lint",
+	deployUrl: "factory:validate:url",
+	validateComplete: "factory:validate:complete",
+	finalized: "factory:finalized",
 } as const;
 
 // =============================================================================
@@ -31,11 +31,11 @@ export const STATE_KEYS = {
 // =============================================================================
 
 export interface TemplateFactoryProps {
-  db: SmithersDB;
-  executionId: string;
-  intent: TemplateIntent;
-  templatesDir?: string;
-  onComplete?: (result: { success: boolean; templateName?: string; error?: string }) => void;
+	db: SmithersDB;
+	executionId: string;
+	intent: TemplateIntent;
+	templatesDir?: string;
+	onComplete?: (result: { success: boolean; templateName?: string; error?: string }) => void;
 }
 
 // =============================================================================
@@ -43,21 +43,21 @@ export interface TemplateFactoryProps {
 // =============================================================================
 
 export function TemplateFactory({
-  db,
-  executionId,
-  intent,
-  templatesDir = "./apps/cli/templates",
-  onComplete,
+	db,
+	executionId,
+	intent,
+	templatesDir = "./apps/cli/templates",
+	onComplete,
 }: TemplateFactoryProps) {
-  return (
-    <SmithersProvider db={db} executionId={executionId} maxIterations={100}>
-      <TemplateFactoryWorkflow
-        intent={intent}
-        templatesDir={templatesDir}
-        onComplete={onComplete}
-      />
-    </SmithersProvider>
-  );
+	return (
+		<SmithersProvider db={db} executionId={executionId} maxIterations={100}>
+			<TemplateFactoryWorkflow
+				intent={intent}
+				templatesDir={templatesDir}
+				onComplete={onComplete}
+			/>
+		</SmithersProvider>
+	);
 }
 
 // =============================================================================
@@ -65,59 +65,59 @@ export function TemplateFactory({
 // =============================================================================
 
 interface WorkflowProps {
-  intent: TemplateIntent;
-  templatesDir: string;
-  onComplete?: TemplateFactoryProps["onComplete"];
+	intent: TemplateIntent;
+	templatesDir: string;
+	onComplete?: TemplateFactoryProps["onComplete"];
 }
 
 function TemplateFactoryWorkflow({ intent, templatesDir, onComplete }: WorkflowProps) {
-  const { db } = useSmithers();
+	const { db } = useSmithers();
 
-  // Get spec content for later phases - read synchronously from state
-  const specContent = db.state.get(STATE_KEYS.specContent) as string | undefined;
+	// Get spec content for later phases - read synchronously from state
+	const specContent = db.state.get(STATE_KEYS.specContent) as string | undefined;
 
-  // Extract template name from spec or intent
-  const getTemplateName = (): string => {
-    const stored = db.state.get(STATE_KEYS.templateName) as string | undefined;
-    if (stored) return stored;
+	// Extract template name from spec or intent
+	const getTemplateName = (): string => {
+		const stored = db.state.get(STATE_KEYS.templateName) as string | undefined;
+		if (stored) return stored;
 
-    // Generate from intent
-    const safeName = intent.description
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 30);
-    return safeName || "new-template";
-  };
+		// Generate from intent
+		const safeName = intent.description
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-|-$/g, "")
+			.slice(0, 30);
+		return safeName || "new-template";
+	};
 
-  const templateName = getTemplateName();
+	const templateName = getTemplateName();
 
-  return (
-    <>
-      {/* PHASE 1: SPEC - Claude creates the spec autonomously */}
-      <Phase name="spec">
-        <Step name="create-spec">
-          <Claude
-            model="sonnet"
-            maxTurns={15}
-            permissionMode="bypassPermissions"
-            onFinished={({ output }) => {
-              db.state.set(STATE_KEYS.specContent, output);
+	return (
+		<>
+			{/* PHASE 1: SPEC - Claude creates the spec autonomously */}
+			<Phase name="spec">
+				<Step name="create-spec">
+					<Claude
+						model="sonnet"
+						maxTurns={15}
+						permissionMode="bypassPermissions"
+						onFinished={({ output }) => {
+							db.state.set(STATE_KEYS.specContent, output);
 
-              // Extract template name from output
-              const nameMatch =
-                output.match(/Template Name:\s*["\`]?([a-z0-9-]+)["\`]?/i) ||
-                output.match(/name["\s:]+["\`]?([a-z0-9-]+)["\`]?/i);
-              if (nameMatch) {
-                db.state.set(STATE_KEYS.templateName, nameMatch[1].toLowerCase());
-              } else {
-                db.state.set(STATE_KEYS.templateName, getTemplateName());
-              }
+							// Extract template name from output
+							const nameMatch =
+								output.match(/Template Name:\s*["\`]?([a-z0-9-]+)["\`]?/i) ||
+								output.match(/name["\s:]+["\`]?([a-z0-9-]+)["\`]?/i);
+							if (nameMatch) {
+								db.state.set(STATE_KEYS.templateName, nameMatch[1].toLowerCase());
+							} else {
+								db.state.set(STATE_KEYS.templateName, getTemplateName());
+							}
 
-              db.state.set(STATE_KEYS.specComplete, true);
-            }}
-          >
-            {`
+							db.state.set(STATE_KEYS.specComplete, true);
+						}}
+					>
+						{`
 You are creating a specification for a new Jack CLI template.
 
 User's request: "${intent.description}"
@@ -141,24 +141,24 @@ Keep it simple and practical. This template will be deployed to Cloudflare Worke
 Output the spec in a clear markdown format. Start with:
 Template Name: <name>
             `.trim()}
-          </Claude>
-        </Step>
-      </Phase>
+					</Claude>
+				</Step>
+			</Phase>
 
-      {/* PHASES 2-4: All inside Worktree for proper cwd scoping */}
-      <Phase name="implement">
-        <Worktree branch={`template/${templateName}`} cleanup={false}>
-          {/* STEP: Generate template files */}
-          <Step name="generate-files">
-            <Claude
-              model="sonnet"
-              maxTurns={30}
-              permissionMode="bypassPermissions"
-              onFinished={() => {
-                db.state.set(STATE_KEYS.implementComplete, true);
-              }}
-            >
-              {`
+			{/* PHASES 2-4: All inside Worktree for proper cwd scoping */}
+			<Phase name="implement">
+				<Worktree branch={`template/${templateName}`} cleanup={false}>
+					{/* STEP: Generate template files */}
+					<Step name="generate-files">
+						<Claude
+							model="sonnet"
+							maxTurns={30}
+							permissionMode="bypassPermissions"
+							onFinished={() => {
+								db.state.set(STATE_KEYS.implementComplete, true);
+							}}
+						>
+							{`
 You are implementing a Jack CLI template based on this specification:
 
 ${specContent || "Specification not available - use the user's intent: " + intent.description}
@@ -183,26 +183,26 @@ REQUIREMENTS:
 
 Create the files now. Be thorough - create every file needed for a working template.
               `.trim()}
-            </Claude>
-          </Step>
+						</Claude>
+					</Step>
 
-          {/* STEP: Type check */}
-          <Step name="typecheck">
-            <Claude
-              model="sonnet"
-              maxTurns={15}
-              permissionMode="bypassPermissions"
-              onFinished={({ output }) => {
-                if (
-                  output.toLowerCase().includes("no type errors") ||
-                  output.includes("0 errors") ||
-                  output.toLowerCase().includes("type check passed")
-                ) {
-                  db.state.set(STATE_KEYS.typeCheckPassed, true);
-                }
-              }}
-            >
-              {`
+					{/* STEP: Type check */}
+					<Step name="typecheck">
+						<Claude
+							model="sonnet"
+							maxTurns={15}
+							permissionMode="bypassPermissions"
+							onFinished={({ output }) => {
+								if (
+									output.toLowerCase().includes("no type errors") ||
+									output.includes("0 errors") ||
+									output.toLowerCase().includes("type check passed")
+								) {
+									db.state.set(STATE_KEYS.typeCheckPassed, true);
+								}
+							}}
+						>
+							{`
 Run type checking on the template. First install dependencies, then run tsc:
 
 cd apps/cli/templates/${templateName} && bun install && bun tsc --noEmit 2>&1
@@ -210,25 +210,25 @@ cd apps/cli/templates/${templateName} && bun install && bun tsc --noEmit 2>&1
 If there are type errors, fix them and run again until there are no errors.
 When done, say "Type check passed - no type errors".
               `.trim()}
-            </Claude>
-          </Step>
+						</Claude>
+					</Step>
 
-          {/* STEP: Validate structure */}
-          <Step name="validate-structure">
-            <Claude
-              model="sonnet"
-              maxTurns={10}
-              permissionMode="bypassPermissions"
-              onFinished={({ output }) => {
-                if (
-                  output.toLowerCase().includes("validation passed") ||
-                  output.toLowerCase().includes("template is valid")
-                ) {
-                  db.state.set(STATE_KEYS.validateComplete, true);
-                }
-              }}
-            >
-              {`
+					{/* STEP: Validate structure */}
+					<Step name="validate-structure">
+						<Claude
+							model="sonnet"
+							maxTurns={10}
+							permissionMode="bypassPermissions"
+							onFinished={({ output }) => {
+								if (
+									output.toLowerCase().includes("validation passed") ||
+									output.toLowerCase().includes("template is valid")
+								) {
+									db.state.set(STATE_KEYS.validateComplete, true);
+								}
+							}}
+						>
+							{`
 Validate the template structure at apps/cli/templates/${templateName}/
 
 Check that these files exist and are valid:
@@ -242,13 +242,13 @@ Use the Read tool to check each file.
 If all checks pass, say "Validation passed - template is valid".
 If any issues, fix them and re-check.
               `.trim()}
-            </Claude>
-          </Step>
+						</Claude>
+					</Step>
 
-          {/* STEP: Register template */}
-          <Step name="register-template">
-            <Claude model="sonnet" maxTurns={10} permissionMode="bypassPermissions">
-              {`
+					{/* STEP: Register template */}
+					<Step name="register-template">
+						<Claude model="sonnet" maxTurns={10} permissionMode="bypassPermissions">
+							{`
 Add the new template "${templateName}" to the BUILTIN_TEMPLATES array.
 
 1. First read: apps/cli/src/templates/index.ts
@@ -258,19 +258,19 @@ Add the new template "${templateName}" to the BUILTIN_TEMPLATES array.
 
 Example: If array is ["hello", "miniapp"], change to ["hello", "miniapp", "${templateName}"]
               `.trim()}
-            </Claude>
-          </Step>
+						</Claude>
+					</Step>
 
-          {/* STEP: Commit */}
-          <Step
-            name="commit"
-            onComplete={() => {
-              db.state.set(STATE_KEYS.finalized, true);
-              onComplete?.({ success: true, templateName });
-            }}
-          >
-            <Claude model="sonnet" maxTurns={8} permissionMode="bypassPermissions">
-              {`
+					{/* STEP: Commit */}
+					<Step
+						name="commit"
+						onComplete={() => {
+							db.state.set(STATE_KEYS.finalized, true);
+							onComplete?.({ success: true, templateName });
+						}}
+					>
+						<Claude model="sonnet" maxTurns={8} permissionMode="bypassPermissions">
+							{`
 Commit all changes in this worktree.
 
 1. Run: git status
@@ -280,10 +280,10 @@ Commit all changes in this worktree.
 
 Show the git log after committing to confirm success.
               `.trim()}
-            </Claude>
-          </Step>
-        </Worktree>
-      </Phase>
-    </>
-  );
+						</Claude>
+					</Step>
+				</Worktree>
+			</Phase>
+		</>
+	);
 }

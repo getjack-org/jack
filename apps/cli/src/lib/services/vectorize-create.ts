@@ -102,7 +102,9 @@ async function createIndexViaWrangler(
 	}
 
 	const result =
-		await $`wrangler vectorize create ${indexName} --dimensions=${dimensions} --metric=${metric}`.nothrow().quiet();
+		await $`wrangler vectorize create ${indexName} --dimensions=${dimensions} --metric=${metric}`
+			.nothrow()
+			.quiet();
 
 	if (result.exitCode !== 0) {
 		const stderr = result.stderr.toString().trim();

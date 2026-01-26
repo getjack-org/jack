@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { output } from "../lib/output.ts";
-import { getDeployMode, getProjectId } from "../lib/project-link.ts";
 import { authFetch } from "../lib/auth/index.ts";
 import { getControlApiUrl, startLogSession } from "../lib/control-plane.ts";
+import { output } from "../lib/output.ts";
+import { getDeployMode, getProjectId } from "../lib/project-link.ts";
 
 // Lines containing these strings will be filtered out
 const FILTERED_PATTERNS = ["⛅️ wrangler"];

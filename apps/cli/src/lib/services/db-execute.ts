@@ -479,7 +479,14 @@ export async function executeSql(options: ExecuteSqlOptions): Promise<ExecuteSql
 export async function executeSqlFile(
 	options: Omit<ExecuteSqlOptions, "sql"> & { filePath: string },
 ): Promise<ExecuteSqlResult> {
-	const { projectDir, filePath, databaseName, allowWrite = false, interactive = true, confirmed = false } = options;
+	const {
+		projectDir,
+		filePath,
+		databaseName,
+		allowWrite = false,
+		interactive = true,
+		confirmed = false,
+	} = options;
 
 	// Read the file
 	if (!existsSync(filePath)) {

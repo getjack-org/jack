@@ -1,6 +1,6 @@
-import type { AIUsageDataPoint, Env } from "../types";
 import { MeteringService } from "../metering";
 import { QuotaManager } from "../quota";
+import type { AIUsageDataPoint, Env } from "../types";
 
 /**
  * AI Proxy Handler - receives fetch requests from user workers and forwards to real AI.
@@ -38,7 +38,9 @@ export class AIHandler {
 
 		if (!projectId || !orgId) {
 			return Response.json(
-				{ error: "Missing project context headers. This proxy is for jack cloud deployments only." },
+				{
+					error: "Missing project context headers. This proxy is for jack cloud deployments only.",
+				},
 				{ status: 400 },
 			);
 		}
@@ -96,7 +98,11 @@ export class AIHandler {
 		// 4. Call real AI binding
 		const startTime = Date.now();
 		try {
-			const result = await this.ai.run(model as Parameters<Ai["run"]>[0], inputs as Parameters<Ai["run"]>[1], options as Parameters<Ai["run"]>[2]);
+			const result = await this.ai.run(
+				model as Parameters<Ai["run"]>[0],
+				inputs as Parameters<Ai["run"]>[1],
+				options as Parameters<Ai["run"]>[2],
+			);
 			const duration = Date.now() - startTime;
 
 			// 5. Handle streaming responses

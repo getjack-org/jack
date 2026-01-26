@@ -10,7 +10,13 @@ export interface ProjectLimits {
 	requests_per_minute: number;
 }
 
-export type SSLStatus = "initializing" | "pending_validation" | "pending_issuance" | "pending_deployment" | "active" | "deleted";
+export type SSLStatus =
+	| "initializing"
+	| "pending_validation"
+	| "pending_issuance"
+	| "pending_deployment"
+	| "active"
+	| "deleted";
 
 export interface ProjectConfig {
 	project_id: string;

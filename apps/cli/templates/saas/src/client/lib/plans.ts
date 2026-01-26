@@ -20,12 +20,7 @@ export const plans: PlanConfig[] = [
 		price: "$0",
 		priceMonthly: 0,
 		description: "Perfect for getting started",
-		features: [
-			"Up to 100 users",
-			"Basic analytics",
-			"Community support",
-			"1 project",
-		],
+		features: ["Up to 100 users", "Basic analytics", "Community support", "1 project"],
 	},
 	{
 		id: "pro",

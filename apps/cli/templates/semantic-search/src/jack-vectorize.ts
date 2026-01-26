@@ -106,7 +106,11 @@ export function createJackVectorize(
 
 		// Handle quota exceeded
 		if (response.status === 429) {
-			const error = (await response.json()) as { message?: string; code?: string; resetIn?: number };
+			const error = (await response.json()) as {
+				message?: string;
+				code?: string;
+				resetIn?: number;
+			};
 			const quotaError = new Error(error.message || "Vectorize quota exceeded");
 			(quotaError as Error & { code: string }).code = error.code || "VECTORIZE_QUOTA_EXCEEDED";
 			(quotaError as Error & { resetIn?: number }).resetIn = error.resetIn;

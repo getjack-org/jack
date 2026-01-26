@@ -5,8 +5,8 @@
  * since R2 doesn't have a simple stats API via wrangler.
  */
 
-import { $ } from "bun";
 import { join } from "node:path";
+import { $ } from "bun";
 import { fetchProjectResources } from "../control-plane.ts";
 import { readProjectLink } from "../project-link.ts";
 import { getExistingR2Bindings } from "./storage-config.ts";
@@ -59,9 +59,7 @@ export async function getStorageBucketInfo(
 	}
 
 	// Find the requested bucket (or first if not specified)
-	const binding = bucketName
-		? bindings.find((b) => b.bucket_name === bucketName)
-		: bindings[0];
+	const binding = bucketName ? bindings.find((b) => b.bucket_name === bucketName) : bindings[0];
 
 	if (!binding) {
 		return null;

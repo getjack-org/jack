@@ -65,9 +65,13 @@ export function createJackAI(env: JackAIEnv): {
 			// Handle quota exceeded
 			if (response.status === 429) {
 				const error = await response.json();
-				const quotaError = new Error((error as { message?: string }).message || "AI quota exceeded");
+				const quotaError = new Error(
+					(error as { message?: string }).message || "AI quota exceeded",
+				);
 				(quotaError as Error & { code: string }).code = "AI_QUOTA_EXCEEDED";
-				(quotaError as Error & { resetIn?: number }).resetIn = (error as { resetIn?: number }).resetIn;
+				(quotaError as Error & { resetIn?: number }).resetIn = (
+					error as { resetIn?: number }
+				).resetIn;
 				throw quotaError;
 			}
 

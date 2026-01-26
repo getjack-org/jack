@@ -70,4 +70,3 @@ export default {
 		ctx.waitUntil(Promise.allSettled(tasks));
 	},
 };
-

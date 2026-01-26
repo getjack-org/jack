@@ -388,9 +388,7 @@ try {
 		}
 		case "domain": {
 			const { default: domain } = await import("./commands/domain.ts");
-			await withTelemetry("domain", domain, { subcommand: args[0] })(args[0], args.slice(1), {
-				project: cli.flags.project,
-			});
+			await withTelemetry("domain", domain, { subcommand: args[0] })(args[0], args.slice(1));
 			break;
 		}
 		case "domains": {

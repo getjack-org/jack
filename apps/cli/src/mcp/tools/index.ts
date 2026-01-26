@@ -1,9 +1,9 @@
 import type { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { JackError, JackErrorCode } from "../../lib/errors.ts";
 import { authFetch } from "../../lib/auth/index.ts";
 import { getControlApiUrl, startLogSession } from "../../lib/control-plane.ts";
+import { JackError, JackErrorCode } from "../../lib/errors.ts";
 import { getDeployMode, getProjectId } from "../../lib/project-link.ts";
 import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
 import { listAllProjects } from "../../lib/project-resolver.ts";
@@ -736,7 +736,12 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 
 					const wrappedTailLogs = withTelemetry(
 						"tail_logs",
-						async (id: string, label: string | undefined, maxEvents: number, durationMs: number) => {
+						async (
+							id: string,
+							label: string | undefined,
+							maxEvents: number,
+							durationMs: number,
+						) => {
 							const session = await startLogSession(id, label);
 							const streamUrl = `${getControlApiUrl()}${session.stream.url}`;
 
@@ -1250,7 +1255,9 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							if (!info) {
 								throw new JackError(
 									JackErrorCode.RESOURCE_NOT_FOUND,
-									bucketName ? `Storage bucket '${bucketName}' not found` : "No storage buckets found",
+									bucketName
+										? `Storage bucket '${bucketName}' not found`
+										: "No storage buckets found",
 									"Use list_storage_buckets to see available buckets or create_storage_bucket to create one",
 								);
 							}
