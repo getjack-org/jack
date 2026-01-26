@@ -502,11 +502,37 @@ export class CloudflareClient {
 	}
 
 	/**
-	 * Creates a new D1 database
+	 * Creates a new D1 database with retry on transient errors
 	 * @returns The created database with uuid, name, version, created_at
 	 */
 	async createD1Database(name: string): Promise<D1Database> {
-		return this.request<D1Database>("POST", "/d1/database", { name });
+		const maxRetries = 3;
+		const baseDelayMs = 1000;
+
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			try {
+				return await this.request<D1Database>("POST", "/d1/database", { name });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				const isTransient =
+					message.includes("timeout") ||
+					message.includes("D1_ERROR") ||
+					message.includes("500") ||
+					message.includes("503") ||
+					message.includes("429");
+
+				if (!isTransient || attempt === maxRetries) {
+					throw err;
+				}
+
+				// Exponential backoff: 1s, 2s, 4s
+				const delay = baseDelayMs * Math.pow(2, attempt - 1);
+				await new Promise((resolve) => setTimeout(resolve, delay));
+			}
+		}
+
+		// TypeScript: should never reach here, but satisfy compiler
+		throw new Error("D1 database creation failed after retries");
 	}
 
 	/**
