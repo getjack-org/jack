@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getAuthState } from "../lib/auth/index.ts";
 import {
@@ -6,6 +7,7 @@ import {
 	deleteWorker,
 	exportDatabase,
 } from "../lib/cloudflare-api.ts";
+import { getJackHome } from "../lib/config.ts";
 import { fetchProjectResources } from "../lib/control-plane.ts";
 import { promptSelect } from "../lib/hooks.ts";
 import { managedDown } from "../lib/managed-down.ts";
@@ -203,8 +205,10 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		// Auto-export database if it exists (no prompt)
 		let exportPath: string | null = null;
 		if (dbName) {
-			exportPath = join(process.cwd(), `${dbName}-backup.sql`);
-			output.start(`Exporting database to ${exportPath}...`);
+			const backupDir = resolved?.localPath ?? join(getJackHome(), name);
+			mkdirSync(backupDir, { recursive: true });
+			exportPath = join(backupDir, `${dbName}-backup.sql`);
+			output.start("Exporting database...");
 			try {
 				await exportDatabase(dbName, exportPath);
 				output.stop();
@@ -267,7 +271,7 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 		console.error("");
 		success(`Undeployed '${name}'`);
 		if (exportPath) {
-			info(`Backup saved to ./${dbName}-backup.sql`);
+			info(`Database backup: ${exportPath}`);
 		}
 		console.error("");
 	} catch (err) {

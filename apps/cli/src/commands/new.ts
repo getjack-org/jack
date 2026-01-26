@@ -4,6 +4,11 @@ import { getErrorDetails } from "../lib/errors.ts";
 import { isIntentPhrase } from "../lib/intent.ts";
 import { createReporter, output } from "../lib/output.ts";
 import { createProject } from "../lib/project-operations.ts";
+import {
+	detectShell,
+	getRcFilePath,
+	isInstalled as isShellIntegrationInstalled,
+} from "../lib/shell-integration.ts";
 
 export default async function newProject(
 	nameOrPhrase?: string,
@@ -88,63 +93,60 @@ export default async function newProject(
 		return;
 	}
 
-	console.error("");
-	output.info(`Project: ${result.targetDir}`);
-
-	// Skip agent section entirely if --no-open or env var
+	// Skip next steps if --no-open or env var
 	if (options.noOpen || process.env.JACK_NO_OPEN === "1") {
 		return;
 	}
 
-	// Skip in CI mode
+	// Check if shell integration is installed
+	const shell = detectShell();
+	const rcFile = getRcFilePath(shell);
+	const hasShellIntegration = rcFile ? isShellIntegrationInstalled(rcFile) : false;
+
 	if (!process.stdout.isTTY || isCi) {
-		return;
-	}
-
-	// Get preferred agent
-	let preferred = await getPreferredLaunchAgent();
-
-	// If no preferred agent, scan and auto-enable detected agents
-	if (!preferred) {
-		const detectionResult = await scanAgents();
-
-		if (detectionResult.detected.length > 0) {
-			// Auto-enable newly detected agents
-			for (const { id, path, launch } of detectionResult.detected) {
-				await updateAgent(id, {
-					active: true,
-					path,
-					detectedAt: new Date().toISOString(),
-					launch,
-				});
-			}
-			// Use the first detected agent as preferred
-			preferred = await getPreferredLaunchAgent();
-		}
-	}
-
-	// Auto-open if --open flag
-	if (options.open && preferred) {
-		const launchResult = await launchAgent(preferred.launch, result.targetDir, {
-			projectName: result.projectName,
-			url: result.workerUrl,
-		});
-		if (!launchResult.success) {
-			output.warn(`Failed to launch ${preferred.definition.name}`);
-			if (launchResult.command?.length) {
-				output.info(`Run manually: ${launchResult.command.join(" ")}`);
-			}
-		}
-		return;
-	}
-
-	// Default: show next steps (no prompt)
-	if (preferred) {
 		console.error("");
-		output.info(`Next: cd ${result.targetDir} && ${preferred.launch.command}`);
+		console.error(`cd ${result.targetDir}`);
+		return;
+	}
+
+	// Auto-open if --open flag (requires agent detection)
+	if (options.open) {
+		let preferred = await getPreferredLaunchAgent();
+
+		if (!preferred) {
+			const detectionResult = await scanAgents();
+			if (detectionResult.detected.length > 0) {
+				for (const { id, path, launch } of detectionResult.detected) {
+					await updateAgent(id, {
+						active: true,
+						path,
+						detectedAt: new Date().toISOString(),
+						launch,
+					});
+				}
+				preferred = await getPreferredLaunchAgent();
+			}
+		}
+
+		if (preferred) {
+			const launchResult = await launchAgent(preferred.launch, result.targetDir, {
+				projectName: result.projectName,
+				url: result.workerUrl,
+			});
+			if (!launchResult.success) {
+				output.warn(`Failed to launch ${preferred.definition.name}`);
+				if (launchResult.command?.length) {
+					output.info(`Run manually: ${launchResult.command.join(" ")}`);
+				}
+			}
+			return;
+		}
+	}
+
+	console.error("");
+	if (hasShellIntegration) {
+		output.success(`Ready in ${result.projectName}`);
 	} else {
-		console.error("");
-		output.info("No AI agents detected");
-		output.info("Install Claude Code or Codex, then run: jack agents scan");
+		console.error(`cd ${result.targetDir}`);
 	}
 }
