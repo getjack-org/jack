@@ -139,15 +139,20 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 	if (data.domains.length === 0) {
 		// Empty state - focus on what's available
 		if (max === 0) {
-			console.error(`  ${colors.bold}Custom Domains${colors.reset}  ${colors.yellow}Free plan${colors.reset}`);
+			console.error(
+				`  ${colors.bold}Custom Domains${colors.reset}  ${colors.yellow}Free plan${colors.reset}`,
+			);
 			console.error("");
 			info("Custom domains require a Pro plan");
 			info("Upgrade: jack upgrade");
 		} else {
-			console.error(`  ${colors.bold}Custom Domains${colors.reset}  ${colors.green}${available} slots available${colors.reset}`);
+			console.error(
+				`  ${colors.bold}Custom Domains${colors.reset}  ${colors.green}${available} slots available${colors.reset}`,
+			);
 			console.error("");
-			info("Connect your domain to any project:");
-			console.error(`  jack domain add ${colors.cyan}api.yourcompany.com${colors.reset} -p ${colors.cyan}<project>${colors.reset}`);
+			info("Reserve a slot, then assign to a project:");
+			console.error(`  jack domain connect ${colors.cyan}api.yourcompany.com${colors.reset}`);
+			console.error(`  jack domain assign ${colors.cyan}api.yourcompany.com${colors.reset} ${colors.cyan}<project>${colors.reset}`);
 		}
 		console.error("");
 		return;
@@ -155,7 +160,9 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 
 	// Has domains - show usage
 	const slotColor = used >= max ? colors.yellow : colors.green;
-	console.error(`  ${colors.bold}Custom Domains${colors.reset}  ${slotColor}${used}/${max} slots${colors.reset}`);
+	console.error(
+		`  ${colors.bold}Custom Domains${colors.reset}  ${slotColor}${used}/${max} slots${colors.reset}`,
+	);
 	console.error("");
 
 	// Group by status
@@ -163,8 +170,9 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 	const pending = data.domains.filter((d) =>
 		["pending", "pending_owner", "pending_ssl"].includes(d.status),
 	);
+	const unassigned = data.domains.filter((d) => d.status === "claimed");
 	const other = data.domains.filter(
-		(d) => !["active", "pending", "pending_owner", "pending_ssl"].includes(d.status),
+		(d) => !["active", "pending", "pending_owner", "pending_ssl", "claimed"].includes(d.status),
 	);
 
 	// Show active domains
@@ -190,6 +198,15 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 		console.error("");
 	}
 
+	// Show unassigned domains (claimed but not connected to a project)
+	if (unassigned.length > 0) {
+		console.error(`  ${colors.dim}Unassigned${colors.reset}`);
+		for (const d of unassigned) {
+			console.error(`  ○ ${d.hostname}`);
+		}
+		console.error("");
+	}
+
 	// Show other (failed, blocked, moved)
 	if (other.length > 0) {
 		console.error(`  ${colors.dim}Other${colors.reset}`);
@@ -204,7 +221,9 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 
 	// Footer hints - show available slots if any
 	if (available > 0) {
-		info(`${available} slot${available > 1 ? "s" : ""} available. Add: jack domain add <hostname> -p <project>`);
+		info(
+			`${available} slot${available > 1 ? "s" : ""} available. Add: jack domain connect <hostname>`,
+		);
 	} else {
 		info("All slots used. Remove a domain to free a slot: jack domain rm <hostname>");
 	}

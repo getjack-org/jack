@@ -99,6 +99,15 @@ const HOSTNAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a
 const RESERVED_TLDS = ["localhost", "local", "test", "invalid", "example"];
 const BLOCKED_HOSTNAMES = ["runjack.xyz", "getjack.org", "cloudflare.com"];
 const LOG_TAIL_WORKER_SERVICE = "log-worker";
+
+// Statuses that consume a domain slot (any domain in verification/provisioning pipeline counts)
+const SLOT_CONSUMING_STATUSES: CustomDomainStatus[] = [
+	"claimed",
+	"pending",
+	"pending_owner",
+	"pending_ssl",
+	"active",
+];
 const LOG_TAIL_DISPATCH_NAMESPACE = "jack-tenants";
 
 function d1DatetimeToIso(value: string): string {
@@ -1073,13 +1082,13 @@ api.get("/orgs/:orgId/billing", async (c) => {
 	const billingService = new BillingService(c.env);
 	const billing = await billingService.getOrCreateBilling(orgId);
 
-	// Count active custom domains for this org
+	// Count slot-consuming custom domains for this org (all domains in pipeline count)
+	const placeholders = SLOT_CONSUMING_STATUSES.map(() => "?").join(",");
 	const domainsResult = await c.env.DB.prepare(
-		`SELECT COUNT(*) as count FROM custom_domains cd
-		 JOIN projects p ON cd.project_id = p.id
-		 WHERE p.org_id = ? AND cd.status = 'active'`,
+		`SELECT COUNT(*) as count FROM custom_domains
+		 WHERE org_id = ? AND status IN (${placeholders})`,
 	)
-		.bind(orgId)
+		.bind(orgId, ...SLOT_CONSUMING_STATUSES)
 		.first<{ count: number }>();
 
 	const customDomainsUsed = domainsResult?.count ?? 0;
@@ -1910,21 +1919,49 @@ api.delete("/projects/:projectId", async (c) => {
 		deletionResults.push({ resource: "code_bucket", success: false, error: String(error) });
 	}
 
-	// Delete custom domain cache entries
+	// Unassign custom domains (delete from CF, clear cache, keep slot claimed)
 	try {
 		const customDomains = await c.env.DB.prepare(
-			"SELECT hostname FROM custom_domains WHERE project_id = ?",
+			"SELECT id, hostname, cloudflare_id, status FROM custom_domains WHERE project_id = ?",
 		)
 			.bind(projectId)
-			.all<{ hostname: string }>();
+			.all<{ id: string; hostname: string; cloudflare_id: string | null; status: string }>();
 
 		const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
+
 		for (const domain of customDomains.results || []) {
+			// Delete from Cloudflare if provisioned
+			if (domain.cloudflare_id) {
+				try {
+					cfClient.setZoneId(c.env.CLOUDFLARE_ZONE_ID);
+					await cfClient.deleteCustomHostname(domain.cloudflare_id);
+				} catch (cfError) {
+					const message = cfError instanceof Error ? cfError.message : String(cfError);
+					// Treat "not found" as success (already deleted)
+					if (!message.includes("not found") && !message.includes("does not exist")) {
+						console.error(`Failed to delete custom hostname ${domain.hostname} from Cloudflare:`, cfError);
+					}
+				}
+			}
+
+			// Clear KV cache
 			await cacheService.deleteCustomDomainConfig(domain.hostname);
+
+			// Unassign domain - keep as claimed slot
+			await c.env.DB.prepare(
+				"UPDATE custom_domains SET project_id = NULL, cloudflare_id = NULL, status = 'claimed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			)
+				.bind(domain.id)
+				.run();
 		}
-		deletionResults.push({ resource: "custom_domain_cache", success: true });
+
+		deletionResults.push({
+			resource: "custom_domains",
+			success: true,
+			...(customDomains.results?.length ? { count: customDomains.results.length } : {}),
+		});
 	} catch (error) {
-		deletionResults.push({ resource: "custom_domain_cache", success: false, error: String(error) });
+		deletionResults.push({ resource: "custom_domains", success: false, error: String(error) });
 	}
 
 	// Delete KV cache entries
@@ -2678,17 +2715,17 @@ api.get("/projects/:projectId/logs/stream", async (c) => {
 api.get("/domains", async (c) => {
 	const auth = c.get("auth");
 
-	// Get all projects the user has access to via org membership
+	// Get all domains the user has access to via org membership (including unassigned domains)
 	const result = await c.env.DB.prepare(
 		`SELECT cd.*, p.slug as project_slug, p.owner_username
 		 FROM custom_domains cd
-		 JOIN projects p ON cd.project_id = p.id
-		 JOIN org_memberships om ON p.org_id = om.org_id
-		 WHERE om.user_id = ? AND cd.status != 'deleting' AND p.status != 'deleted'
+		 JOIN org_memberships om ON cd.org_id = om.org_id
+		 LEFT JOIN projects p ON cd.project_id = p.id AND p.status != 'deleted'
+		 WHERE om.user_id = ? AND cd.status != 'deleting'
 		 ORDER BY cd.created_at DESC`,
 	)
 		.bind(auth.userId)
-		.all<CustomDomain & { project_slug: string; owner_username: string | null }>();
+		.all<CustomDomain & { project_slug: string | null; owner_username: string | null }>();
 
 	// Get org billing info for slot calculation
 	const orgsResult = await c.env.DB.prepare(
@@ -2700,9 +2737,11 @@ api.get("/domains", async (c) => {
 		.bind(auth.userId)
 		.all<{ org_id: string; plan_tier: string | null }>();
 
-	// Calculate slots used (only active domains count)
+	// Calculate slots used (all slot-consuming statuses count toward limit)
 	const domains = result.results ?? [];
-	const activeCount = domains.filter((d) => d.status === "active").length;
+	const slotCount = domains.filter((d) =>
+		SLOT_CONSUMING_STATUSES.includes(d.status as CustomDomainStatus),
+	).length;
 
 	// Determine max slots from highest plan tier across user's orgs
 	const tiers = (orgsResult.results ?? []).map((o) => o.plan_tier || "free");
@@ -2713,15 +2752,425 @@ api.get("/domains", async (c) => {
 		...formatDomainResponse(d),
 		project_id: d.project_id,
 		project_slug: d.project_slug,
-		project_url: `https://${d.owner_username || "user"}-${d.project_slug}.runjack.xyz`,
+		project_url: d.project_slug
+			? `https://${d.owner_username || "user"}-${d.project_slug}.runjack.xyz`
+			: null,
 	}));
 
 	return c.json({
 		domains: formattedDomains,
 		slots: {
-			used: activeCount,
+			used: slotCount,
 			max: maxSlots,
 		},
+	});
+});
+
+// POST /v1/domains - Claim a domain slot (no project assignment, no Cloudflare call)
+api.post("/domains", async (c) => {
+	const auth = c.get("auth");
+
+	// Parse and validate request
+	const body = await c.req.json<{ hostname: string; org_id?: string }>();
+	const hostnameError = validateHostname(body.hostname);
+	if (hostnameError) {
+		return c.json({ error: "invalid_hostname", message: hostnameError }, 400);
+	}
+
+	const hostname = body.hostname.toLowerCase().trim();
+
+	// Get user's org (use provided org_id or default to first org)
+	let orgId = body.org_id;
+	if (!orgId) {
+		const membership = await c.env.DB.prepare(
+			"SELECT org_id FROM org_memberships WHERE user_id = ? LIMIT 1",
+		)
+			.bind(auth.userId)
+			.first<{ org_id: string }>();
+
+		if (!membership) {
+			return c.json({ error: "no_org", message: "User has no organization" }, 400);
+		}
+		orgId = membership.org_id;
+	} else {
+		// Verify user is member of provided org
+		const membership = await c.env.DB.prepare(
+			"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+		)
+			.bind(orgId, auth.userId)
+			.first();
+
+		if (!membership) {
+			return c.json({ error: "not_found", message: "Organization not found" }, 404);
+		}
+	}
+
+	// Count existing slot-consuming domains for this org
+	const placeholders = SLOT_CONSUMING_STATUSES.map(() => "?").join(",");
+	const domainCount = await c.env.DB.prepare(
+		`SELECT COUNT(*) as count FROM custom_domains
+		 WHERE org_id = ? AND status IN (${placeholders})`,
+	)
+		.bind(orgId, ...SLOT_CONSUMING_STATUSES)
+		.first<{ count: number }>();
+
+	// Check gate
+	const gate = await checkCustomDomainGate(c.env.DB, orgId, domainCount?.count || 0);
+	if (!gate.allowed) {
+		return c.json(gate.error, 403);
+	}
+
+	// Check if domain is already registered (globally unique)
+	const existingDomain = await c.env.DB.prepare(
+		"SELECT id, org_id FROM custom_domains WHERE hostname = ?",
+	)
+		.bind(hostname)
+		.first<{ id: string; org_id: string }>();
+
+	if (existingDomain) {
+		if (existingDomain.org_id === orgId) {
+			return c.json(
+				{ error: "domain_exists", message: "Domain already claimed by your organization" },
+				409,
+			);
+		}
+		return c.json(
+			{ error: "domain_taken", message: "Domain is already registered to another organization" },
+			409,
+		);
+	}
+
+	// Create domain record in claimed state (no project, no Cloudflare)
+	const domainId = `dom_${crypto.randomUUID()}`;
+
+	try {
+		await c.env.DB.prepare(
+			`INSERT INTO custom_domains (id, project_id, org_id, hostname, status)
+       VALUES (?, NULL, ?, ?, 'claimed')`,
+		)
+			.bind(domainId, orgId, hostname)
+			.run();
+
+		const domain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+			.bind(domainId)
+			.first<CustomDomain>();
+
+		if (!domain) {
+			throw new Error("Failed to retrieve created domain");
+		}
+
+		return c.json({ domain: formatDomainResponse(domain) }, 201);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to claim domain";
+
+		if (message.includes("UNIQUE constraint") || message.includes("custom_domains.hostname")) {
+			return c.json(
+				{ error: "domain_taken", message: "Domain is already registered to another organization" },
+				409,
+			);
+		}
+
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+// POST /v1/domains/:domainId/assign - Assign a claimed domain to a project
+api.post("/domains/:domainId/assign", async (c) => {
+	const auth = c.get("auth");
+	const domainId = c.req.param("domainId");
+
+	// Parse request
+	const body = await c.req.json<{ project_id: string }>();
+	if (!body.project_id) {
+		return c.json({ error: "invalid_request", message: "project_id is required" }, 400);
+	}
+
+	// Get domain and verify ownership via org membership
+	const domain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+		.bind(domainId)
+		.first<CustomDomain>();
+
+	if (!domain) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(domain.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	// Check domain is in a state that can be assigned
+	if (domain.status !== "claimed") {
+		return c.json(
+			{
+				error: "invalid_state",
+				message: `Domain cannot be assigned from ${domain.status} state. Unassign it first if needed.`,
+			},
+			400,
+		);
+	}
+
+	// Get project and verify ownership (must be in same org)
+	const project = await c.env.DB.prepare(
+		"SELECT id, org_id, slug, owner_username FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(body.project_id)
+		.first<{ id: string; org_id: string; slug: string; owner_username: string | null }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	if (project.org_id !== domain.org_id) {
+		return c.json(
+			{
+				error: "invalid_request",
+				message: "Domain and project must belong to the same organization",
+			},
+			400,
+		);
+	}
+
+	// Check project doesn't already have a domain (v1: 1 domain per project)
+	const existingProjectDomain = await c.env.DB.prepare(
+		"SELECT id FROM custom_domains WHERE project_id = ? AND status != 'deleting'",
+	)
+		.bind(body.project_id)
+		.first<{ id: string }>();
+
+	if (existingProjectDomain) {
+		return c.json(
+			{
+				error: "project_limit_reached",
+				message: "This project already has a custom domain. Remove it first to add a new one.",
+			},
+			409,
+		);
+	}
+
+	try {
+		// Call Cloudflare API to create custom hostname
+		const cfClient = new CloudflareClient(c.env);
+		cfClient.setZoneId(c.env.CLOUDFLARE_ZONE_ID);
+
+		const cfHostname = await cfClient.createCustomHostname(domain.hostname);
+
+		// Map Cloudflare status to Jack status
+		const jackStatus = mapCloudflareToJackStatus(cfHostname.status, cfHostname.ssl?.status);
+
+		// Update domain with project assignment and Cloudflare response
+		await c.env.DB.prepare(
+			`UPDATE custom_domains
+       SET project_id = ?,
+           cloudflare_id = ?,
+           status = ?,
+           ssl_status = ?,
+           ownership_verification_type = ?,
+           ownership_verification_name = ?,
+           ownership_verification_value = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+		)
+			.bind(
+				body.project_id,
+				cfHostname.id,
+				jackStatus,
+				cfHostname.ssl?.status ?? null,
+				cfHostname.ownership_verification?.type ?? null,
+				cfHostname.ownership_verification?.name ?? null,
+				cfHostname.ownership_verification?.value ?? null,
+				domainId,
+			)
+			.run();
+
+		// If domain is immediately active, write to cache
+		if (jackStatus === "active") {
+			const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
+			const projectConfig = await cacheService.getProjectConfig(project.id);
+			if (projectConfig && projectConfig.status === "active") {
+				await cacheService.setCustomDomainConfig(domain.hostname, projectConfig);
+			}
+		}
+
+		// Fetch the updated domain
+		const updatedDomain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+			.bind(domainId)
+			.first<CustomDomain>();
+
+		if (!updatedDomain) {
+			throw new Error("Failed to retrieve updated domain");
+		}
+
+		return c.json({ domain: formatDomainResponse(updatedDomain) });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to assign domain";
+
+		// Handle specific Cloudflare errors
+		if (message.includes("blocked") || message.includes("high risk")) {
+			return c.json(
+				{
+					error: "domain_blocked",
+					message: "This hostname has been blocked by Cloudflare. Contact support.",
+				},
+				422,
+			);
+		}
+
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
+// POST /v1/domains/:domainId/unassign - Unassign domain from project (keep in org)
+api.post("/domains/:domainId/unassign", async (c) => {
+	const auth = c.get("auth");
+	const domainId = c.req.param("domainId");
+
+	// Get domain and verify ownership via org membership
+	const domain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+		.bind(domainId)
+		.first<CustomDomain>();
+
+	if (!domain) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(domain.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	// Already unassigned
+	if (domain.status === "claimed" && !domain.project_id) {
+		return c.json({ domain: formatDomainResponse(domain) });
+	}
+
+	// Cannot unassign domains that are deleting
+	if (domain.status === "deleting") {
+		return c.json(
+			{ error: "invalid_state", message: "Cannot unassign a domain that is being deleted" },
+			400,
+		);
+	}
+
+	// Delete from Cloudflare if provisioned
+	if (domain.cloudflare_id) {
+		try {
+			const cfClient = new CloudflareClient(c.env);
+			cfClient.setZoneId(c.env.CLOUDFLARE_ZONE_ID);
+			await cfClient.deleteCustomHostname(domain.cloudflare_id);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Treat "not found" as success (already deleted)
+			if (!message.includes("not found") && !message.includes("does not exist")) {
+				console.error("Failed to delete custom hostname from Cloudflare:", error);
+				// Continue anyway to reset state
+			}
+		}
+	}
+
+	// Delete KV cache entry for custom domain routing
+	const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
+	await cacheService.deleteCustomDomainConfig(domain.hostname);
+
+	// Reset to claimed state
+	await c.env.DB.prepare(
+		`UPDATE custom_domains
+     SET project_id = NULL,
+         cloudflare_id = NULL,
+         status = 'claimed',
+         ssl_status = NULL,
+         ownership_verification_type = NULL,
+         ownership_verification_name = NULL,
+         ownership_verification_value = NULL,
+         validation_errors = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+	)
+		.bind(domainId)
+		.run();
+
+	// Fetch updated domain
+	const updatedDomain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+		.bind(domainId)
+		.first<CustomDomain>();
+
+	if (!updatedDomain) {
+		return c.json({ error: "internal_error", message: "Failed to retrieve updated domain" }, 500);
+	}
+
+	return c.json({ domain: formatDomainResponse(updatedDomain) });
+});
+
+// DELETE /v1/domains/:domainId - Fully remove domain (release slot)
+api.delete("/domains/:domainId", async (c) => {
+	const auth = c.get("auth");
+	const domainId = c.req.param("domainId");
+
+	// Get domain and verify ownership via org membership
+	const domain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+		.bind(domainId)
+		.first<CustomDomain>();
+
+	if (!domain) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(domain.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	// Mark as deleting
+	await c.env.DB.prepare(
+		"UPDATE custom_domains SET status = 'deleting', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	)
+		.bind(domainId)
+		.run();
+
+	let cloudflareDeleted = true;
+
+	// Delete from Cloudflare if we have a cloudflare_id
+	if (domain.cloudflare_id) {
+		try {
+			const cfClient = new CloudflareClient(c.env);
+			cfClient.setZoneId(c.env.CLOUDFLARE_ZONE_ID);
+			await cfClient.deleteCustomHostname(domain.cloudflare_id);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Treat "not found" as success (already deleted)
+			if (!message.includes("not found") && !message.includes("does not exist")) {
+				cloudflareDeleted = false;
+				console.error("Failed to delete custom hostname from Cloudflare:", error);
+			}
+		}
+	}
+
+	// Delete KV cache entry for custom domain routing
+	const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
+	await cacheService.deleteCustomDomainConfig(domain.hostname);
+
+	// Delete from DB
+	await c.env.DB.prepare("DELETE FROM custom_domains WHERE id = ?").bind(domainId).run();
+
+	return c.json({
+		success: true,
+		hostname: domain.hostname,
+		cloudflare_deleted: cloudflareDeleted,
 	});
 });
 
@@ -2760,12 +3209,13 @@ api.post("/projects/:projectId/domains", async (c) => {
 
 	const hostname = body.hostname.toLowerCase().trim();
 
-	// Check plan entitlements - count existing custom domains for this org
+	// Check plan entitlements - count existing slot-consuming domains for this org
+	const placeholders = SLOT_CONSUMING_STATUSES.map(() => "?").join(",");
 	const domainCount = await c.env.DB.prepare(
 		`SELECT COUNT(*) as count FROM custom_domains
-		 WHERE org_id = ? AND status != 'deleted' AND status != 'deleting'`,
+		 WHERE org_id = ? AND status IN (${placeholders})`,
 	)
-		.bind(project.org_id)
+		.bind(project.org_id, ...SLOT_CONSUMING_STATUSES)
 		.first<{ count: number }>();
 
 	// Check gate
@@ -2779,7 +3229,7 @@ api.post("/projects/:projectId/domains", async (c) => {
 		"SELECT id, project_id FROM custom_domains WHERE hostname = ?",
 	)
 		.bind(hostname)
-		.first<{ id: string; project_id: string }>();
+		.first<{ id: string; project_id: string | null }>();
 
 	if (existingDomain) {
 		if (existingDomain.project_id === projectId) {
@@ -2789,7 +3239,7 @@ api.post("/projects/:projectId/domains", async (c) => {
 			);
 		}
 		return c.json(
-			{ error: "domain_taken", message: "Domain is already registered to another project" },
+			{ error: "domain_taken", message: "Domain is already registered" },
 			409,
 		);
 	}
@@ -3561,7 +4011,10 @@ app.post("/v1/billing/webhook", async (c) => {
 	const signature = c.req.header("stripe-signature");
 	console.log("[webhook] Received webhook request");
 	console.log("[webhook] Signature header:", signature?.substring(0, 50) + "...");
-	console.log("[webhook] Secret configured:", c.env.STRIPE_WEBHOOK_SECRET ? `${c.env.STRIPE_WEBHOOK_SECRET.substring(0, 10)}...` : "NOT SET");
+	console.log(
+		"[webhook] Secret configured:",
+		c.env.STRIPE_WEBHOOK_SECRET ? `${c.env.STRIPE_WEBHOOK_SECRET.substring(0, 10)}...` : "NOT SET",
+	);
 
 	if (!signature) {
 		return c.json({ error: "invalid_request", message: "Missing stripe-signature header" }, 400);
@@ -3573,11 +4026,17 @@ app.post("/v1/billing/webhook", async (c) => {
 
 	let event: Stripe.Event;
 	try {
-		event = await billingService.verifyWebhookSignature(body, signature, c.env.STRIPE_WEBHOOK_SECRET);
+		event = await billingService.verifyWebhookSignature(
+			body,
+			signature,
+			c.env.STRIPE_WEBHOOK_SECRET,
+		);
 		console.log("[webhook] Signature verified successfully, event type:", event.type);
 	} catch (err) {
 		console.error("[webhook] Signature verification failed:", err);
-		console.error("[webhook] This usually means the STRIPE_WEBHOOK_SECRET doesn't match the endpoint's signing secret");
+		console.error(
+			"[webhook] This usually means the STRIPE_WEBHOOK_SECRET doesn't match the endpoint's signing secret",
+		);
 		return c.json({ error: "invalid_signature", message: "Invalid signature" }, 400);
 	}
 
