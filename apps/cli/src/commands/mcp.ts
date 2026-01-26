@@ -3,7 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { error, info, success } from "../lib/output.ts";
+import {
+	APP_MCP_CONFIGS,
+	getAppDisplayName,
+	installMcpConfigToApp,
+	isAppInstalled,
+} from "../lib/mcp-config.ts";
+import { error, info, item, success } from "../lib/output.ts";
 import { startMcpServer } from "../mcp/server.ts";
 
 const cliRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -27,11 +33,76 @@ export default async function mcp(subcommand?: string, options: McpOptions = {})
 		return;
 	}
 
-	error("Unknown subcommand. Use: jack mcp serve or jack mcp test");
+	if (subcommand === "install") {
+		await installMcpConfig();
+		return;
+	}
+
+	error("Unknown subcommand. Use: jack mcp serve, jack mcp install, or jack mcp test");
 	info("Usage:");
 	info("  jack mcp serve [--project /path] [--debug]  Start MCP server");
+	info("  jack mcp install                            Install/repair MCP config for AI agents");
 	info("  jack mcp test                               Test MCP server connectivity");
 	process.exit(1);
+}
+
+/**
+ * Install or repair MCP configuration for all detected apps
+ */
+async function installMcpConfig(): Promise<void> {
+	info("Installing jack MCP server configuration...\n");
+
+	const installed: string[] = [];
+	const skipped: string[] = [];
+	const failed: string[] = [];
+
+	for (const appId of Object.keys(APP_MCP_CONFIGS)) {
+		const displayName = getAppDisplayName(appId);
+
+		if (!isAppInstalled(appId)) {
+			skipped.push(displayName);
+			continue;
+		}
+
+		try {
+			const result = await installMcpConfigToApp(appId);
+			if (result) {
+				installed.push(displayName);
+			} else {
+				failed.push(displayName);
+			}
+		} catch {
+			failed.push(displayName);
+		}
+	}
+
+	// Report results
+	if (installed.length > 0) {
+		success(`Installed to ${installed.length} app(s):`);
+		for (const app of installed) {
+			item(`  ${app}`);
+		}
+	}
+
+	if (skipped.length > 0) {
+		info(`\nSkipped (not installed):`);
+		for (const app of skipped) {
+			item(`  ${app}`);
+		}
+	}
+
+	if (failed.length > 0) {
+		error(`\nFailed to install:`);
+		for (const app of failed) {
+			item(`  ${app}`);
+		}
+	}
+
+	if (installed.length > 0) {
+		info("\nRestart your AI agent (Claude Code, Claude Desktop) to use jack MCP tools.");
+	} else if (failed.length === 0 && skipped.length > 0) {
+		info("\nNo supported AI agents detected. Install Claude Code or Claude Desktop first.");
+	}
 }
 
 /**

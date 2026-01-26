@@ -3,6 +3,7 @@
  */
 
 import { debug } from "../lib/debug.ts";
+import { installMcpConfigsToAllApps } from "../lib/mcp-config.ts";
 import { error, info, success, warn } from "../lib/output.ts";
 import {
 	checkForUpdate,
@@ -52,6 +53,17 @@ export default async function update(): Promise<void> {
 
 	if (result.success) {
 		success(`Updated to v${result.version ?? latestVersion}`);
+
+		// Repair MCP config on successful update (ensures new features work)
+		try {
+			const installedApps = await installMcpConfigsToAllApps();
+			if (installedApps.length > 0) {
+				info(`MCP config updated for: ${installedApps.join(", ")}`);
+			}
+		} catch {
+			// Non-critical - don't fail update if MCP repair fails
+			debug("MCP config repair failed (non-critical)");
+		}
 	} else {
 		error("Update failed");
 		if (result.error) {
