@@ -162,7 +162,12 @@ export function box(title: string, lines: string[]): void {
 	if (isQuietMode) {
 		return; // Skip decorative boxes in quiet mode
 	}
-	const maxLen = Math.max(title.length, ...lines.map((l) => l.length));
+	// Respect terminal width (leave room for box borders + indent)
+	const termWidth = process.stderr.columns || process.stdout.columns || 80;
+	const maxBoxWidth = Math.max(30, termWidth - 6); // 2 indent + 2 borders + 2 padding
+
+	const contentMaxLen = Math.max(title.length, ...lines.map((l) => l.length));
+	const maxLen = Math.min(contentMaxLen, maxBoxWidth - 4);
 	const innerWidth = maxLen + 4;
 
 	const purple = isColorEnabled ? getRandomPurple() : "";
@@ -173,10 +178,15 @@ export function box(title: string, lines: string[]): void {
 	const fill = "▓".repeat(innerWidth);
 	const gradient = "░".repeat(innerWidth);
 
+	// Truncate text if too long for box
+	const truncate = (text: string) => (text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text);
+
 	// Pad plain text first, then apply colors (ANSI codes break padEnd calculation)
-	const pad = (text: string) => `  ${text.padEnd(maxLen)}  `;
-	const padTitle = (text: string) =>
-		`  ${bold}${text}${reset}${purple}${" ".repeat(maxLen - text.length)}  `;
+	const pad = (text: string) => `  ${truncate(text).padEnd(maxLen)}  `;
+	const padTitle = (text: string) => {
+		const t = truncate(text);
+		return `  ${bold}${t}${reset}${purple}${" ".repeat(maxLen - t.length)}  `;
+	};
 
 	console.error("");
 	console.error(`  ${purple}╔${bar}╗${reset}`);
@@ -198,7 +208,12 @@ export function celebrate(title: string, lines: string[]): void {
 	if (isQuietMode) {
 		return; // Skip decorative boxes in quiet mode
 	}
-	const maxLen = Math.max(title.length, ...lines.map((l) => l.length));
+	// Respect terminal width (leave room for box borders + indent)
+	const termWidth = process.stderr.columns || process.stdout.columns || 80;
+	const maxBoxWidth = Math.max(30, termWidth - 6); // 2 indent + 2 borders + 2 padding
+
+	const contentMaxLen = Math.max(title.length, ...lines.map((l) => l.length));
+	const maxLen = Math.min(contentMaxLen, maxBoxWidth - 4);
 	const innerWidth = maxLen + 4;
 
 	const purple = isColorEnabled ? getRandomPurple() : "";
@@ -210,12 +225,16 @@ export function celebrate(title: string, lines: string[]): void {
 	const gradient = "░".repeat(innerWidth);
 	const space = " ".repeat(innerWidth);
 
+	// Truncate text if too long for box
+	const truncate = (text: string) => (text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text);
+
 	// Center text based on visual length, then apply colors
 	const center = (text: string, applyBold = false) => {
-		const left = Math.floor((innerWidth - text.length) / 2);
-		const right = innerWidth - text.length - left;
-		const centered = " ".repeat(left) + text + " ".repeat(right);
-		return applyBold ? centered.replace(text, bold + text + reset + purple) : centered;
+		const t = truncate(text);
+		const left = Math.floor((innerWidth - t.length) / 2);
+		const right = innerWidth - t.length - left;
+		const centered = " ".repeat(left) + t + " ".repeat(right);
+		return applyBold ? centered.replace(t, bold + t + reset + purple) : centered;
 	};
 
 	console.error("");
