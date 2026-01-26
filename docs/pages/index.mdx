@@ -12,7 +12,7 @@
 
 # Ship before you forget why you started.
 
-Ever find yourself with a dozen half-finished projects scattered across your machine? Each one was going to be *the thing*, but then you had to set up env vars, configure secrets, figure out deployment... and suddenly it's 2am and you're debugging TOML syntax instead of building.
+Ever find yourself with a dozen half-finished projects scattered across your machine? Each one was going to be *the thing*, but then you had to set up env vars, configure secrets, figure out deployment... and suddenly it's 2am. Again. (We don't judge.)
 
 Your AI wrote the app. Now it's rotting in localhost because deploys are *a whole thing*.
 
@@ -52,7 +52,7 @@ Or try without installing: `bunx @getjack/jack new my-app`
 
 Vibecoders. People who ship experiments constantly. Solo devs with more ideas than weekends.
 
-You move fast. AI makes it worse—now you can prototype anything in an afternoon. But each prototype needs its own env vars, secrets, deploy config. The ceremony piles up. Creative momentum dies.
+You move fast. AI makes it worse—now you can prototype anything in an afternoon. But each prototype needs its own env vars, secrets, deploy config.
 
 jack handles the boring parts. You stay in flow.
 
@@ -95,6 +95,14 @@ Build on your own work. Private by default.
 
 ---
 
+## From experiment to production
+
+Your experiment worked. Now what?
+
+jack projects are standard tooling—wrangler.jsonc, package.json, TypeScript. No proprietary config. When you're ready to grow, swap in a custom domain and everything works with wrangler directly. Graduate when you want, not when we let you.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -108,11 +116,25 @@ Build on your own work. Private by default.
 
 ---
 
+## For the impatient
+
+```bash
+alias j='jack'
+alias jn='jack new'
+alias js='jack ship'
+```
+
+For when even `jack` feels too long.
+
+---
+
 ## Why "jack"?
 
 In Gibson's *Neuromancer*, jacking in meant plugging directly into cyberspace. The body becomes irrelevant—you're pure thought in the matrix.
 
-jack handles the infrastructure so you stay in creative flow. The boring parts disappear. You just build.
+jack handles the infrastructure so you stay in creative flow.
+
+Infrastructure disappears. Creativity stays.
 
 ---
 
