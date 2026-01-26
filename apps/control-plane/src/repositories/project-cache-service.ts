@@ -6,6 +6,7 @@ export const CACHE_KEYS = {
 	configByUsernameSlug: (username: string, slug: string) => `config:${username}:${slug}`,
 	slugLookup: (orgId: string, slug: string) => `slug:${orgId}:${slug}`,
 	notFound: (subdomain: string) => `notfound:${subdomain}`,
+	customDomain: (hostname: string) => `custom:${hostname}`,
 } as const;
 
 const NOT_FOUND_TTL_SECONDS = 60;
@@ -40,7 +41,12 @@ export class ProjectCacheService {
 		}
 	}
 
-	async setProjectConfig(config: ProjectConfig): Promise<void> {
+	/**
+	 * Set project config in cache.
+	 * Optionally pass customDomainHostnames to also update custom domain cache entries.
+	 * This keeps custom domain caches in sync when project config changes (e.g., after deployment).
+	 */
+	async setProjectConfig(config: ProjectConfig, customDomainHostnames?: string[]): Promise<void> {
 		const serialized = JSON.stringify(config);
 
 		const writes: Promise<void>[] = [
@@ -62,6 +68,13 @@ export class ProjectCacheService {
 			writes.push(this.cache.put(CACHE_KEYS.configBySlug(config.slug), serialized));
 		}
 
+		// Update custom domain cache entries if provided
+		if (customDomainHostnames) {
+			for (const hostname of customDomainHostnames) {
+				writes.push(this.cache.put(CACHE_KEYS.customDomain(hostname), serialized));
+			}
+		}
+
 		await Promise.all(writes);
 	}
 
@@ -72,11 +85,13 @@ export class ProjectCacheService {
 	/**
 	 * Update an existing project config with partial updates.
 	 * Reads the current config, merges the updates, and writes back to all cache keys.
+	 * Optionally pass customDomainHostnames to also update custom domain cache entries.
 	 * Returns null if the config doesn't exist.
 	 */
 	async updateProjectConfig(
 		projectId: string,
 		updates: Partial<ProjectConfig>,
+		customDomainHostnames?: string[],
 	): Promise<ProjectConfig | null> {
 		const existing = await this.getProjectConfig(projectId);
 		if (!existing) {
@@ -89,7 +104,7 @@ export class ProjectCacheService {
 			updated_at: new Date().toISOString(),
 		};
 
-		await this.setProjectConfig(updated);
+		await this.setProjectConfig(updated, customDomainHostnames);
 		return updated;
 	}
 
@@ -98,6 +113,7 @@ export class ProjectCacheService {
 		slug: string,
 		orgId: string,
 		ownerUsername: string | null,
+		customDomainHostnames?: string[],
 	): Promise<void> {
 		const deletes: Promise<void>[] = [
 			this.cache.delete(CACHE_KEYS.project(projectId)),
@@ -107,6 +123,13 @@ export class ProjectCacheService {
 
 		if (ownerUsername) {
 			deletes.push(this.cache.delete(CACHE_KEYS.configByUsernameSlug(ownerUsername, slug)));
+		}
+
+		// Invalidate custom domain cache entries if provided
+		if (customDomainHostnames) {
+			for (const hostname of customDomainHostnames) {
+				deletes.push(this.cache.delete(CACHE_KEYS.customDomain(hostname)));
+			}
 		}
 
 		await Promise.allSettled(deletes);
@@ -130,5 +153,13 @@ export class ProjectCacheService {
 		}
 
 		await Promise.allSettled(deletes);
+	}
+
+	async setCustomDomainConfig(hostname: string, config: ProjectConfig): Promise<void> {
+		await this.cache.put(CACHE_KEYS.customDomain(hostname), JSON.stringify(config));
+	}
+
+	async deleteCustomDomainConfig(hostname: string): Promise<void> {
+		await this.cache.delete(CACHE_KEYS.customDomain(hostname));
 	}
 }
