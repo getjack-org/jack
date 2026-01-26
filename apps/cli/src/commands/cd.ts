@@ -12,7 +12,7 @@
  */
 
 import { join } from "node:path";
-import { ProjectNotFoundError, cloneProject } from "../lib/clone-core.ts";
+import { CloneCollisionError, ProjectNotFoundError, cloneProject } from "../lib/clone-core.ts";
 import { getJackHome } from "../lib/config.ts";
 import { fuzzyFilter } from "../lib/fuzzy.ts";
 import { error } from "../lib/output.ts";
@@ -55,6 +55,9 @@ export default async function cd(projectName?: string): Promise<void> {
 	} catch (err) {
 		// Network timeout
 		error("Could not reach cloud. Check your connection.");
+		if (process.env.DEBUG || process.argv.includes("--debug")) {
+			console.error("Debug:", err);
+		}
 		process.exit(1);
 	}
 
@@ -95,8 +98,26 @@ export default async function cd(projectName?: string): Promise<void> {
 				process.exit(1);
 			}
 
-			// Other clone errors (collision, network, etc.)
+			if (err instanceof CloneCollisionError) {
+				// Directory already exists - use it (silent recovery)
+				console.log(err.targetDir);
+				process.exit(0);
+			}
+
+			// Check for "no source backup" error (orphan project)
+			const errMsg = err instanceof Error ? err.message : "";
+			if (errMsg.includes("source not found")) {
+				error(`'${match.name}' has no cloud backup.`);
+				console.error("  This project was created before source backup was enabled.");
+				console.error("  Remove it with: jack down " + match.name);
+				process.exit(1);
+			}
+
+			// Other clone errors (network, etc.)
 			error("Could not reach cloud. Check your connection.");
+			if (process.env.DEBUG || process.argv.includes("--debug")) {
+				console.error("Debug:", err);
+			}
 			process.exit(1);
 		}
 	}

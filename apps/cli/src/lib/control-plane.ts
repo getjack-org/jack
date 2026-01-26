@@ -731,8 +731,10 @@ export async function publishProject(projectId: string): Promise<PublishProjectR
 export async function downloadProjectSource(slug: string): Promise<Buffer> {
 	const { authFetch } = await import("./auth/index.ts");
 
+	// Use /me/projects endpoint to download your own project's source
+	// (works for both published and unpublished projects you own)
 	const response = await authFetch(
-		`${getControlApiUrl()}/v1/projects/by-slug/${encodeURIComponent(slug)}/source`,
+		`${getControlApiUrl()}/v1/me/projects/${encodeURIComponent(slug)}/source`,
 	);
 
 	if (!response.ok) {
