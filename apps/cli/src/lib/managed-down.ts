@@ -11,6 +11,7 @@ import {
 	deleteManagedProject,
 	exportManagedDatabase,
 	fetchProjectResources,
+	getManagedDatabaseInfo,
 } from "./control-plane.ts";
 import { promptSelect } from "./hooks.ts";
 import { error, info, item, output, success, warn } from "./output.ts";
@@ -57,12 +58,21 @@ export async function managedDown(
 	// Interactive mode - fetch actual resources
 	let hasDatabase = false;
 	let databaseName: string | null = null;
+	let databaseNumTables = 0;
 	try {
 		const resources = await fetchProjectResources(projectId);
 		const d1Resource = resources.find((r) => r.resource_type === "d1");
 		if (d1Resource) {
 			hasDatabase = true;
 			databaseName = d1Resource.resource_name;
+			// Fetch table count to determine if export is needed
+			try {
+				const dbInfo = await getManagedDatabaseInfo(projectId);
+				databaseNumTables = dbInfo.numTables;
+			} catch {
+				// If we can't get info, assume it has data to be safe
+				databaseNumTables = 1;
+			}
 		}
 	} catch {
 		// If fetch fails, assume no database (safer than showing wrong info)
@@ -92,9 +102,9 @@ export async function managedDown(
 		return false;
 	}
 
-	// Auto-export database if it exists (no prompt)
+	// Auto-export database if it has tables (skip empty databases)
 	let exportPath: string | null = null;
-	if (hasDatabase) {
+	if (hasDatabase && databaseNumTables > 0) {
 		const backupDir = project.localPath ?? join(getJackHome(), projectName);
 		mkdirSync(backupDir, { recursive: true });
 		exportPath = join(backupDir, `${projectName}-backup.sql`);
