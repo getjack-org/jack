@@ -5,42 +5,18 @@
  * with slot usage information.
  */
 
-import { authFetch, isLoggedIn } from "../lib/auth/index.ts";
-import { getControlApiUrl } from "../lib/control-plane.ts";
-import { JackError, JackErrorCode } from "../lib/errors.ts";
+import { isLoggedIn } from "../lib/auth/index.ts";
 import { colors, error, info, output } from "../lib/output.ts";
-
-interface DomainWithProject {
-	id: string;
-	hostname: string;
-	status: string;
-	ssl_status: string | null;
-	project_slug: string;
-	project_url: string;
-	created_at: string;
-	verification?: {
-		type: "cname";
-		target: string;
-	};
-	ownership_verification?: {
-		type: "txt";
-		name: string;
-		value: string;
-	};
-}
-
-interface ListAllDomainsResponse {
-	domains: DomainWithProject[];
-	slots: {
-		used: number;
-		max: number;
-	};
-}
+import {
+	type DomainInfo,
+	type DomainStatus,
+	listDomains,
+} from "../lib/services/domain-operations.ts";
 
 /**
  * Get status icon for domain status
  */
-function getStatusIcon(status: string): string {
+function getStatusIcon(status: DomainStatus): string {
 	switch (status) {
 		case "active":
 			return `${colors.green}✓${colors.reset}`;
@@ -62,7 +38,7 @@ function getStatusIcon(status: string): string {
 /**
  * Get human-readable status label
  */
-function getStatusLabel(status: string): string {
+function getStatusLabel(status: DomainStatus): string {
 	switch (status) {
 		case "active":
 			return "active";
@@ -107,127 +83,119 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 
 	output.start("Loading domains...");
 
-	const response = await authFetch(`${getControlApiUrl()}/v1/domains`);
-
-	if (!response.ok) {
-		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
-		};
+	try {
+		const data = await listDomains();
 		output.stop();
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to list domains: ${response.status}`,
-		);
-	}
 
-	const data = (await response.json()) as ListAllDomainsResponse;
-	output.stop();
+		// JSON output
+		if (jsonOutput) {
+			console.log(JSON.stringify(data, null, 2));
+			return;
+		}
 
-	// JSON output
-	if (jsonOutput) {
-		console.log(JSON.stringify(data, null, 2));
-		return;
-	}
+		// Render table
+		console.error("");
 
-	// Render table
-	console.error("");
+		// Show slot usage
+		const { used, max } = data.slots;
+		const available = max - used;
 
-	// Show slot usage
-	const { used, max } = data.slots;
-	const available = max - used;
-
-	if (data.domains.length === 0) {
-		// Empty state - focus on what's available
-		if (max === 0) {
-			console.error(
-				`  ${colors.bold}Custom Domains${colors.reset}  ${colors.yellow}Free plan${colors.reset}`,
-			);
+		if (data.domains.length === 0) {
+			// Empty state - focus on what's available
+			if (max === 0) {
+				console.error(
+					`  ${colors.bold}Custom Domains${colors.reset}  ${colors.yellow}Free plan${colors.reset}`,
+				);
+				console.error("");
+				info("Custom domains require a Pro plan");
+				info("Upgrade: jack upgrade");
+			} else {
+				console.error(
+					`  ${colors.bold}Custom Domains${colors.reset}  ${colors.green}${available} slots available${colors.reset}`,
+				);
+				console.error("");
+				info("Reserve a slot, then assign to a project:");
+				console.error(`  jack domain connect ${colors.cyan}api.yourcompany.com${colors.reset}`);
+				console.error(`  jack domain assign ${colors.cyan}api.yourcompany.com${colors.reset} ${colors.cyan}<project>${colors.reset}`);
+			}
 			console.error("");
-			info("Custom domains require a Pro plan");
-			info("Upgrade: jack upgrade");
+			return;
+		}
+
+		// Has domains - show usage
+		const slotColor = used >= max ? colors.yellow : colors.green;
+		console.error(
+			`  ${colors.bold}Custom Domains${colors.reset}  ${slotColor}${used}/${max} slots${colors.reset}`,
+		);
+		console.error("");
+
+		// Group by status
+		const active = data.domains.filter((d) => d.status === "active");
+		const pending = data.domains.filter((d) =>
+			["pending", "pending_owner", "pending_ssl"].includes(d.status),
+		);
+		const unassigned = data.domains.filter((d) => d.status === "claimed");
+		const other = data.domains.filter(
+			(d) => !["active", "pending", "pending_owner", "pending_ssl", "claimed"].includes(d.status),
+		);
+
+		// Show active domains
+		if (active.length > 0) {
+			console.error(`  ${colors.dim}Active${colors.reset}`);
+			for (const d of active) {
+				console.error(
+					`  ${getStatusIcon(d.status)} ${colors.green}https://${d.hostname}${colors.reset}  ${colors.dim}-> ${d.project_slug}${colors.reset}`,
+				);
+			}
+			console.error("");
+		}
+
+		// Show pending domains
+		if (pending.length > 0) {
+			console.error(`  ${colors.dim}Pending${colors.reset}`);
+			for (const d of pending) {
+				const label = getStatusLabel(d.status);
+				console.error(
+					`  ${getStatusIcon(d.status)} ${colors.cyan}${d.hostname}${colors.reset} ${colors.yellow}(${label})${colors.reset}  ${colors.dim}-> ${d.project_slug}${colors.reset}`,
+				);
+			}
+			console.error("");
+		}
+
+		// Show unassigned domains (claimed but not connected to a project)
+		if (unassigned.length > 0) {
+			console.error(`  ${colors.dim}Unassigned${colors.reset}`);
+			for (const d of unassigned) {
+				console.error(`  ○ ${d.hostname}`);
+			}
+			console.error("");
+		}
+
+		// Show other (failed, blocked, moved)
+		if (other.length > 0) {
+			console.error(`  ${colors.dim}Other${colors.reset}`);
+			for (const d of other) {
+				const label = getStatusLabel(d.status);
+				console.error(
+					`  ${getStatusIcon(d.status)} ${d.hostname} ${colors.red}(${label})${colors.reset}  ${colors.dim}-> ${d.project_slug}${colors.reset}`,
+				);
+			}
+			console.error("");
+		}
+
+		// Footer hints - show available slots if any
+		if (available > 0) {
+			info(
+				`${available} slot${available > 1 ? "s" : ""} available. Add: jack domain connect <hostname>`,
+			);
 		} else {
-			console.error(
-				`  ${colors.bold}Custom Domains${colors.reset}  ${colors.green}${available} slots available${colors.reset}`,
-			);
-			console.error("");
-			info("Reserve a slot, then assign to a project:");
-			console.error(`  jack domain connect ${colors.cyan}api.yourcompany.com${colors.reset}`);
-			console.error(`  jack domain assign ${colors.cyan}api.yourcompany.com${colors.reset} ${colors.cyan}<project>${colors.reset}`);
+			info("All slots used. Remove a domain to free a slot: jack domain rm <hostname>");
 		}
 		console.error("");
-		return;
+	} catch (err) {
+		output.stop();
+		throw err;
 	}
-
-	// Has domains - show usage
-	const slotColor = used >= max ? colors.yellow : colors.green;
-	console.error(
-		`  ${colors.bold}Custom Domains${colors.reset}  ${slotColor}${used}/${max} slots${colors.reset}`,
-	);
-	console.error("");
-
-	// Group by status
-	const active = data.domains.filter((d) => d.status === "active");
-	const pending = data.domains.filter((d) =>
-		["pending", "pending_owner", "pending_ssl"].includes(d.status),
-	);
-	const unassigned = data.domains.filter((d) => d.status === "claimed");
-	const other = data.domains.filter(
-		(d) => !["active", "pending", "pending_owner", "pending_ssl", "claimed"].includes(d.status),
-	);
-
-	// Show active domains
-	if (active.length > 0) {
-		console.error(`  ${colors.dim}Active${colors.reset}`);
-		for (const d of active) {
-			console.error(
-				`  ${getStatusIcon(d.status)} ${colors.green}https://${d.hostname}${colors.reset}  ${colors.dim}→ ${d.project_slug}${colors.reset}`,
-			);
-		}
-		console.error("");
-	}
-
-	// Show pending domains
-	if (pending.length > 0) {
-		console.error(`  ${colors.dim}Pending${colors.reset}`);
-		for (const d of pending) {
-			const label = getStatusLabel(d.status);
-			console.error(
-				`  ${getStatusIcon(d.status)} ${colors.cyan}${d.hostname}${colors.reset} ${colors.yellow}(${label})${colors.reset}  ${colors.dim}→ ${d.project_slug}${colors.reset}`,
-			);
-		}
-		console.error("");
-	}
-
-	// Show unassigned domains (claimed but not connected to a project)
-	if (unassigned.length > 0) {
-		console.error(`  ${colors.dim}Unassigned${colors.reset}`);
-		for (const d of unassigned) {
-			console.error(`  ○ ${d.hostname}`);
-		}
-		console.error("");
-	}
-
-	// Show other (failed, blocked, moved)
-	if (other.length > 0) {
-		console.error(`  ${colors.dim}Other${colors.reset}`);
-		for (const d of other) {
-			const label = getStatusLabel(d.status);
-			console.error(
-				`  ${getStatusIcon(d.status)} ${d.hostname} ${colors.red}(${label})${colors.reset}  ${colors.dim}→ ${d.project_slug}${colors.reset}`,
-			);
-		}
-		console.error("");
-	}
-
-	// Footer hints - show available slots if any
-	if (available > 0) {
-		info(
-			`${available} slot${available > 1 ? "s" : ""} available. Add: jack domain connect <hostname>`,
-		);
-	} else {
-		info("All slots used. Remove a domain to free a slot: jack domain rm <hostname>");
-	}
-	console.error("");
 }
 
 function showHelp(): void {

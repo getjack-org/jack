@@ -11,71 +11,21 @@
  *   4. disconnect <hostname> - Full removal, free slot
  */
 
-import { authFetch } from "../lib/auth/index.ts";
-import { findProjectBySlug, getControlApiUrl } from "../lib/control-plane.ts";
-import { JackError, JackErrorCode } from "../lib/errors.ts";
+import { JackError } from "../lib/errors.ts";
 import { isCancel, promptSelect } from "../lib/hooks.ts";
 import { colors, error, info, output, success, warn } from "../lib/output.ts";
-
-interface DomainResponse {
-	id: string;
-	hostname: string;
-	status:
-		| "claimed"
-		| "pending"
-		| "pending_owner"
-		| "pending_ssl"
-		| "active"
-		| "blocked"
-		| "moved"
-		| "failed"
-		| "deleting";
-	ssl_status: string | null;
-	project_id: string | null;
-	project_slug: string | null;
-	verification?: {
-		type: "cname";
-		target: string;
-		instructions: string;
-	};
-	ownership_verification?: {
-		type: "txt";
-		name: string;
-		value: string;
-	};
-	created_at: string;
-}
-
-interface ListDomainsResponse {
-	domains: DomainResponse[];
-	slots: {
-		used: number;
-		max: number;
-	};
-}
-
-interface ConnectDomainResponse {
-	id: string;
-	hostname: string;
-	status: string;
-}
-
-interface AssignDomainResponse {
-	id: string;
-	hostname: string;
-	status: string;
-	ssl_status: string | null;
-	verification?: {
-		type: "cname";
-		target: string;
-		instructions: string;
-	};
-	ownership_verification?: {
-		type: "txt";
-		name: string;
-		value: string;
-	};
-}
+import {
+	type DomainInfo,
+	type DomainOwnershipVerification,
+	type DomainStatus,
+	type DomainVerification,
+	assignDomain as assignDomainService,
+	connectDomain as connectDomainService,
+	disconnectDomain as disconnectDomainService,
+	getDomainByHostname,
+	listDomains as listDomainsService,
+	unassignDomain as unassignDomainService,
+} from "../lib/services/domain-operations.ts";
 
 export default async function domain(subcommand?: string, args: string[] = []): Promise<void> {
 	// Handle help flags
@@ -85,21 +35,21 @@ export default async function domain(subcommand?: string, args: string[] = []): 
 
 	// No subcommand = show status (not help)
 	if (!subcommand) {
-		return await listDomains();
+		return await listDomainsCommand();
 	}
 
 	switch (subcommand) {
 		case "connect":
-			return await connectDomain(args);
+			return await connectDomainCommand(args);
 		case "assign":
-			return await assignDomain(args);
+			return await assignDomainCommand(args);
 		case "unassign":
-			return await unassignDomain(args);
+			return await unassignDomainCommand(args);
 		case "disconnect":
-			return await disconnectDomain(args);
+			return await disconnectDomainCommand(args);
 		case "list":
 		case "ls":
-			return await listDomains();
+			return await listDomainsCommand();
 		default:
 			error(`Unknown subcommand: ${subcommand}`);
 			info("Available: connect, assign, unassign, disconnect, list, help");
@@ -135,7 +85,7 @@ function showHelp(): void {
 /**
  * Get status icon for domain status
  */
-function getStatusIcon(status: DomainResponse["status"]): string {
+function getStatusIcon(status: DomainStatus): string {
 	switch (status) {
 		case "active":
 			return `${colors.green}✓${colors.reset}`;
@@ -159,7 +109,7 @@ function getStatusIcon(status: DomainResponse["status"]): string {
 /**
  * Get human-readable status label
  */
-function getStatusLabel(status: DomainResponse["status"]): string {
+function getStatusLabel(status: DomainStatus): string {
 	switch (status) {
 		case "active":
 			return "active";
@@ -189,8 +139,8 @@ function getStatusLabel(status: DomainResponse["status"]): string {
  */
 function showDnsInstructions(
 	hostname: string,
-	verification?: { type: "cname"; target: string },
-	ownershipVerification?: { type: "txt"; name: string; value: string },
+	verification?: DomainVerification,
+	ownershipVerification?: DomainOwnershipVerification,
 ): void {
 	// Extract the base domain (e.g., "hellno.wtf" from "app.hellno.wtf")
 	const parts = hostname.split(".");
@@ -245,112 +195,84 @@ function getSecondsUntilNextCheck(): number {
 }
 
 /**
- * Find a domain by hostname from the global list
- */
-async function findDomainByHostname(hostname: string): Promise<DomainResponse | null> {
-	const response = await authFetch(`${getControlApiUrl()}/v1/domains`);
-
-	if (!response.ok) {
-		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
-		};
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to list domains: ${response.status}`,
-		);
-	}
-
-	const data = (await response.json()) as ListDomainsResponse;
-	return data.domains.find((d) => d.hostname === hostname) ?? null;
-}
-
-/**
  * List domains and show status
  */
-async function listDomains(): Promise<void> {
+async function listDomainsCommand(): Promise<void> {
 	output.start("Loading domains...");
 
-	const response = await authFetch(`${getControlApiUrl()}/v1/domains`);
-
-	if (!response.ok) {
-		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
-		};
+	try {
+		const data = await listDomainsService();
 		output.stop();
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to list domains: ${response.status}`,
-		);
-	}
 
-	const data = (await response.json()) as ListDomainsResponse;
-	output.stop();
-
-	console.error("");
-
-	// Show slot usage
-	const { slots } = data;
-	console.error(`  Slots: ${slots.used}/${slots.max} used`);
-	console.error("");
-
-	if (data.domains.length === 0) {
-		info("No custom domains configured.");
 		console.error("");
-		info("Reserve a domain: jack domain connect <hostname>");
-		return;
-	}
 
-	info("Custom domains:");
-	console.error("");
+		// Show slot usage
+		const { slots } = data;
+		console.error(`  Slots: ${slots.used}/${slots.max} used`);
+		console.error("");
 
-	// Group domains by status
-	const pendingDomains: DomainResponse[] = [];
+		if (data.domains.length === 0) {
+			info("No custom domains configured.");
+			console.error("");
+			info("Reserve a domain: jack domain connect <hostname>");
+			return;
+		}
 
-	for (const d of data.domains) {
-		const icon = getStatusIcon(d.status);
-		const label = getStatusLabel(d.status);
+		info("Custom domains:");
+		console.error("");
 
-		if (d.status === "active") {
-			// Show clickable URL for active domains
-			const projectInfo = d.project_slug ? ` -> ${d.project_slug}` : "";
-			console.error(
-				`  ${icon} ${colors.green}https://${d.hostname}${colors.reset}${colors.cyan}${projectInfo}${colors.reset}`,
-			);
-		} else if (d.status === "claimed") {
-			// Reserved but not assigned
-			console.error(
-				`  ${icon} ${colors.dim}${d.hostname}${colors.reset} ${colors.cyan}(${label})${colors.reset}`,
-			);
-		} else {
-			// Pending states
-			const projectInfo = d.project_slug ? ` -> ${d.project_slug}` : "";
-			console.error(
-				`  ${icon} ${colors.cyan}${d.hostname}${colors.reset}${projectInfo} ${colors.yellow}(${label})${colors.reset}`,
-			);
-			if (d.verification || d.ownership_verification) {
-				pendingDomains.push(d);
+		// Group domains by status
+		const pendingDomains: DomainInfo[] = [];
+
+		for (const d of data.domains) {
+			const icon = getStatusIcon(d.status);
+			const label = getStatusLabel(d.status);
+
+			if (d.status === "active") {
+				// Show clickable URL for active domains
+				const projectInfo = d.project_slug ? ` -> ${d.project_slug}` : "";
+				console.error(
+					`  ${icon} ${colors.green}https://${d.hostname}${colors.reset}${colors.cyan}${projectInfo}${colors.reset}`,
+				);
+			} else if (d.status === "claimed") {
+				// Reserved but not assigned
+				console.error(
+					`  ${icon} ${colors.dim}${d.hostname}${colors.reset} ${colors.cyan}(${label})${colors.reset}`,
+				);
+			} else {
+				// Pending states
+				const projectInfo = d.project_slug ? ` -> ${d.project_slug}` : "";
+				console.error(
+					`  ${icon} ${colors.cyan}${d.hostname}${colors.reset}${projectInfo} ${colors.yellow}(${label})${colors.reset}`,
+				);
+				if (d.verification || d.ownership_verification) {
+					pendingDomains.push(d);
+				}
 			}
 		}
-	}
 
-	// Show DNS instructions for pending domains
-	if (pendingDomains.length > 0) {
-		for (const d of pendingDomains) {
+		// Show DNS instructions for pending domains
+		if (pendingDomains.length > 0) {
+			for (const d of pendingDomains) {
+				console.error("");
+				showDnsInstructions(d.hostname, d.verification, d.ownership_verification);
+			}
+			const nextCheck = getSecondsUntilNextCheck();
 			console.error("");
-			showDnsInstructions(d.hostname, d.verification, d.ownership_verification);
+			console.error(`  ${colors.cyan}Next auto-check in ~${nextCheck}s${colors.reset}`);
 		}
-		const nextCheck = getSecondsUntilNextCheck();
-		console.error("");
-		console.error(`  ${colors.cyan}Next auto-check in ~${nextCheck}s${colors.reset}`);
-	}
 
-	console.error("");
+		console.error("");
+	} catch (err) {
+		output.stop();
+		throw err;
+	}
 }
 
 /**
  * Connect (reserve) a domain slot
  */
-async function connectDomain(args: string[]): Promise<void> {
+async function connectDomainCommand(args: string[]): Promise<void> {
 	const hostname = args[0];
 
 	if (!hostname) {
@@ -362,51 +284,30 @@ async function connectDomain(args: string[]): Promise<void> {
 	console.error("");
 	info(`Reserving slot for ${hostname}...`);
 
-	const response = await authFetch(`${getControlApiUrl()}/v1/domains`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ hostname }),
-	});
+	try {
+		const data = await connectDomainService(hostname);
 
-	if (!response.ok) {
-		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
-			error?: string;
-		};
-
-		// Handle plan limit errors
-		if (response.status === 403 || err.error === "plan_limit_reached") {
-			error("No domain slots available");
-			info("Upgrade your plan for more slots: jack upgrade");
+		console.error("");
+		success(`Slot reserved: ${data.hostname}`);
+		console.error("");
+		info("Next step: assign to a project with 'jack domain assign <hostname> <project>'");
+		console.error("");
+	} catch (err) {
+		if (err instanceof JackError) {
+			error(err.message);
+			if (err.suggestion) {
+				info(err.suggestion);
+			}
 			process.exit(1);
 		}
-
-		// Handle "already exists"
-		if (response.status === 409 || err.error === "domain_exists") {
-			error(`Domain ${hostname} is already reserved`);
-			info("Run 'jack domain' to see all domains");
-			process.exit(1);
-		}
-
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to reserve domain: ${response.status}`,
-		);
+		throw err;
 	}
-
-	const data = (await response.json()) as ConnectDomainResponse;
-
-	console.error("");
-	success(`Slot reserved: ${data.hostname}`);
-	console.error("");
-	info("Next step: assign to a project with 'jack domain assign <hostname> <project>'");
-	console.error("");
 }
 
 /**
  * Assign a reserved domain to a project
  */
-async function assignDomain(args: string[]): Promise<void> {
+async function assignDomainCommand(args: string[]): Promise<void> {
 	const hostname = args[0];
 	const projectSlug = args[1];
 
@@ -424,79 +325,45 @@ async function assignDomain(args: string[]): Promise<void> {
 
 	output.start("Looking up domain and project...");
 
-	// Find the domain
-	const domain = await findDomainByHostname(hostname);
-	if (!domain) {
+	try {
+		const data = await assignDomainService(hostname, projectSlug);
 		output.stop();
-		error(`Domain not found: ${hostname}`);
-		info("Reserve it first: jack domain connect <hostname>");
-		process.exit(1);
-	}
 
-	// Find the project
-	const project = await findProjectBySlug(projectSlug);
-	if (!project) {
+		console.error("");
+
+		if (data.status === "active") {
+			success(`Domain active: https://${hostname}`);
+		} else if (data.verification || data.ownership_verification) {
+			info(`Domain assigned. Configure DNS to activate:`);
+			console.error("");
+			showDnsInstructions(hostname, data.verification, data.ownership_verification);
+			console.error("");
+			const nextCheck = getSecondsUntilNextCheck();
+			console.error(
+				`  ${colors.cyan}First auto-check in ~${nextCheck}s after DNS is configured.${colors.reset}`,
+			);
+		} else {
+			success(`Domain assigned: ${hostname}`);
+			console.error(`  Status: ${data.status}`);
+		}
+		console.error("");
+	} catch (err) {
 		output.stop();
-		error(`Project not found: ${projectSlug}`);
-		info("Check your projects: jack ls");
-		process.exit(1);
-	}
-
-	output.stop();
-	console.error("");
-	info(`Assigning ${hostname} to ${projectSlug}...`);
-
-	const response = await authFetch(`${getControlApiUrl()}/v1/domains/${domain.id}/assign`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ project_id: project.id }),
-	});
-
-	if (!response.ok) {
-		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
-			error?: string;
-		};
-
-		// Handle already assigned
-		if (err.error === "already_assigned") {
-			error(`Domain is already assigned to a project`);
-			info("Unassign it first: jack domain unassign <hostname>");
+		if (err instanceof JackError) {
+			error(err.message);
+			if (err.suggestion) {
+				info(err.suggestion);
+			}
 			process.exit(1);
 		}
-
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to assign domain: ${response.status}`,
-		);
+		throw err;
 	}
-
-	const data = (await response.json()) as AssignDomainResponse;
-
-	console.error("");
-
-	if (data.status === "active") {
-		success(`Domain active: https://${hostname}`);
-	} else if (data.verification || data.ownership_verification) {
-		info(`Domain assigned. Configure DNS to activate:`);
-		console.error("");
-		showDnsInstructions(hostname, data.verification, data.ownership_verification);
-		console.error("");
-		const nextCheck = getSecondsUntilNextCheck();
-		console.error(
-			`  ${colors.cyan}First auto-check in ~${nextCheck}s after DNS is configured.${colors.reset}`,
-		);
-	} else {
-		success(`Domain assigned: ${hostname}`);
-		console.error(`  Status: ${data.status}`);
-	}
-	console.error("");
 }
 
 /**
  * Unassign a domain from its project (keep the slot)
  */
-async function unassignDomain(args: string[]): Promise<void> {
+async function unassignDomainCommand(args: string[]): Promise<void> {
 	const hostname = args[0];
 
 	if (!hostname) {
@@ -507,7 +374,15 @@ async function unassignDomain(args: string[]): Promise<void> {
 
 	output.start("Finding domain...");
 
-	const domain = await findDomainByHostname(hostname);
+	// First, get the domain info for the confirmation prompt
+	let domain: DomainInfo | null;
+	try {
+		domain = await getDomainByHostname(hostname);
+	} catch (err) {
+		output.stop();
+		throw err;
+	}
+
 	if (!domain) {
 		output.stop();
 		error(`Domain not found: ${hostname}`);
@@ -538,32 +413,30 @@ async function unassignDomain(args: string[]): Promise<void> {
 
 	output.start("Unassigning domain...");
 
-	const response = await authFetch(`${getControlApiUrl()}/v1/domains/${domain.id}/unassign`, {
-		method: "POST",
-	});
-
-	if (!response.ok) {
+	try {
+		await unassignDomainService(hostname);
 		output.stop();
-		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
-		};
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to unassign domain: ${response.status}`,
-		);
+		console.error("");
+		success(`Domain unassigned: ${hostname}`);
+		info("Slot kept. Reassign with: jack domain assign <hostname> <project>");
+		console.error("");
+	} catch (err) {
+		output.stop();
+		if (err instanceof JackError) {
+			error(err.message);
+			if (err.suggestion) {
+				info(err.suggestion);
+			}
+			process.exit(1);
+		}
+		throw err;
 	}
-
-	output.stop();
-	console.error("");
-	success(`Domain unassigned: ${hostname}`);
-	info("Slot kept. Reassign with: jack domain assign <hostname> <project>");
-	console.error("");
 }
 
 /**
  * Disconnect (fully remove) a domain
  */
-async function disconnectDomain(args: string[]): Promise<void> {
+async function disconnectDomainCommand(args: string[]): Promise<void> {
 	const hostname = args[0];
 
 	if (!hostname) {
@@ -574,7 +447,15 @@ async function disconnectDomain(args: string[]): Promise<void> {
 
 	output.start("Finding domain...");
 
-	const domain = await findDomainByHostname(hostname);
+	// First, get the domain info for the confirmation prompt
+	let domain: DomainInfo | null;
+	try {
+		domain = await getDomainByHostname(hostname);
+	} catch (err) {
+		output.stop();
+		throw err;
+	}
+
 	if (!domain) {
 		output.stop();
 		error(`Domain not found: ${hostname}`);
@@ -604,24 +485,22 @@ async function disconnectDomain(args: string[]): Promise<void> {
 
 	output.start("Disconnecting domain...");
 
-	const response = await authFetch(`${getControlApiUrl()}/v1/domains/${domain.id}`, {
-		method: "DELETE",
-	});
-
-	if (!response.ok) {
+	try {
+		await disconnectDomainService(hostname);
 		output.stop();
-		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
-			message?: string;
-		};
-		throw new JackError(
-			JackErrorCode.INTERNAL_ERROR,
-			err.message || `Failed to disconnect domain: ${response.status}`,
-		);
+		console.error("");
+		success(`Domain disconnected: ${hostname}`);
+		info("Slot freed.");
+		console.error("");
+	} catch (err) {
+		output.stop();
+		if (err instanceof JackError) {
+			error(err.message);
+			if (err.suggestion) {
+				info(err.suggestion);
+			}
+			process.exit(1);
+		}
+		throw err;
 	}
-
-	output.stop();
-	console.error("");
-	success(`Domain disconnected: ${hostname}`);
-	info("Slot freed.");
-	console.error("");
 }
