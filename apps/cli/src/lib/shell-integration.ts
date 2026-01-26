@@ -64,6 +64,17 @@ jack() {
       fi
       return $exit_code
       ;;
+    "")
+      # No args: interactive picker - cd if it outputs a directory
+      local output
+      output="$(command jack)"
+      if [[ -n "$output" && -d "$output" ]]; then
+        cd "$output" || return 1
+      elif [[ -n "$output" ]]; then
+        # Not a directory (e.g., help text) - show it
+        echo "$output"
+      fi
+      ;;
     *)
       # Pass through all other commands
       command jack "$@"
