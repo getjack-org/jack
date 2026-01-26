@@ -6,6 +6,12 @@ import { debug } from "../lib/debug.ts";
 import { installMcpConfigsToAllApps } from "../lib/mcp-config.ts";
 import { error, info, success, warn } from "../lib/output.ts";
 import {
+	detectShell,
+	getRcFilePath,
+	isInstalled as isShellIntegrationInstalled,
+	update as updateShellIntegration,
+} from "../lib/shell-integration.ts";
+import {
 	checkForUpdate,
 	getCurrentVersion,
 	isRunningViaBunx,
@@ -63,6 +69,19 @@ export default async function update(): Promise<void> {
 		} catch {
 			// Non-critical - don't fail update if MCP repair fails
 			debug("MCP config repair failed (non-critical)");
+		}
+
+		try {
+			const shell = detectShell();
+			const rcFile = getRcFilePath(shell);
+			if (rcFile && isShellIntegrationInstalled(rcFile)) {
+				updateShellIntegration();
+				info("Shell integration updated");
+			} else if (rcFile && shell !== "unknown") {
+				info("Tip: 'jack init' enables auto-cd for jack new/cd");
+			}
+		} catch {
+			debug("Shell integration update failed");
 		}
 	} else {
 		error("Update failed");

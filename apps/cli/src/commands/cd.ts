@@ -17,6 +17,20 @@ import { getJackHome } from "../lib/config.ts";
 import { fuzzyFilter } from "../lib/fuzzy.ts";
 import { error } from "../lib/output.ts";
 import { type ResolvedProject, listAllProjects } from "../lib/project-resolver.ts";
+import {
+	detectShell,
+	getRcFilePath,
+	isInstalled as isShellIntegrationInstalled,
+} from "../lib/shell-integration.ts";
+
+function maybeShowShellHint(path: string): void {
+	const shell = detectShell();
+	const rcFile = getRcFilePath(shell);
+
+	if (!rcFile || shell === "unknown") return;
+	if (isShellIntegrationInstalled(rcFile)) return;
+	console.error(`cd ${path}`);
+}
 
 /**
  * Find the best matching project by name using fuzzy matching.
@@ -73,6 +87,7 @@ export default async function cd(projectName?: string): Promise<void> {
 	if (match.localPath) {
 		// Local copy exists - print path and exit
 		console.log(match.localPath);
+		maybeShowShellHint(match.localPath);
 		process.exit(0);
 	}
 
@@ -90,6 +105,7 @@ export default async function cd(projectName?: string): Promise<void> {
 
 			// Print the cloned path
 			console.log(result.path);
+			maybeShowShellHint(result.path);
 			process.exit(0);
 		} catch (err) {
 			if (err instanceof ProjectNotFoundError) {
@@ -101,6 +117,7 @@ export default async function cd(projectName?: string): Promise<void> {
 			if (err instanceof CloneCollisionError) {
 				// Directory already exists - use it (silent recovery)
 				console.log(err.targetDir);
+				maybeShowShellHint(err.targetDir);
 				process.exit(0);
 			}
 
@@ -109,7 +126,7 @@ export default async function cd(projectName?: string): Promise<void> {
 			if (errMsg.includes("source not found")) {
 				error(`'${match.name}' has no cloud backup.`);
 				console.error("  This project was created before source backup was enabled.");
-				console.error("  Remove it with: jack down " + match.name);
+				console.error(`  Remove it with: jack down ${match.name}`);
 				process.exit(1);
 			}
 

@@ -5,8 +5,19 @@ import {
 	updateAgent,
 } from "../lib/agents.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
+import { promptSelect } from "../lib/hooks.ts";
 import { getAppDisplayName, installMcpConfigsToAllApps, saveMcpConfig } from "../lib/mcp-config.ts";
 import { info, item, spinner, success } from "../lib/output.ts";
+import {
+	detectShell,
+	getRcFileName,
+	getRcFilePath,
+	getShellFileDisplayPath,
+	getShellName,
+	hasLegacyInstall,
+	install as installShellIntegration,
+	isInstalled as isShellIntegrationInstalled,
+} from "../lib/shell-integration.ts";
 import { ensureAuth, ensureWrangler, isAuthenticated } from "../lib/wrangler.ts";
 
 export async function isInitialized(): Promise<boolean> {
@@ -122,7 +133,47 @@ export default async function init(options: InitOptions = {}): Promise<void> {
 		}
 	}
 
-	// Step 5: Save config (preserve existing agents, just update init status)
+	// Step 5: Shell integration
+	const shell = detectShell();
+	const rcFile = getRcFilePath(shell);
+
+	if (rcFile && shell !== "unknown") {
+		const alreadyInstalled = isShellIntegrationInstalled(rcFile);
+		const hasLegacy = hasLegacyInstall(rcFile);
+
+		if (alreadyInstalled && !hasLegacy) {
+			// Already installed
+		} else if (hasLegacy) {
+			console.error("");
+			info("Upgrading shell integration...");
+			try {
+				const result = installShellIntegration(rcFile);
+				if (result.migrated) {
+					success(`Upgraded to ${getShellFileDisplayPath()}`);
+					info(`Restart your terminal or run: source ~/${getRcFileName(rcFile)}`);
+				}
+			} catch {
+				info("Could not upgrade shell integration (non-critical)");
+			}
+		} else {
+			console.error("");
+			info("Enable 'jack cd' and 'jack new' to auto-change directories?");
+			const choice = await promptSelect(["Yes", "No"]);
+
+			if (choice === 0) {
+				try {
+					installShellIntegration(rcFile);
+					success(`Added to ~/${getRcFileName(rcFile)}`);
+					info(`Restart your terminal or run: source ~/${getRcFileName(rcFile)}`);
+				} catch {
+					info("Could not update shell config (non-critical)");
+					info('Add manually: eval "$(jack shell-init)"');
+				}
+			}
+		}
+	}
+
+	// Step 6: Save config (preserve existing agents, just update init status)
 	const existingConfig = await readConfig();
 	await writeConfig({
 		version: 1,

@@ -328,6 +328,11 @@ try {
 			await withTelemetry("cd", cd)(args[0]);
 			break;
 		}
+		case "shell-init": {
+			const { default: shellInit } = await import("./commands/shell-init.ts");
+			await shellInit();
+			break;
+		}
 		case "telemetry": {
 			const { default: telemetry } = await import("./commands/telemetry.ts");
 			await telemetry(args[0]);
