@@ -323,6 +323,11 @@ try {
 			await withTelemetry("clone", clone)(args[0], { as: cli.flags.as });
 			break;
 		}
+		case "cd": {
+			const { default: cd } = await import("./commands/cd.ts");
+			await withTelemetry("cd", cd)(args[0]);
+			break;
+		}
 		case "telemetry": {
 			const { default: telemetry } = await import("./commands/telemetry.ts");
 			await telemetry(args[0]);
@@ -484,8 +489,34 @@ try {
 			await withTelemetry("skills", skills, { subcommand: args[0] })(args[0], args.slice(1));
 			break;
 		}
-		default:
-			cli.showHelp(command ? 1 : 0);
+		default: {
+			// No command provided - show interactive picker if TTY, else help
+			if (!command) {
+				const { isTTY, requireTTY, pickProject } = await import("./lib/picker.ts");
+
+				if (!isTTY()) {
+					// Non-interactive: show help
+					cli.showHelp(0);
+					break;
+				}
+
+				requireTTY();
+
+				const result = await pickProject();
+
+				if (result.action === "cancel") {
+					break;
+				}
+
+				// User selected a project - run cd command
+				const { default: cd } = await import("./commands/cd.ts");
+				await withTelemetry("cd", cd)(result.project.name);
+			} else {
+				// Unknown command
+				cli.showHelp(1);
+			}
+			break;
+		}
 	}
 
 	// Show update notification if available (non-blocking check completed)

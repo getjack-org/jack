@@ -116,7 +116,9 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 				console.error("");
 				info("Reserve a slot, then assign to a project:");
 				console.error(`  jack domain connect ${colors.cyan}api.yourcompany.com${colors.reset}`);
-				console.error(`  jack domain assign ${colors.cyan}api.yourcompany.com${colors.reset} ${colors.cyan}<project>${colors.reset}`);
+				console.error(
+					`  jack domain assign ${colors.cyan}api.yourcompany.com${colors.reset} ${colors.cyan}<project>${colors.reset}`,
+				);
 			}
 			console.error("");
 			return;
