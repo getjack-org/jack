@@ -26,7 +26,7 @@ export default defineConfig({
 	iconUrl: "/jack-logo.png",
 	ogImageUrl: "/og.png",
 	topNav: [
-		{ text: "Guide", link: "/getting-started" },
+		{ text: "Quickstart", link: "/quickstart" },
 		{ text: "Templates", link: "/templates" },
 		{ text: "Commands", link: "/commands" },
 		{ text: "npm", link: "https://www.npmjs.com/package/@getjack/jack" },
@@ -36,6 +36,7 @@ export default defineConfig({
 			text: "Introduction",
 			items: [
 				{ text: "What is jack?", link: "/" },
+				{ text: "Quickstart", link: "/quickstart" },
 				{ text: "Getting Started", link: "/getting-started" },
 			],
 		},

@@ -1,0 +1,198 @@
+# Quickstart
+
+Deploy your first project in under 2 minutes.
+
+---
+
+## 1. Install Jack
+
+Install the jack CLI globally with bun.
+
+```bash
+bun add -g @getjack/jack
+```
+
+Verify the installation:
+
+```bash
+jack --version
+```
+
+---
+
+## 2. Choose a Template
+
+Jack includes batteries-included templates for common use cases. Pick one based on what you're building:
+
+### Option A: API
+
+Build a REST API, webhook handler, or backend service.
+
+```bash
+jack new my-api -t api
+```
+
+**Includes**: Hono router, TypeScript, CORS, health endpoint
+
+**Use for**: Webhooks, REST APIs, microservices
+
+### Option B: AI Chat
+
+Build a chatbot with streaming responses using free Cloudflare AI.
+
+```bash
+jack new my-chat -t ai-chat
+```
+
+**Includes**: Llama 3 (free), streaming UI, chat history
+
+**Use for**: Chatbots, AI assistants, LLM experiments
+
+### Option C: Farcaster Miniapp
+
+Build a Farcaster Frame mini-app with React and database.
+
+```bash
+jack new my-miniapp -t miniapp
+```
+
+**Includes**: React + Vite, D1 database, Neynar API, Tailwind CSS
+
+**Use for**: Farcaster frames, social apps, mini-games
+
+**Requires**: [Neynar API key](https://neynar.com) (free tier available)
+
+### Option D: Semantic Search
+
+Build a RAG app with AI embeddings and vector search.
+
+```bash
+jack new my-search -t semantic-search
+```
+
+**Includes**: BGE embeddings (free), Vectorize database, D1 storage, search UI
+
+**Use for**: Document search, knowledge bases, FAQ matching
+
+### Option E: Interactive Selection
+
+Not sure? Let jack help you choose:
+
+```bash
+jack new my-app
+```
+
+Jack will prompt you to select a template interactively.
+
+---
+
+## 3. First Deploy
+
+Your project is created and dependencies are installed. Now deploy it:
+
+```bash
+cd my-app
+jack ship
+```
+
+Jack will:
+1. Build your project
+2. Deploy to Cloudflare's edge network
+3. Copy the live URL to your clipboard
+
+Your app is now live at a URL like `my-app.username.workers.dev`.
+
+---
+
+## 4. Make Changes and Redeploy
+
+Edit your code, then ship again:
+
+```bash
+# Edit src/index.ts or src/App.tsx
+
+jack ship
+```
+
+Each deploy takes seconds. Your changes are live immediately.
+
+---
+
+## What's Next?
+
+### Add Services
+
+Need a database, storage, or AI?
+
+```bash
+# Add a D1 database
+jack services db
+
+# Add KV storage
+jack services kv
+
+# Add R2 file storage
+jack services r2
+```
+
+### Set Secrets
+
+Store API keys securely:
+
+```bash
+jack secrets
+```
+
+### Open Your Project
+
+Quick access to your deployed app:
+
+```bash
+# Open in browser
+jack open
+
+# Open in VS Code
+jack open --editor
+```
+
+### Explore Commands
+
+See all available commands:
+
+```bash
+jack --help
+```
+
+---
+
+## Template Reference
+
+| Template | Command | What You Get |
+|----------|---------|--------------|
+| [api](/templates/api) | `jack new my-api -t api` | Hono API with TypeScript |
+| [ai-chat](/templates/ai-chat) | `jack new my-chat -t ai-chat` | AI chatbot with streaming |
+| [miniapp](/templates/miniapp) | `jack new my-app -t miniapp` | Farcaster Frame mini-app |
+| [semantic-search](/templates/semantic-search) | `jack new my-search -t semantic-search` | RAG with vector search |
+| hello | `jack new my-app -t hello` | Minimal worker starter |
+| nextjs | `jack new my-app -t nextjs` | Next.js on Cloudflare |
+
+---
+
+## Fork Any Published Project
+
+See a project you like? Fork it:
+
+```bash
+jack new my-fork -t username/project-name
+```
+
+This creates your own copy that you fully control.
+
+---
+
+## Resources
+
+- [Templates Overview](/templates) — Detailed template documentation
+- [Commands Reference](/commands) — All CLI commands
+- [Using with AI Agents](/guides/ai-agents) — Develop with Claude, Cursor, etc.
+- [Troubleshooting](/guides/troubleshooting) — Common issues and fixes
