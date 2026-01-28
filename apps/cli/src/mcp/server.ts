@@ -71,4 +71,10 @@ export async function startMcpServer(options: McpServerOptions = {}) {
 	await server.connect(transport);
 
 	debug("MCP server connected and ready");
+
+	// Keep the server running indefinitely.
+	// This blocks the async function from returning, preventing the caller from
+	// falling through to any cleanup/exit code (like process.exit(0) in index.ts).
+	// The process will stay alive via stdin event listeners in the transport.
+	await new Promise(() => {});
 }
