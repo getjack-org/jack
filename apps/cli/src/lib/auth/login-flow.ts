@@ -3,6 +3,7 @@
  */
 import { text } from "@clack/prompts";
 import {
+	applyReferralCode,
 	checkUsernameAvailable,
 	getCurrentUserProfile,
 	registerUser,
@@ -112,6 +113,11 @@ export async function runLoginFlow(options?: LoginFlowOptions): Promise<LoginFlo
 				let isNewUser = false;
 				if (!options?.skipUsernamePrompt) {
 					isNewUser = await promptForUsername(tokens.user.email, tokens.user.first_name);
+				}
+
+				// Prompt for referral code for new users only (one-time, no retry)
+				if (isNewUser && process.stdout.isTTY) {
+					await promptForReferral();
 				}
 
 				console.error("");
@@ -293,4 +299,32 @@ function normalizeToUsername(input: string): string {
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 39);
+}
+
+/**
+ * Prompt new users for a referral code (one-time, no retry on failure).
+ */
+async function promptForReferral(): Promise<void> {
+	console.error("");
+	const referralInput = await text({
+		message: "Were you referred by someone? Enter their username (or press Enter to skip):",
+	});
+
+	if (isCancel(referralInput)) {
+		return;
+	}
+
+	const code = referralInput.trim();
+	if (!code) {
+		return;
+	}
+
+	try {
+		const result = await applyReferralCode(code);
+		if (result.applied) {
+			success("Referral applied! You'll both get a bonus when you upgrade.");
+		}
+	} catch {
+		// Silently continue - referral is not critical
+	}
 }
