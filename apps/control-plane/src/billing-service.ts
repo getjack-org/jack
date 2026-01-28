@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import type { Bindings, OrgBilling, PAID_STATUSES, PlanStatus, PlanTier } from "./types";
+import type { Bindings, OrgBilling, PlanStatus, PlanTier } from "./types";
 
 export class BillingService {
 	private stripe: Stripe;
@@ -129,6 +129,7 @@ export class BillingService {
 				current_period_start = ?,
 				current_period_end = ?,
 				cancel_at_period_end = ?,
+				payment_provider = 'stripe',
 				updated_at = CURRENT_TIMESTAMP
 			WHERE org_id = ?`,
 			)
@@ -180,8 +181,19 @@ export class BillingService {
 
 	// Check if org has paid tier (active, trialing, or past_due which has grace period)
 	isPaidTier(billing: OrgBilling): boolean {
+		if (billing.plan_tier === "free") return false;
+
+		// For Daimo payments, check if within period + 3-day grace
+		if (billing.payment_provider === "daimo") {
+			if (!billing.current_period_end) return false;
+			const periodEnd = new Date(billing.current_period_end);
+			const gracePeriodEnd = new Date(periodEnd.getTime() + 3 * 24 * 60 * 60 * 1000);
+			return new Date() < gracePeriodEnd;
+		}
+
+		// For Stripe, use status-based check
 		const paidStatuses: PlanStatus[] = ["active", "trialing", "past_due"];
-		return billing.plan_tier !== "free" && paidStatuses.includes(billing.plan_status);
+		return paidStatuses.includes(billing.plan_status);
 	}
 
 	// Check if org already has an active subscription

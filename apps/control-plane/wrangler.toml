@@ -62,3 +62,6 @@ dataset = "jack_usage"
 # - CLOUDFLARE_ZONE_ID
 # - STRIPE_SECRET_KEY      # Stripe API secret key (sk_live_xxx or sk_test_xxx)
 # - STRIPE_WEBHOOK_SECRET  # Stripe webhook signing secret (whsec_xxx)
+# - DAIMO_API_KEY          # Daimo API key (from Daimo team)
+# - DAIMO_WEBHOOK_SECRET   # Daimo webhook basic auth token
+# - DAIMO_RECEIVER_ADDRESS # Wallet address to receive USDC on Base
