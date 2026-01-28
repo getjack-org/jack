@@ -179,7 +179,8 @@ export function box(title: string, lines: string[]): void {
 	const gradient = "░".repeat(innerWidth);
 
 	// Truncate text if too long for box
-	const truncate = (text: string) => (text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text);
+	const truncate = (text: string) =>
+		text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text;
 
 	// Pad plain text first, then apply colors (ANSI codes break padEnd calculation)
 	const pad = (text: string) => `  ${truncate(text).padEnd(maxLen)}  `;
@@ -226,7 +227,8 @@ export function celebrate(title: string, lines: string[]): void {
 	const space = " ".repeat(innerWidth);
 
 	// Truncate text if too long for box
-	const truncate = (text: string) => (text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text);
+	const truncate = (text: string) =>
+		text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text;
 
 	// Center text based on visual length, then apply colors
 	const center = (text: string, applyBold = false) => {

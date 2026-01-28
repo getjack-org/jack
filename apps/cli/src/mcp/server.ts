@@ -49,6 +49,20 @@ export async function startMcpServer(options: McpServerOptions = {}) {
 
 	debug("Starting MCP server on stdio transport");
 
+	// Process-level error handlers to prevent silent crashes
+	process.on("uncaughtException", (error) => {
+		console.error(`[jack-mcp] Uncaught exception: ${error.message}`);
+		debug("Uncaught exception", { error: error.stack });
+		process.exit(1);
+	});
+
+	process.on("unhandledRejection", (reason) => {
+		const message = reason instanceof Error ? reason.message : String(reason);
+		console.error(`[jack-mcp] Unhandled rejection: ${message}`);
+		debug("Unhandled rejection", { reason });
+		process.exit(1);
+	});
+
 	// Always log startup to stderr so user knows it's running
 	console.error(
 		`[jack-mcp] Server started (v${pkg.version})${options.debug ? " [debug mode]" : ""}`,
