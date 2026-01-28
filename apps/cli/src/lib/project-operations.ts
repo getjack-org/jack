@@ -47,7 +47,7 @@ import { debug, isDebug, printTimingSummary, timerEnd, timerStart } from "./debu
 import { ensureWranglerInstalled, validateModeAvailability } from "./deploy-mode.ts";
 import { detectSecrets, generateEnvFile, generateSecretsJson } from "./env-parser.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
-import { type HookOutput, runHook } from "./hooks.ts";
+import { type HookOutput, promptSelect, runHook } from "./hooks.ts";
 import { loadTemplateKeywords, matchTemplateByIntent } from "./intent.ts";
 import {
 	type ManagedCreateResult,
@@ -1605,12 +1605,35 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 			// User is logged into Jack Cloud - create managed project
 			const orphanedProjectName = await getProjectNameFromDir(projectPath);
 
-			reporter.info(`Linking "${orphanedProjectName}" to jack cloud...`);
-
-			// Get username for URL construction
+			// Get username for confirmation prompt and URL construction
 			const { getCurrentUserProfile } = await import("./control-plane.ts");
 			const profile = await getCurrentUserProfile();
 			const ownerUsername = profile?.username ?? undefined;
+
+			// Confirm before creating new project
+			if (interactive) {
+				reporter.info("This project isn't linked to jack cloud.");
+				const choice = await promptSelect(
+					["Yes", "No"],
+					`Create new project "${orphanedProjectName}" under @${ownerUsername ?? "unknown"}?`,
+				);
+				if (choice !== 0) {
+					reporter.info("Cancelled. To link to an existing project, use: jack link <project-id>");
+					return {
+						projectName: orphanedProjectName,
+						workerUrl: null,
+						deployMode: "managed" as DeployMode,
+					};
+				}
+			} else {
+				throw new JackError(
+					JackErrorCode.PROJECT_NOT_FOUND,
+					"Project not linked to jack cloud (non-interactive mode)",
+					"Run interactively or use: jack link <project-id>",
+				);
+			}
+
+			reporter.info(`Linking "${orphanedProjectName}" to jack cloud...`);
 
 			// Create managed project on jack cloud
 			const remoteResult = await createManagedProjectRemote(orphanedProjectName, reporter, {
@@ -1714,6 +1737,17 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 				"Project not linked to jack cloud",
 				"Create a new managed project or use --byo",
 			);
+		}
+
+		// Show current identity for visibility (managed mode only, not dry run)
+		if (!dryRun) {
+			const { getCurrentUserProfile } = await import("./control-plane.ts");
+			const profile = await getCurrentUserProfile();
+			if (profile?.username) {
+				reporter.info(`Deploying as @${profile.username}...`);
+			} else if (profile?.email) {
+				reporter.info(`Deploying as ${profile.email}...`);
+			}
 		}
 
 		// Dry run: build for validation then stop before actual deployment
