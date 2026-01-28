@@ -86,7 +86,9 @@ export function requireTTY(): void {
  * Interactive project picker using @clack/core primitives
  * @param options.cloudOnly - If true, only shows cloud-only projects (for linking)
  */
-export async function pickProject(options?: PickProjectOptions): Promise<PickerResult | PickerCancelResult> {
+export async function pickProject(
+	options?: PickProjectOptions,
+): Promise<PickerResult | PickerCancelResult> {
 	// Fetch all projects
 	let allProjects: ProjectListItem[];
 	try {

@@ -166,3 +166,9 @@ This simulates a user who has Jack Cloud auth (`~/.config/jack/auth.json`) but n
 ## Docs
 
 - Avoid inline comments in command/code blocks; keep snippets copy/pasteable and put explanations in surrounding text.
+
+## Planning Meta-Learning
+
+**Before implementing complex integrations with external systems, validate assumptions about their semantics.**
+
+We assumed Cloudflare's `active` status meant "domain is working" when it actually only means "SSL cert is ready". Always verify what external API statuses actually mean by checking official docs (use Exa MCP) before designing state machines around them. A design that trusts external signals without verification will break when those signals don't mean what you assumed.
