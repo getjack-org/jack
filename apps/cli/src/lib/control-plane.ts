@@ -666,6 +666,35 @@ export async function setUsername(username: string): Promise<SetUsernameResponse
 	return response.json() as Promise<SetUsernameResponse>;
 }
 
+export interface ApplyReferralResult {
+	applied: boolean;
+	reason?: "invalid" | "self_referral" | "already_referred";
+}
+
+/**
+ * Apply a referral code (username) for the current user.
+ * Returns whether the code was applied successfully.
+ */
+export async function applyReferralCode(code: string): Promise<ApplyReferralResult> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/referral/apply`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ code }),
+	});
+
+	if (response.status === 429) {
+		return { applied: false, reason: "invalid" };
+	}
+
+	if (!response.ok) {
+		return { applied: false, reason: "invalid" };
+	}
+
+	return response.json() as Promise<ApplyReferralResult>;
+}
+
 /**
  * Get the current user's profile including username.
  */
