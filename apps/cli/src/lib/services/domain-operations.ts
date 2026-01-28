@@ -15,14 +15,18 @@ import { JackError, JackErrorCode } from "../errors.ts";
 
 export type DomainStatus =
 	| "claimed"
+	| "unassigned"
 	| "pending"
+	| "pending_dns"
 	| "pending_owner"
 	| "pending_ssl"
 	| "active"
 	| "blocked"
 	| "moved"
 	| "failed"
-	| "deleting";
+	| "deleting"
+	| "expired"
+	| "deleted";
 
 export interface DomainVerification {
 	type: "cname";
@@ -36,6 +40,22 @@ export interface DomainOwnershipVerification {
 	value: string;
 }
 
+export interface DomainDns {
+	verified: boolean;
+	checked_at: string | null;
+	current_target: string | null;
+	expected_target: string | null;
+	error: string | null;
+}
+
+export interface DomainNextStep {
+	action: string;
+	record_type?: string;
+	record_name?: string;
+	record_value?: string;
+	message?: string;
+}
+
 export interface DomainInfo {
 	id: string;
 	hostname: string;
@@ -45,6 +65,8 @@ export interface DomainInfo {
 	project_slug: string | null;
 	verification?: DomainVerification;
 	ownership_verification?: DomainOwnershipVerification;
+	dns?: DomainDns;
+	next_step?: DomainNextStep;
 	created_at: string;
 }
 
@@ -96,16 +118,20 @@ interface ListDomainsApiResponse {
 }
 
 interface ConnectDomainApiResponse {
-	id: string;
-	hostname: string;
-	status: string;
+	domain: {
+		id: string;
+		hostname: string;
+		status: string;
+	};
 }
 
 interface AssignDomainApiResponse {
-	id: string;
-	hostname: string;
-	status: string;
-	ssl_status: string | null;
+	domain: {
+		id: string;
+		hostname: string;
+		status: string;
+		ssl_status: string | null;
+	};
 	verification?: DomainVerification;
 	ownership_verification?: DomainOwnershipVerification;
 }
@@ -215,9 +241,9 @@ export async function connectDomain(hostname: string): Promise<ConnectDomainResu
 
 	const data = (await response.json()) as ConnectDomainApiResponse;
 	return {
-		id: data.id,
-		hostname: data.hostname,
-		status: data.status as DomainStatus,
+		id: data.domain.id,
+		hostname: data.domain.hostname,
+		status: data.domain.status as DomainStatus,
 	};
 }
 
@@ -282,10 +308,10 @@ export async function assignDomain(
 
 	const data = (await response.json()) as AssignDomainApiResponse;
 	return {
-		id: data.id,
-		hostname: data.hostname,
-		status: data.status as DomainStatus,
-		ssl_status: data.ssl_status,
+		id: data.domain.id,
+		hostname: data.domain.hostname,
+		status: data.domain.status as DomainStatus,
+		ssl_status: data.domain.ssl_status,
 		project_id: project.id,
 		project_slug: projectSlug,
 		verification: data.verification,
@@ -334,10 +360,13 @@ export async function unassignDomain(hostname: string): Promise<UnassignDomainRe
 		);
 	}
 
+	const data = (await response.json()) as {
+		domain: { id: string; hostname: string; status: string };
+	};
 	return {
-		id: domain.id,
-		hostname: domain.hostname,
-		status: "claimed" as DomainStatus,
+		id: data.domain.id,
+		hostname: data.domain.hostname,
+		status: data.domain.status as DomainStatus,
 	};
 }
 
@@ -376,4 +405,46 @@ export async function disconnectDomain(hostname: string): Promise<DisconnectDoma
 		success: true,
 		hostname: domain.hostname,
 	};
+}
+
+/**
+ * Verify DNS configuration for a domain.
+ *
+ * @throws JackError with RESOURCE_NOT_FOUND if domain not found
+ */
+export interface VerifyDomainResult {
+	domain: DomainInfo;
+	dns_check?: {
+		verified: boolean;
+		target: string | null;
+		error: string | null;
+	};
+}
+
+export async function verifyDomain(hostname: string): Promise<VerifyDomainResult> {
+	const domain = await getDomainByHostname(hostname);
+	if (!domain) {
+		throw new JackError(
+			JackErrorCode.PROJECT_NOT_FOUND,
+			`Domain not found: ${hostname}`,
+			"Run 'jack domain' to see all domains",
+			{ exitCode: 1 },
+		);
+	}
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/domains/${domain.id}/verify`, {
+		method: "POST",
+	});
+
+	if (!response.ok) {
+		const err = (await response
+			.json()
+			.catch(() => ({ message: "Unknown error" }))) as ApiErrorResponse;
+		throw new JackError(
+			JackErrorCode.INTERNAL_ERROR,
+			err.message || `Failed to verify domain: ${response.status}`,
+		);
+	}
+
+	return (await response.json()) as VerifyDomainResult;
 }

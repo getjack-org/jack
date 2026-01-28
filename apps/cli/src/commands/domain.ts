@@ -16,15 +16,14 @@ import { isCancel, promptSelect } from "../lib/hooks.ts";
 import { colors, error, info, output, success, warn } from "../lib/output.ts";
 import {
 	type DomainInfo,
-	type DomainOwnershipVerification,
 	type DomainStatus,
-	type DomainVerification,
 	assignDomain as assignDomainService,
 	connectDomain as connectDomainService,
 	disconnectDomain as disconnectDomainService,
 	getDomainByHostname,
 	listDomains as listDomainsService,
 	unassignDomain as unassignDomainService,
+	verifyDomain as verifyDomainService,
 } from "../lib/services/domain-operations.ts";
 
 export default async function domain(subcommand?: string, args: string[] = []): Promise<void> {
@@ -47,12 +46,14 @@ export default async function domain(subcommand?: string, args: string[] = []): 
 			return await unassignDomainCommand(args);
 		case "disconnect":
 			return await disconnectDomainCommand(args);
+		case "verify":
+			return await verifyDomainCommand(args);
 		case "list":
 		case "ls":
 			return await listDomainsCommand();
 		default:
 			error(`Unknown subcommand: ${subcommand}`);
-			info("Available: connect, assign, unassign, disconnect, list, help");
+			info("Available: connect, assign, unassign, disconnect, verify, list, help");
 			process.exit(1);
 	}
 }
@@ -67,16 +68,19 @@ function showHelp(): void {
 	console.error("  jack domain assign <hostname> <project>  Provision domain to project");
 	console.error("  jack domain unassign <hostname>      Remove from project, keep slot");
 	console.error("  jack domain disconnect <hostname>    Remove completely, free slot");
+	console.error("  jack domain verify <hostname>        Check DNS configuration");
 	console.error("");
 	console.error("Workflow:");
 	console.error("  1. connect    - Reserve hostname (uses a slot)");
 	console.error("  2. assign     - Point domain to a project (configures DNS)");
-	console.error("  3. unassign   - Remove from project but keep slot reserved");
-	console.error("  4. disconnect - Full removal, slot freed");
+	console.error("  3. verify     - Check if DNS is configured correctly");
+	console.error("  4. unassign   - Remove from project but keep slot reserved");
+	console.error("  5. disconnect - Full removal, slot freed");
 	console.error("");
 	console.error("Examples:");
 	console.error("  jack domain connect api.mycompany.com");
 	console.error("  jack domain assign api.mycompany.com my-api");
+	console.error("  jack domain verify api.mycompany.com");
 	console.error("  jack domain unassign api.mycompany.com");
 	console.error("  jack domain disconnect api.mycompany.com");
 	console.error("");
@@ -91,15 +95,20 @@ function getStatusIcon(status: DomainStatus): string {
 			return `${colors.green}✓${colors.reset}`;
 		case "claimed":
 			return `${colors.dim}○${colors.reset}`;
+		case "unassigned":
+			return `${colors.cyan}○${colors.reset}`;
 		case "pending":
+		case "pending_dns":
 		case "pending_owner":
 		case "pending_ssl":
 			return `${colors.yellow}⏳${colors.reset}`;
 		case "failed":
 		case "blocked":
+		case "expired":
 			return `${colors.red}✗${colors.reset}`;
 		case "moved":
 		case "deleting":
+		case "deleted":
 			return `${colors.cyan}○${colors.reset}`;
 		default:
 			return "○";
@@ -114,9 +123,13 @@ function getStatusLabel(status: DomainStatus): string {
 		case "active":
 			return "active";
 		case "claimed":
-			return "unassigned";
+			return "reserved";
+		case "unassigned":
+			return "ready";
 		case "pending":
 			return "pending DNS";
+		case "pending_dns":
+			return "configure DNS";
 		case "pending_owner":
 			return "pending ownership";
 		case "pending_ssl":
@@ -129,6 +142,10 @@ function getStatusLabel(status: DomainStatus): string {
 			return "moved";
 		case "deleting":
 			return "deleting";
+		case "expired":
+			return "expired";
+		case "deleted":
+			return "deleted";
 		default:
 			return status;
 	}
@@ -137,11 +154,44 @@ function getStatusLabel(status: DomainStatus): string {
 /**
  * Show DNS configuration instructions for pending domains
  */
-function showDnsInstructions(
-	hostname: string,
-	verification?: DomainVerification,
-	ownershipVerification?: DomainOwnershipVerification,
-): void {
+function showDnsInstructions(domain: DomainInfo): void {
+	const { hostname, verification, ownership_verification, dns, next_step } = domain;
+
+	// Show DNS error if available (for pending_dns status)
+	if (dns?.error) {
+		console.error(`  ${colors.yellow}DNS Error: ${dns.error}${colors.reset}`);
+		console.error("");
+	}
+
+	// If we have next_step, use that for instructions
+	if (next_step?.record_type && next_step?.record_name && next_step?.record_value) {
+		// Extract the base domain (e.g., "hellno.wtf" from "app.hellno.wtf")
+		const parts = hostname.split(".");
+		const baseDomain = parts.slice(-2).join(".");
+
+		console.error(
+			`  ${colors.cyan}Add this record to your DNS provider for ${colors.bold}${baseDomain}${colors.reset}${colors.cyan}:${colors.reset}`,
+		);
+		console.error("");
+		console.error(`  ${colors.bold}${next_step.record_type}${colors.reset}`);
+		console.error(
+			`     ${colors.cyan}Name:${colors.reset}  ${colors.green}${next_step.record_name}${colors.reset}`,
+		);
+		console.error(
+			`     ${colors.cyan}Value:${colors.reset} ${colors.green}${next_step.record_value}${colors.reset}`,
+		);
+		if (next_step.message) {
+			console.error("");
+			console.error(`  ${colors.dim}${next_step.message}${colors.reset}`);
+		}
+		return;
+	}
+
+	// Fall back to verification/ownership_verification
+	if (!verification && !ownership_verification) {
+		return;
+	}
+
 	// Extract the base domain (e.g., "hellno.wtf" from "app.hellno.wtf")
 	const parts = hostname.split(".");
 	const baseDomain = parts.slice(-2).join(".");
@@ -167,10 +217,10 @@ function showDnsInstructions(
 		step++;
 	}
 
-	if (ownershipVerification) {
+	if (ownership_verification) {
 		if (step > 1) console.error("");
 		// Extract just the subdomain part for the TXT name
-		const txtSubdomain = ownershipVerification.name.replace(`.${baseDomain}`, "");
+		const txtSubdomain = ownership_verification.name.replace(`.${baseDomain}`, "");
 		console.error(
 			`  ${colors.bold}${step}. TXT${colors.reset} ${colors.cyan}(proves ownership)${colors.reset}`,
 		);
@@ -178,7 +228,7 @@ function showDnsInstructions(
 			`     ${colors.cyan}Name:${colors.reset}  ${colors.green}${txtSubdomain}${colors.reset}`,
 		);
 		console.error(
-			`     ${colors.cyan}Value:${colors.reset} ${colors.green}${ownershipVerification.value}${colors.reset}`,
+			`     ${colors.cyan}Value:${colors.reset} ${colors.green}${ownership_verification.value}${colors.reset}`,
 		);
 	}
 }
@@ -225,6 +275,11 @@ async function listDomainsCommand(): Promise<void> {
 		const pendingDomains: DomainInfo[] = [];
 
 		for (const d of data.domains) {
+			// Skip deleted domains
+			if (d.status === "deleted") {
+				continue;
+			}
+
 			const icon = getStatusIcon(d.status);
 			const label = getStatusLabel(d.status);
 
@@ -239,8 +294,25 @@ async function listDomainsCommand(): Promise<void> {
 				console.error(
 					`  ${icon} ${colors.dim}${d.hostname}${colors.reset} ${colors.cyan}(${label})${colors.reset}`,
 				);
+			} else if (d.status === "expired") {
+				// Expired - suggest delete to free hostname
+				console.error(
+					`  ${icon} ${colors.dim}${d.hostname}${colors.reset} ${colors.red}(${label})${colors.reset} ${colors.dim}- delete to free hostname${colors.reset}`,
+				);
+			} else if (d.status === "moved") {
+				// Moved - suggest delete & re-add to restore
+				console.error(
+					`  ${icon} ${colors.dim}${d.hostname}${colors.reset} ${colors.cyan}(${label})${colors.reset} ${colors.dim}- delete & re-add to restore${colors.reset}`,
+				);
+			} else if (d.status === "pending_dns") {
+				// Pending DNS - show with instructions
+				const projectInfo = d.project_slug ? ` -> ${d.project_slug}` : "";
+				console.error(
+					`  ${icon} ${colors.cyan}${d.hostname}${colors.reset}${projectInfo} ${colors.yellow}(${label})${colors.reset}`,
+				);
+				pendingDomains.push(d);
 			} else {
-				// Pending states
+				// Other pending states
 				const projectInfo = d.project_slug ? ` -> ${d.project_slug}` : "";
 				console.error(
 					`  ${icon} ${colors.cyan}${d.hostname}${colors.reset}${projectInfo} ${colors.yellow}(${label})${colors.reset}`,
@@ -255,7 +327,7 @@ async function listDomainsCommand(): Promise<void> {
 		if (pendingDomains.length > 0) {
 			for (const d of pendingDomains) {
 				console.error("");
-				showDnsInstructions(d.hostname, d.verification, d.ownership_verification);
+				showDnsInstructions(d);
 			}
 			const nextCheck = getSecondsUntilNextCheck();
 			console.error("");
@@ -336,7 +408,18 @@ async function assignDomainCommand(args: string[]): Promise<void> {
 		} else if (data.verification || data.ownership_verification) {
 			info(`Domain assigned. Configure DNS to activate:`);
 			console.error("");
-			showDnsInstructions(hostname, data.verification, data.ownership_verification);
+			// Construct a DomainInfo-like object for showDnsInstructions
+			showDnsInstructions({
+				id: data.id,
+				hostname: data.hostname,
+				status: data.status,
+				ssl_status: data.ssl_status,
+				project_id: data.project_id,
+				project_slug: data.project_slug,
+				verification: data.verification,
+				ownership_verification: data.ownership_verification,
+				created_at: "",
+			});
 			console.error("");
 			const nextCheck = getSecondsUntilNextCheck();
 			console.error(
@@ -491,6 +574,54 @@ async function disconnectDomainCommand(args: string[]): Promise<void> {
 		console.error("");
 		success(`Domain disconnected: ${hostname}`);
 		info("Slot freed.");
+		console.error("");
+	} catch (err) {
+		output.stop();
+		if (err instanceof JackError) {
+			error(err.message);
+			if (err.suggestion) {
+				info(err.suggestion);
+			}
+			process.exit(1);
+		}
+		throw err;
+	}
+}
+
+/**
+ * Verify DNS configuration for a domain
+ */
+async function verifyDomainCommand(args: string[]): Promise<void> {
+	const hostname = args[0];
+
+	if (!hostname) {
+		error("Missing hostname");
+		info("Usage: jack domain verify <hostname>");
+		process.exit(1);
+	}
+
+	output.start("Checking DNS...");
+
+	try {
+		const result = await verifyDomainService(hostname);
+		output.stop();
+
+		console.error("");
+
+		if (result.domain.status === "active") {
+			success(`Domain active: https://${hostname}`);
+		} else if (result.dns_check?.verified) {
+			success("DNS verified! SSL certificate being issued...");
+			info(`Status: ${getStatusLabel(result.domain.status)}`);
+		} else {
+			warn("DNS not yet configured");
+			if (result.dns_check?.error) {
+				console.error(`  ${colors.yellow}${result.dns_check.error}${colors.reset}`);
+			}
+			console.error("");
+			showDnsInstructions(result.domain);
+		}
+
 		console.error("");
 	} catch (err) {
 		output.stop();

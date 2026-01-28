@@ -19,6 +19,10 @@ export type Bindings = {
 	// Stripe billing (secrets set via wrangler secret put)
 	STRIPE_SECRET_KEY: string;
 	STRIPE_WEBHOOK_SECRET: string;
+	// Daimo billing (secrets set via wrangler secret put)
+	DAIMO_API_KEY: string;
+	DAIMO_WEBHOOK_SECRET: string;
+	DAIMO_RECEIVER_ADDRESS: string;
 };
 
 // Project status enum
@@ -114,7 +118,9 @@ export interface LogSession {
 
 // Custom domain status enum (maps to Cloudflare states plus Jack states)
 export type CustomDomainStatus =
+	| "pending_dns" // Waiting for user to set up CNAME record
 	| "claimed" // Domain slot claimed by org, not yet assigned to a project
+	| "unassigned" // Was active, unassigned from project but CF hostname kept for quick reassign
 	| "pending" // Request submitted, awaiting Cloudflare API response
 	| "pending_owner" // Cloudflare created hostname, awaiting DNS ownership verification
 	| "pending_ssl" // Ownership verified, awaiting SSL certificate issuance
@@ -122,7 +128,9 @@ export type CustomDomainStatus =
 	| "blocked" // Cloudflare blocked the hostname (high-risk or abuse)
 	| "moved" // Hostname no longer points to fallback origin
 	| "failed" // Verification timed out or API/SSL failure
-	| "deleting"; // Removal in progress
+	| "deleting" // Removal in progress
+	| "expired" // pending_dns timed out after 7 days
+	| "deleted"; // Soft deleted
 
 // SSL status from Cloudflare
 export type CustomDomainSslStatus =
@@ -144,6 +152,12 @@ export interface CustomDomain {
 	ownership_verification_name: string | null;
 	ownership_verification_value: string | null;
 	validation_errors: string | null; // JSON array
+	// DNS verification fields
+	dns_verified: number; // 0 or 1
+	dns_verified_at: string | null;
+	dns_last_checked_at: string | null;
+	dns_target: string | null;
+	dns_error: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -161,6 +175,24 @@ export interface CustomDomainOwnershipVerification {
 	value: string;
 }
 
+// DNS verification status in API response
+export interface CustomDomainDnsInfo {
+	verified: boolean;
+	checked_at: string | null;
+	current_target: string | null;
+	expected_target: string;
+	error: string | null;
+}
+
+// Next step guidance for domain setup
+export interface CustomDomainNextStep {
+	action: "add_cname" | "add_txt" | "wait" | "delete" | "none";
+	record_type?: "CNAME" | "TXT";
+	record_name?: string;
+	record_value?: string;
+	message: string;
+}
+
 export interface CustomDomainResponse {
 	id: string;
 	hostname: string;
@@ -169,6 +201,8 @@ export interface CustomDomainResponse {
 	verification?: CustomDomainVerification;
 	ownership_verification?: CustomDomainOwnershipVerification;
 	validation_errors?: string[];
+	dns?: CustomDomainDnsInfo;
+	next_step?: CustomDomainNextStep;
 	created_at: string;
 	updated_at?: string;
 }
@@ -180,6 +214,9 @@ export interface AddCustomDomainRequest {
 
 // Plan tiers
 export type PlanTier = "free" | "pro" | "team";
+
+// Payment providers
+export type PaymentProvider = "stripe" | "daimo";
 
 // Plan statuses (Stripe subscription statuses)
 export type PlanStatus =
@@ -205,16 +242,27 @@ export interface OrgBilling {
 	stripe_price_id: string | null;
 	stripe_product_id: string | null;
 	stripe_status: string | null;
+	daimo_payment_id: string | null;
+	payment_provider: PaymentProvider | null;
 	created_at: string;
 	updated_at: string;
 }
 
-// Tier limits for feature gating
-export const TIER_LIMITS: Record<PlanTier, { custom_domains: number; projects: number }> = {
-	free: { custom_domains: 0, projects: Number.POSITIVE_INFINITY },
-	pro: { custom_domains: 3, projects: Number.POSITIVE_INFINITY },
-	team: { custom_domains: 10, projects: Number.POSITIVE_INFINITY },
-};
-
 // Statuses that grant paid access (including grace period for past_due)
 export const PAID_STATUSES: PlanStatus[] = ["active", "trialing", "past_due"];
+
+// Credit types
+export type CreditType = "referral_given" | "referral_received" | "manual";
+export type CreditStatus = "pending" | "active";
+
+export interface Credit {
+	id: string;
+	org_id: string;
+	type: CreditType;
+	status: CreditStatus;
+	amount: number;
+	code: string | null;
+	source_org_id: string | null;
+	note: string | null;
+	created_at: string;
+}

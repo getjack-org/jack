@@ -15,13 +15,18 @@ import {
 	type UsageMetricsAE,
 	getMimeType,
 } from "./cloudflare-api";
+import { CreditsService } from "./credits-service";
+import { DaimoBillingService } from "./daimo-billing-service";
 import { DeploymentService, validateManifest } from "./deployment-service";
+import { REFERRAL_CAP, TIER_LIMITS, computeLimits } from "./entitlements-config";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
 import { validateReadOnly } from "./sql-utils";
 import type {
 	Bindings,
 	CustomDomain,
+	CustomDomainDnsInfo,
+	CustomDomainNextStep,
 	CustomDomainResponse,
 	CustomDomainStatus,
 	OrgBilling,
@@ -31,7 +36,7 @@ import type {
 	ProjectStatus,
 	Resource,
 } from "./types";
-import { PAID_STATUSES, TIER_LIMITS } from "./types";
+import { PAID_STATUSES } from "./types";
 export { LogStreamDO } from "./log-stream-do";
 
 // =====================================================
@@ -48,6 +53,25 @@ interface GatingResult {
 }
 
 /**
+ * Check if a billing record grants paid access.
+ * Handles both Stripe (status-based) and Daimo (period-based with 3-day grace).
+ */
+function hasPaidAccess(billing: OrgBilling | null): boolean {
+	if (!billing || billing.plan_tier === "free") return false;
+
+	// For Daimo payments, check if within period + 3-day grace
+	if (billing.payment_provider === "daimo") {
+		if (!billing.current_period_end) return false;
+		const periodEnd = new Date(billing.current_period_end);
+		const gracePeriodEnd = new Date(periodEnd.getTime() + 3 * 24 * 60 * 60 * 1000);
+		return new Date() < gracePeriodEnd;
+	}
+
+	// For Stripe, use status-based check
+	return PAID_STATUSES.includes(billing.plan_status as PlanStatus);
+}
+
+/**
  * Check if an organization can create more custom domains based on their plan tier.
  * Returns { allowed: true } if within limits, or { allowed: false, error: {...} } if blocked.
  */
@@ -57,28 +81,34 @@ async function checkCustomDomainGate(
 	currentCount: number,
 ): Promise<GatingResult> {
 	const billing = await db
-		.prepare("SELECT plan_tier, plan_status FROM org_billing WHERE org_id = ?")
+		.prepare(
+			"SELECT plan_tier, plan_status, payment_provider, current_period_end FROM org_billing WHERE org_id = ?",
+		)
 		.bind(orgId)
 		.first<OrgBilling>();
 
 	const tier = (billing?.plan_tier || "free") as PlanTier;
-	const limit = TIER_LIMITS[tier].custom_domains;
 
-	// Check if status grants access (active, trialing, past_due)
-	// Free tier users always have access (to their 0 domain limit)
-	// Paid users need an active-ish subscription status
-	const hasAccess =
-		!billing ||
-		billing.plan_tier === "free" ||
-		PAID_STATUSES.includes(billing.plan_status as PlanStatus);
+	// Sum ALL active credits (referrals + manual)
+	const bonusResult = await db
+		.prepare(
+			"SELECT COALESCE(SUM(amount), 0) as total FROM credits WHERE org_id = ? AND status = 'active'",
+		)
+		.bind(orgId)
+		.first<{ total: number }>();
 
-	if (!hasAccess || currentCount >= limit) {
+	const limits = computeLimits(tier, bonusResult?.total ?? 0);
+
+	// Check if status grants access
+	const hasAccess = !billing || billing.plan_tier === "free" || hasPaidAccess(billing);
+
+	if (!hasAccess || currentCount >= limits.custom_domains) {
 		return {
 			allowed: false,
 			error: {
 				code: "limit_exceeded",
-				message: `Custom domain limit reached (${limit} for ${tier} plan). Upgrade to add more.`,
-				upgrade_url: "https://jack.dev/pricing",
+				message: `Custom domain limit reached (${limits.custom_domains}). Refer friends to earn more.`,
+				upgrade_url: "https://dash.getjack.org/pricing",
 			},
 		};
 	}
@@ -97,12 +127,14 @@ const ANALYTICS_CACHE_TTL_SECONDS = 600;
 // Hostname validation for custom domains
 const HOSTNAME_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const RESERVED_TLDS = ["localhost", "local", "test", "invalid", "example"];
-const BLOCKED_HOSTNAMES = ["runjack.xyz", "getjack.org", "cloudflare.com"];
+const BLOCKED_HOSTNAMES = ["runjack.xyz", "cloudflare.com"]; // TODO: re-add "getjack.org" after testing
 const LOG_TAIL_WORKER_SERVICE = "log-worker";
 
 // Statuses that consume a domain slot (any domain in verification/provisioning pipeline counts)
 const SLOT_CONSUMING_STATUSES: CustomDomainStatus[] = [
+	"pending_dns",
 	"claimed",
+	"unassigned",
 	"pending",
 	"pending_owner",
 	"pending_ssl",
@@ -271,6 +303,111 @@ function mapCloudflareToJackStatus(
 	}
 }
 
+// =====================================================
+// DNS Verification
+// =====================================================
+
+const EXPECTED_DNS_TARGET = "runjack.xyz";
+
+function normalizeDnsName(name: string): string {
+	return name.toLowerCase().replace(/\.$/, "");
+}
+
+interface DnsVerificationResult {
+	verified: boolean;
+	target: string | null;
+	error: string | null;
+}
+
+async function verifyDns(hostname: string): Promise<DnsVerificationResult> {
+	try {
+		const response = await fetch(
+			`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=CNAME`,
+			{ headers: { Accept: "application/dns-json" } },
+		);
+		if (!response.ok) {
+			return { verified: false, target: null, error: `DNS lookup failed: ${response.status}` };
+		}
+		const data = (await response.json()) as { Status: number; Answer?: Array<{ data: string }> };
+		const firstAnswer = data.Answer?.[0];
+		if (firstAnswer) {
+			const rawTarget = firstAnswer.data;
+			const target = normalizeDnsName(rawTarget);
+			const verified = target === normalizeDnsName(EXPECTED_DNS_TARGET);
+			return {
+				verified,
+				target,
+				error: verified ? null : `Points to ${target}, expected ${EXPECTED_DNS_TARGET}`,
+			};
+		}
+		if (data.Status === 3) {
+			return {
+				verified: false,
+				target: null,
+				error: "Domain not found (NXDOMAIN) - check hostname spelling",
+			};
+		}
+		return {
+			verified: false,
+			target: null,
+			error: `No CNAME record found - add CNAME pointing to ${EXPECTED_DNS_TARGET}`,
+		};
+	} catch (err) {
+		return {
+			verified: false,
+			target: null,
+			error: err instanceof Error ? err.message : "DNS lookup failed",
+		};
+	}
+}
+
+// Get next step guidance for a domain based on its current status
+function getNextStep(domain: CustomDomain): CustomDomainNextStep | undefined {
+	switch (domain.status) {
+		case "claimed":
+			return {
+				action: "none",
+				message: "Assign to a project: jack domain assign <hostname> <project>",
+			};
+		case "unassigned":
+			return {
+				action: "none",
+				message: "Ready to assign: jack domain assign <hostname> <project>",
+			};
+		case "pending_dns":
+			return {
+				action: "add_cname",
+				record_type: "CNAME",
+				record_name: domain.hostname.split(".").slice(0, -2).join(".") || "@",
+				record_value: EXPECTED_DNS_TARGET,
+				message: `Add a CNAME record pointing to ${EXPECTED_DNS_TARGET}`,
+			};
+		case "pending_owner":
+			return domain.ownership_verification_name
+				? {
+						action: "add_txt",
+						record_type: "TXT",
+						record_name: domain.ownership_verification_name,
+						record_value: domain.ownership_verification_value!,
+						message: "Add a TXT record to verify domain ownership",
+					}
+				: { action: "wait", message: "Verifying domain ownership..." };
+		case "pending_ssl":
+			return { action: "wait", message: "Issuing SSL certificate..." };
+		case "active":
+			return { action: "none", message: "Domain is working!" };
+		case "moved":
+			return { action: "delete", message: "DNS changed. Delete and re-add domain to restore." };
+		case "expired":
+			return { action: "delete", message: "Domain expired after 7 days. Delete to free hostname." };
+		case "blocked":
+		case "failed":
+			return { action: "delete", message: "Delete and re-add domain to retry." };
+		default:
+			return undefined;
+	}
+}
+
 // Format domain for API response
 function formatDomainResponse(domain: CustomDomain): CustomDomainResponse {
 	const response: CustomDomainResponse = {
@@ -285,8 +422,8 @@ function formatDomainResponse(domain: CustomDomain): CustomDomainResponse {
 	if (domain.status === "pending_owner" || domain.status === "pending_ssl") {
 		response.verification = {
 			type: "cname",
-			target: "runjack.xyz",
-			instructions: `Add CNAME record: ${domain.hostname} -> runjack.xyz`,
+			target: EXPECTED_DNS_TARGET,
+			instructions: `Add CNAME record: ${domain.hostname} -> ${EXPECTED_DNS_TARGET}`,
 		};
 
 		// Include ownership verification (TXT record) if present
@@ -301,6 +438,22 @@ function formatDomainResponse(domain: CustomDomain): CustomDomainResponse {
 				value: domain.ownership_verification_value,
 			};
 		}
+	}
+
+	// Include DNS verification info
+	const dnsInfo: CustomDomainDnsInfo = {
+		verified: domain.dns_verified === 1,
+		checked_at: domain.dns_last_checked_at ? d1DatetimeToIso(domain.dns_last_checked_at) : null,
+		current_target: domain.dns_target,
+		expected_target: EXPECTED_DNS_TARGET,
+		error: domain.dns_error,
+	};
+	response.dns = dnsInfo;
+
+	// Include next step guidance
+	const nextStep = getNextStep(domain);
+	if (nextStep) {
+		response.next_step = nextStep;
 	}
 
 	// Include validation errors if present
@@ -558,6 +711,15 @@ api.put("/me/username", async (c) => {
 		await c.env.DB.prepare(
 			`UPDATE projects SET owner_username = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE org_id = ? AND owner_username IS NULL AND status != 'deleted'`,
+		)
+			.bind(body.username, auth.orgId)
+			.run();
+
+		// Update org name to username if it's a personal org with default name
+		// Only update if: 1) not a WorkOS team org, 2) has default "'s Workspace" suffix
+		await c.env.DB.prepare(
+			`UPDATE orgs SET name = ?, updated_at = CURRENT_TIMESTAMP
+			 WHERE id = ? AND workos_org_id IS NULL AND name LIKE '%''s Workspace'`,
 		)
 			.bind(body.username, auth.orgId)
 			.run();
@@ -1080,6 +1242,7 @@ api.get("/orgs/:orgId/billing", async (c) => {
 	}
 
 	const billingService = new BillingService(c.env);
+	const creditsService = new CreditsService(c.env);
 	const billing = await billingService.getOrCreateBilling(orgId);
 
 	// Count slot-consuming custom domains for this org (all domains in pipeline count)
@@ -1091,23 +1254,27 @@ api.get("/orgs/:orgId/billing", async (c) => {
 		.bind(orgId, ...SLOT_CONSUMING_STATUSES)
 		.first<{ count: number }>();
 
-	const customDomainsUsed = domainsResult?.count ?? 0;
-	const tier = (billing.plan_tier || "free") as PlanTier;
-	const customDomainsLimit = TIER_LIMITS[tier].custom_domains;
+	// Get referral stats (for display) and total bonus domains (for limits)
+	const referrals = await creditsService.getReferrals(orgId);
+	const totalBonusDomains = await creditsService.getTotalBonusDomains(orgId);
+	const limits = computeLimits(billing.plan_tier as PlanTier, totalBonusDomains);
 
-	// Return sanitized billing info with entitlements
 	return c.json({
-		billing: {
-			plan_tier: billing.plan_tier,
-			plan_status: billing.plan_status,
-			current_period_end: billing.current_period_end,
-			cancel_at_period_end: billing.cancel_at_period_end === 1,
+		plan: {
+			tier: billing.plan_tier,
 			is_paid: billingService.isPaidTier(billing),
 		},
-		entitlements: {
-			custom_domains_limit: customDomainsLimit,
-			custom_domains_used: customDomainsUsed,
-			custom_domains_available: Math.max(0, customDomainsLimit - customDomainsUsed),
+		referrals: {
+			code: referrals.code,
+			successful: referrals.successful,
+			pending: referrals.pending,
+			cap: REFERRAL_CAP.custom_domains,
+		},
+		limits: {
+			custom_domains: {
+				limit: limits.custom_domains,
+				used: domainsResult?.count ?? 0,
+			},
 		},
 	});
 });
@@ -1201,6 +1368,84 @@ api.post("/billing/portal", async (c) => {
 		console.error("Stripe portal error:", error);
 		return c.json({ error: "stripe_error", message }, 500);
 	}
+});
+
+// POST /v1/billing/daimo/checkout - Create Daimo payment checkout
+api.post("/billing/daimo/checkout", async (c) => {
+	const auth = c.get("auth");
+	const body = await c.req.json<{ success_url: string }>();
+
+	if (!body.success_url) {
+		return c.json({ error: "invalid_request", message: "success_url is required" }, 400);
+	}
+
+	if (!auth.orgId) {
+		return c.json({ error: "unauthorized", message: "No organization found" }, 401);
+	}
+
+	const billingService = new BillingService(c.env);
+	const daimoService = new DaimoBillingService(c.env);
+
+	try {
+		// Ensure billing record exists
+		const billing = await billingService.getOrCreateBilling(auth.orgId);
+
+		// Check for existing active Stripe subscription - redirect to portal
+		if (billingService.hasActiveSubscription(billing)) {
+			const portalUrl = await billingService.createPortalSession(
+				billing.stripe_customer_id!,
+				body.success_url,
+			);
+			return c.json({ url: portalUrl, redirected_to_portal: true });
+		}
+
+		// Check for existing active Daimo subscription - allow early renewal but inform user
+		const hasActiveDaimo = daimoService.hasActiveDaimoSubscription(billing);
+
+		const { url, paymentId } = await daimoService.createCheckout(auth.orgId, body.success_url);
+
+		return c.json({
+			url,
+			payment_id: paymentId,
+			is_renewal: hasActiveDaimo,
+			current_period_end: hasActiveDaimo ? billing.current_period_end : null,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to create Daimo checkout";
+		console.error("Daimo checkout error:", error);
+		return c.json({ error: "daimo_error", message }, 500);
+	}
+});
+
+// POST /v1/referral/apply - Apply a referral code (rate limited)
+api.post("/referral/apply", async (c) => {
+	const { success } = await c.env.USERNAME_CHECK_LIMITER.limit({
+		key: c.req.header("cf-connecting-ip") || "unknown",
+	});
+	if (!success) {
+		return c.json({ error: "Rate limited" }, 429);
+	}
+
+	const auth = c.get("auth");
+	const { code } = await c.req.json<{ code: string }>();
+
+	if (!code || typeof code !== "string") {
+		return c.json({ error: "Code required" }, 400);
+	}
+
+	const primaryOrg = await c.env.DB.prepare(
+		"SELECT org_id FROM org_memberships WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
+	)
+		.bind(auth.userId)
+		.first<{ org_id: string }>();
+
+	if (!primaryOrg) {
+		return c.json({ error: "No org found" }, 404);
+	}
+
+	const creditsService = new CreditsService(c.env);
+	const result = await creditsService.recordReferralSignup(primaryOrg.org_id, code);
+	return c.json(result);
 });
 
 api.post("/projects/:projectId/content-bucket", async (c) => {
@@ -2724,7 +2969,7 @@ api.get("/domains", async (c) => {
 		 FROM custom_domains cd
 		 JOIN org_memberships om ON cd.org_id = om.org_id
 		 LEFT JOIN projects p ON cd.project_id = p.id AND p.status != 'deleted'
-		 WHERE om.user_id = ? AND cd.status != 'deleting'
+		 WHERE om.user_id = ? AND cd.status NOT IN ('deleting', 'deleted')
 		 ORDER BY cd.created_at DESC`,
 	)
 		.bind(auth.userId)
@@ -2746,10 +2991,26 @@ api.get("/domains", async (c) => {
 		SLOT_CONSUMING_STATUSES.includes(d.status as CustomDomainStatus),
 	).length;
 
-	// Determine max slots from highest plan tier across user's orgs
-	const tiers = (orgsResult.results ?? []).map((o) => o.plan_tier || "free");
+	// Determine max slots from highest plan tier across user's orgs + credits
+	const orgs = orgsResult.results ?? [];
+	const tiers = orgs.map((o) => o.plan_tier || "free");
 	const hasPro = tiers.includes("pro") || tiers.includes("team");
-	const maxSlots = hasPro ? TIER_LIMITS.pro.custom_domains : TIER_LIMITS.free.custom_domains;
+	const tier = hasPro ? "pro" : "free";
+
+	// Sum credits from primary org (first org)
+	const primaryOrgId = orgs[0]?.org_id;
+	let bonusDomains = 0;
+	if (primaryOrgId) {
+		const bonusResult = await c.env.DB.prepare(
+			"SELECT COALESCE(SUM(amount), 0) as total FROM credits WHERE org_id = ? AND status = 'active'",
+		)
+			.bind(primaryOrgId)
+			.first<{ total: number }>();
+		bonusDomains = bonusResult?.total ?? 0;
+	}
+
+	const limits = computeLimits(tier as PlanTier, bonusDomains);
+	const maxSlots = limits.custom_domains;
 
 	const formattedDomains = domains.map((d) => ({
 		...formatDomainResponse(d),
@@ -2823,9 +3084,9 @@ api.post("/domains", async (c) => {
 		return c.json(gate.error, 403);
 	}
 
-	// Check if domain is already registered (globally unique)
+	// Check if domain is already registered (globally unique, excluding deleted)
 	const existingDomain = await c.env.DB.prepare(
-		"SELECT id, org_id FROM custom_domains WHERE hostname = ?",
+		"SELECT id, org_id FROM custom_domains WHERE hostname = ? AND status != 'deleted'",
 	)
 		.bind(hostname)
 		.first<{ id: string; org_id: string }>();
@@ -2843,13 +3104,13 @@ api.post("/domains", async (c) => {
 		);
 	}
 
-	// Create domain record in claimed state (no project, no Cloudflare)
+	// Create domain record in pending_dns state (requires DNS verification before assignment)
 	const domainId = `dom_${crypto.randomUUID()}`;
 
 	try {
 		await c.env.DB.prepare(
 			`INSERT INTO custom_domains (id, project_id, org_id, hostname, status)
-       VALUES (?, NULL, ?, ?, 'claimed')`,
+       VALUES (?, NULL, ?, ?, 'pending_dns')`,
 		)
 			.bind(domainId, orgId, hostname)
 			.run();
@@ -2907,15 +3168,13 @@ api.post("/domains/:domainId/assign", async (c) => {
 		return c.json({ error: "not_found", message: "Domain not found" }, 404);
 	}
 
-	// Check domain is in a state that can be assigned
-	if (domain.status !== "claimed") {
-		return c.json(
-			{
-				error: "invalid_state",
-				message: `Domain cannot be assigned from ${domain.status} state. Unassign it first if needed.`,
-			},
-			400,
-		);
+	// Check domain is in a state that can be assigned (claimed or unassigned)
+	if (domain.status !== "claimed" && domain.status !== "unassigned") {
+		const message =
+			domain.status === "pending_dns"
+				? "Domain DNS not verified. Run 'jack domain verify <hostname>' after adding CNAME record."
+				: `Domain cannot be assigned from ${domain.status} state. Unassign it first if needed.`;
+		return c.json({ error: "invalid_state", message }, 400);
 	}
 
 	// Get project and verify ownership (must be in same org)
@@ -2941,7 +3200,7 @@ api.post("/domains/:domainId/assign", async (c) => {
 
 	// Check project doesn't already have a domain (v1: 1 domain per project)
 	const existingProjectDomain = await c.env.DB.prepare(
-		"SELECT id FROM custom_domains WHERE project_id = ? AND status != 'deleting'",
+		"SELECT id FROM custom_domains WHERE project_id = ? AND status NOT IN ('deleting', 'deleted')",
 	)
 		.bind(body.project_id)
 		.first<{ id: string }>();
@@ -2954,6 +3213,45 @@ api.post("/domains/:domainId/assign", async (c) => {
 			},
 			409,
 		);
+	}
+
+	const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
+
+	// Quick reassign: if domain has existing CF hostname, verify it's still active
+	if (domain.cloudflare_id && domain.status === "unassigned") {
+		try {
+			const cfClient = new CloudflareClient(c.env);
+			cfClient.setZoneId(c.env.CLOUDFLARE_ZONE_ID);
+			const cfHostname = await cfClient.getCustomHostname(domain.cloudflare_id);
+			const jackStatus = mapCloudflareToJackStatus(cfHostname.status, cfHostname.ssl?.status);
+
+			if (jackStatus === "active") {
+				// Instant activation - just update project association
+				await c.env.DB.prepare(
+					`UPDATE custom_domains
+           SET project_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+				)
+					.bind(body.project_id, domainId)
+					.run();
+
+				// Restore KV cache for routing
+				const projectConfig = await cacheService.getProjectConfig(project.id);
+				if (projectConfig && projectConfig.status === "active") {
+					await cacheService.setCustomDomainConfig(domain.hostname, projectConfig);
+				}
+
+				const updatedDomain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+					.bind(domainId)
+					.first<CustomDomain>();
+
+				return c.json({ domain: formatDomainResponse(updatedDomain!) });
+			}
+			// If not active (SSL pending/degraded), fall through to create new hostname
+		} catch (error) {
+			// CF hostname was deleted externally - fall through to create new
+			console.log(`Cloudflare hostname ${domain.cloudflare_id} not found, creating new`);
+		}
 	}
 
 	try {
@@ -2993,7 +3291,6 @@ api.post("/domains/:domainId/assign", async (c) => {
 
 		// If domain is immediately active, write to cache
 		if (jackStatus === "active") {
-			const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
 			const projectConfig = await cacheService.getProjectConfig(project.id);
 			if (projectConfig && projectConfig.status === "active") {
 				await cacheService.setCustomDomainConfig(domain.hostname, projectConfig);
@@ -3053,7 +3350,7 @@ api.post("/domains/:domainId/unassign", async (c) => {
 	}
 
 	// Already unassigned
-	if (domain.status === "claimed" && !domain.project_id) {
+	if ((domain.status === "claimed" || domain.status === "unassigned") && !domain.project_id) {
 		return c.json({ domain: formatDomainResponse(domain) });
 	}
 
@@ -3065,37 +3362,18 @@ api.post("/domains/:domainId/unassign", async (c) => {
 		);
 	}
 
-	// Delete from Cloudflare if provisioned
-	if (domain.cloudflare_id) {
-		try {
-			const cfClient = new CloudflareClient(c.env);
-			cfClient.setZoneId(c.env.CLOUDFLARE_ZONE_ID);
-			await cfClient.deleteCustomHostname(domain.cloudflare_id);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			// Treat "not found" as success (already deleted)
-			if (!message.includes("not found") && !message.includes("does not exist")) {
-				console.error("Failed to delete custom hostname from Cloudflare:", error);
-				// Continue anyway to reset state
-			}
-		}
-	}
+	// DON'T delete from Cloudflare - keep hostname for quick reassignment
 
-	// Delete KV cache entry for custom domain routing
+	// Delete KV cache entry to stop routing traffic
 	const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
 	await cacheService.deleteCustomDomainConfig(domain.hostname);
 
-	// Reset to claimed state
+	// Set to unassigned if CF hostname exists (for quick reassign), otherwise claimed
+	// Keep cloudflare_id, ssl_status, dns_* fields for instant reactivation
 	await c.env.DB.prepare(
 		`UPDATE custom_domains
      SET project_id = NULL,
-         cloudflare_id = NULL,
-         status = 'claimed',
-         ssl_status = NULL,
-         ownership_verification_type = NULL,
-         ownership_verification_name = NULL,
-         ownership_verification_value = NULL,
-         validation_errors = NULL,
+         status = CASE WHEN cloudflare_id IS NOT NULL THEN 'unassigned' ELSE 'claimed' END,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
 	)
@@ -3114,8 +3392,19 @@ api.post("/domains/:domainId/unassign", async (c) => {
 	return c.json({ domain: formatDomainResponse(updatedDomain) });
 });
 
-// DELETE /v1/domains/:domainId - Fully remove domain (release slot)
-api.delete("/domains/:domainId", async (c) => {
+// POST /v1/domains/:domainId/verify - Manually trigger DNS verification (rate limited)
+api.post("/domains/:domainId/verify", async (c) => {
+	// Rate limit to prevent DNS query abuse
+	const { success } = await c.env.USERNAME_CHECK_LIMITER.limit({
+		key: c.req.header("cf-connecting-ip") || "unknown",
+	});
+	if (!success) {
+		return c.json(
+			{ error: "rate_limited", message: "Too many requests. Try again in a minute." },
+			429,
+		);
+	}
+
 	const auth = c.get("auth");
 	const domainId = c.req.param("domainId");
 
@@ -3138,7 +3427,95 @@ api.delete("/domains/:domainId", async (c) => {
 		return c.json({ error: "not_found", message: "Domain not found" }, 404);
 	}
 
-	// Mark as deleting
+	// Only verify domains in pending_dns status
+	if (domain.status !== "pending_dns") {
+		return c.json(
+			{
+				error: "invalid_state",
+				message:
+					domain.status === "claimed"
+						? "Domain already verified. Assign to a project with 'jack domain assign <hostname> <project>'."
+						: `Cannot verify domain in ${domain.status} state`,
+			},
+			400,
+		);
+	}
+
+	// Perform DNS verification
+	const dnsResult = await verifyDns(domain.hostname);
+	const now = new Date().toISOString().replace("T", " ").replace("Z", "");
+
+	if (dnsResult.verified) {
+		// DNS verified - transition to 'claimed' status
+		await c.env.DB.prepare(
+			`UPDATE custom_domains
+       SET status = 'claimed',
+           dns_verified = 1,
+           dns_verified_at = ?,
+           dns_last_checked_at = ?,
+           dns_target = ?,
+           dns_error = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+		)
+			.bind(now, now, dnsResult.target, domainId)
+			.run();
+	} else {
+		// DNS not verified - update check timestamp and error
+		await c.env.DB.prepare(
+			`UPDATE custom_domains
+       SET dns_last_checked_at = ?,
+           dns_target = ?,
+           dns_error = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+		)
+			.bind(now, dnsResult.target, dnsResult.error, domainId)
+			.run();
+	}
+
+	// Fetch and return updated domain
+	const updatedDomain = await c.env.DB.prepare("SELECT * FROM custom_domains WHERE id = ?")
+		.bind(domainId)
+		.first<CustomDomain>();
+
+	if (!updatedDomain) {
+		return c.json({ error: "internal_error", message: "Failed to retrieve updated domain" }, 500);
+	}
+
+	return c.json({
+		domain: formatDomainResponse(updatedDomain),
+		dns_verified: dnsResult.verified,
+	});
+});
+
+// DELETE /v1/domains/:domainId - Soft delete domain (release slot)
+api.delete("/domains/:domainId", async (c) => {
+	const auth = c.get("auth");
+	const domainId = c.req.param("domainId");
+
+	// Get domain and verify ownership via org membership
+	const domain = await c.env.DB.prepare(
+		"SELECT * FROM custom_domains WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(domainId)
+		.first<CustomDomain>();
+
+	if (!domain) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(domain.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Domain not found" }, 404);
+	}
+
+	// Mark as deleting while we clean up Cloudflare
 	await c.env.DB.prepare(
 		"UPDATE custom_domains SET status = 'deleting', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 	)
@@ -3167,8 +3544,17 @@ api.delete("/domains/:domainId", async (c) => {
 	const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
 	await cacheService.deleteCustomDomainConfig(domain.hostname);
 
-	// Delete from DB
-	await c.env.DB.prepare("DELETE FROM custom_domains WHERE id = ?").bind(domainId).run();
+	// Soft delete - set status to 'deleted' instead of removing the row
+	await c.env.DB.prepare(
+		`UPDATE custom_domains
+     SET status = 'deleted',
+         project_id = NULL,
+         cloudflare_id = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+	)
+		.bind(domainId)
+		.run();
 
 	return c.json({
 		success: true,
@@ -3227,9 +3613,9 @@ api.post("/projects/:projectId/domains", async (c) => {
 		return c.json(gate.error, 403);
 	}
 
-	// Check if domain is already registered (globally unique)
+	// Check if domain is already registered (globally unique, excluding deleted)
 	const existingDomain = await c.env.DB.prepare(
-		"SELECT id, project_id FROM custom_domains WHERE hostname = ?",
+		"SELECT id, project_id FROM custom_domains WHERE hostname = ? AND status != 'deleted'",
 	)
 		.bind(hostname)
 		.first<{ id: string; project_id: string | null }>();
@@ -3246,7 +3632,7 @@ api.post("/projects/:projectId/domains", async (c) => {
 
 	// Check project doesn't already have a domain (v1: 1 domain per project)
 	const existingProjectDomain = await c.env.DB.prepare(
-		"SELECT id FROM custom_domains WHERE project_id = ? AND status != 'deleting'",
+		"SELECT id FROM custom_domains WHERE project_id = ? AND status NOT IN ('deleting', 'deleted')",
 	)
 		.bind(projectId)
 		.first<{ id: string }>();
@@ -3381,7 +3767,7 @@ api.get("/projects/:projectId/domains", async (c) => {
 
 	// List all domains for project (excluding deleting)
 	const result = await c.env.DB.prepare(
-		"SELECT * FROM custom_domains WHERE project_id = ? AND status != 'deleting' ORDER BY created_at DESC",
+		"SELECT * FROM custom_domains WHERE project_id = ? AND status NOT IN ('deleting', 'deleted') ORDER BY created_at DESC",
 	)
 		.bind(projectId)
 		.all<CustomDomain>();
@@ -3432,7 +3818,7 @@ api.get("/projects/:projectId/domains/:domainId", async (c) => {
 	return c.json({ domain: formatDomainResponse(domain) });
 });
 
-// DELETE /v1/projects/:projectId/domains/:domainId - Remove domain
+// DELETE /v1/projects/:projectId/domains/:domainId - Soft delete domain
 api.delete("/projects/:projectId/domains/:domainId", async (c) => {
 	const auth = c.get("auth");
 	const projectId = c.req.param("projectId");
@@ -3459,9 +3845,9 @@ api.delete("/projects/:projectId/domains/:domainId", async (c) => {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
 	}
 
-	// Get domain
+	// Get domain (excluding already deleted)
 	const domain = await c.env.DB.prepare(
-		"SELECT * FROM custom_domains WHERE id = ? AND project_id = ?",
+		"SELECT * FROM custom_domains WHERE id = ? AND project_id = ? AND status != 'deleted'",
 	)
 		.bind(domainId, projectId)
 		.first<CustomDomain>();
@@ -3470,7 +3856,7 @@ api.delete("/projects/:projectId/domains/:domainId", async (c) => {
 		return c.json({ error: "not_found", message: "Domain not found" }, 404);
 	}
 
-	// Mark as deleting
+	// Mark as deleting while we clean up Cloudflare
 	await c.env.DB.prepare(
 		"UPDATE custom_domains SET status = 'deleting', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 	)
@@ -3499,8 +3885,17 @@ api.delete("/projects/:projectId/domains/:domainId", async (c) => {
 	const cacheService = new ProjectCacheService(c.env.PROJECTS_CACHE);
 	await cacheService.deleteCustomDomainConfig(domain.hostname);
 
-	// Delete from DB
-	await c.env.DB.prepare("DELETE FROM custom_domains WHERE id = ?").bind(domainId).run();
+	// Soft delete - set status to 'deleted' instead of removing the row
+	await c.env.DB.prepare(
+		`UPDATE custom_domains
+     SET status = 'deleted',
+         project_id = NULL,
+         cloudflare_id = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+	)
+		.bind(domainId)
+		.run();
 
 	return c.json({
 		success: true,
@@ -3509,8 +3904,19 @@ api.delete("/projects/:projectId/domains/:domainId", async (c) => {
 	});
 });
 
-// POST /v1/projects/:projectId/domains/:domainId/verify - Manually trigger verification
+// POST /v1/projects/:projectId/domains/:domainId/verify - Manually trigger verification (rate limited)
 api.post("/projects/:projectId/domains/:domainId/verify", async (c) => {
+	// Rate limit to prevent DNS query abuse
+	const { success } = await c.env.USERNAME_CHECK_LIMITER.limit({
+		key: c.req.header("cf-connecting-ip") || "unknown",
+	});
+	if (!success) {
+		return c.json(
+			{ error: "rate_limited", message: "Too many requests. Try again in a minute." },
+			429,
+		);
+	}
+
 	const auth = c.get("auth");
 	const projectId = c.req.param("projectId");
 	const domainId = c.req.param("domainId");
@@ -4043,9 +4449,17 @@ app.post("/v1/billing/webhook", async (c) => {
 	try {
 		switch (event.type) {
 			case "customer.subscription.created":
-			case "customer.subscription.updated":
-				await billingService.syncFromStripeSubscription(event.data.object as Stripe.Subscription);
+			case "customer.subscription.updated": {
+				const subscription = event.data.object as Stripe.Subscription;
+				await billingService.syncFromStripeSubscription(subscription);
+				// Qualify any pending referral on subscription activation
+				const orgId = subscription.metadata.org_id;
+				if (orgId && subscription.status === "active") {
+					const creditsService = new CreditsService(c.env);
+					await creditsService.qualifyReferral(orgId);
+				}
 				break;
+			}
 			case "customer.subscription.deleted":
 				await billingService.handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
 				break;
@@ -4056,6 +4470,57 @@ app.post("/v1/billing/webhook", async (c) => {
 		return c.json({ received: true });
 	} catch (error) {
 		console.error("Webhook processing error:", error);
+		return c.json({ error: "webhook_error", message: "Failed to process webhook" }, 500);
+	}
+});
+
+// Daimo webhook handler (no auth - Daimo uses Basic auth token)
+app.post("/v1/billing/daimo/webhook", async (c) => {
+	const authHeader = c.req.header("authorization");
+	console.log("[daimo-webhook] Received webhook request");
+
+	const daimoService = new DaimoBillingService(c.env);
+
+	if (!daimoService.verifyWebhook(authHeader)) {
+		console.error("[daimo-webhook] Invalid or missing authorization");
+		return c.json({ error: "unauthorized", message: "Invalid authorization" }, 401);
+	}
+
+	let body: unknown;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "invalid_request", message: "Invalid JSON body" }, 400);
+	}
+
+	const parsed = daimoService.parseWebhookPayload(body);
+	if (!parsed) {
+		console.error("[daimo-webhook] Missing required fields in payload:", body);
+		return c.json({ error: "invalid_request", message: "Invalid webhook payload structure" }, 400);
+	}
+
+	console.log("[daimo-webhook] Event type:", parsed.type, "Payment ID:", parsed.paymentId);
+
+	// Only process payment_completed events
+	if (!daimoService.isPaymentCompletedEvent(parsed.type)) {
+		console.log("[daimo-webhook] Ignoring non-completion event:", parsed.type);
+		return c.json({ received: true, ignored: true });
+	}
+
+	// For payment_completed, we need org_id
+	if (!parsed.orgId) {
+		console.error("[daimo-webhook] Missing org_id in payment metadata for completed payment");
+		return c.json({ error: "invalid_request", message: "Missing org_id in payment metadata" }, 400);
+	}
+
+	try {
+		await daimoService.handlePaymentCompleted(parsed.paymentId, parsed.orgId);
+		// Qualify any pending referral on payment completion
+		const creditsService = new CreditsService(c.env);
+		await creditsService.qualifyReferral(parsed.orgId);
+		return c.json({ received: true });
+	} catch (error) {
+		console.error("[daimo-webhook] Processing error:", error);
 		return c.json({ error: "webhook_error", message: "Failed to process webhook" }, 500);
 	}
 });
@@ -4099,8 +4564,66 @@ async function sweepExpiredLogSessions(env: Bindings): Promise<void> {
 }
 
 async function pollPendingCustomDomains(env: Bindings): Promise<void> {
-	// Query domains that are pending verification
-	const pending = await env.DB.prepare(
+	const now = new Date();
+	const nowStr = now.toISOString().replace("T", " ").replace("Z", "");
+
+	// 1. Expire pending_dns domains older than 7 days
+	const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+	const expiryThreshold = sevenDaysAgo.toISOString().replace("T", " ").replace("Z", "");
+	await env.DB.prepare(
+		`UPDATE custom_domains
+     SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+     WHERE status = 'pending_dns' AND created_at < ?`,
+	)
+		.bind(expiryThreshold)
+		.run();
+
+	// 2. Poll pending_dns domains - verify DNS and transition to claimed if verified
+	const pendingDns = await env.DB.prepare(
+		`SELECT id, hostname FROM custom_domains
+     WHERE status = 'pending_dns'
+     LIMIT 10`,
+	).all<{ id: string; hostname: string }>();
+
+	for (const domain of pendingDns.results || []) {
+		try {
+			const dnsResult = await verifyDns(domain.hostname);
+
+			if (dnsResult.verified) {
+				// DNS verified - transition to 'claimed'
+				await env.DB.prepare(
+					`UPDATE custom_domains
+           SET status = 'claimed',
+               dns_verified = 1,
+               dns_verified_at = ?,
+               dns_last_checked_at = ?,
+               dns_target = ?,
+               dns_error = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+				)
+					.bind(nowStr, nowStr, dnsResult.target, domain.id)
+					.run();
+			} else {
+				// Update check timestamp and error
+				await env.DB.prepare(
+					`UPDATE custom_domains
+           SET dns_last_checked_at = ?,
+               dns_target = ?,
+               dns_error = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+				)
+					.bind(nowStr, dnsResult.target, dnsResult.error, domain.id)
+					.run();
+			}
+		} catch (error) {
+			console.error(`Failed to verify DNS for ${domain.hostname}:`, error);
+		}
+	}
+
+	// 3. Poll pending_owner and pending_ssl domains (existing Cloudflare verification)
+	const pendingCf = await env.DB.prepare(
 		`SELECT cd.id, cd.hostname, cd.cloudflare_id, cd.project_id, p.status as project_status
      FROM custom_domains cd
      JOIN projects p ON p.id = cd.project_id
@@ -4115,39 +4638,90 @@ async function pollPendingCustomDomains(env: Bindings): Promise<void> {
 		project_status: string;
 	}>();
 
-	if (!pending.results?.length) return;
+	if (pendingCf.results?.length) {
+		const cfClient = new CloudflareClient(env);
+		cfClient.setZoneId(env.CLOUDFLARE_ZONE_ID);
+		const cacheService = new ProjectCacheService(env.PROJECTS_CACHE);
 
-	const cfClient = new CloudflareClient(env);
-	cfClient.setZoneId(env.CLOUDFLARE_ZONE_ID);
+		for (const domain of pendingCf.results) {
+			try {
+				const cfHostname = await cfClient.getCustomHostname(domain.cloudflare_id);
+				if (!cfHostname) continue;
+
+				const jackStatus = mapCloudflareToJackStatus(cfHostname.status, cfHostname.ssl?.status);
+
+				await env.DB.prepare(
+					`UPDATE custom_domains
+           SET status = ?, ssl_status = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+				)
+					.bind(jackStatus, cfHostname.ssl?.status || null, domain.id)
+					.run();
+
+				if (jackStatus === "active" && domain.project_status === "active") {
+					const projectConfig = await cacheService.getProjectConfig(domain.project_id);
+					if (projectConfig) {
+						await cacheService.setCustomDomainConfig(domain.hostname, projectConfig);
+					}
+				}
+			} catch (error) {
+				console.error(`Failed to poll domain ${domain.hostname}:`, error);
+			}
+		}
+	}
+
+	// 4. Daily DNS drift check for active domains (check if DNS still points to us)
+	// Only check domains that haven't been checked in the last 24 hours
+	const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+	const driftCheckThreshold = oneDayAgo.toISOString().replace("T", " ").replace("Z", "");
+
+	const activeDomains = await env.DB.prepare(
+		`SELECT id, hostname FROM custom_domains
+     WHERE status = 'active'
+       AND (dns_last_checked_at IS NULL OR dns_last_checked_at < ?)
+     LIMIT 5`,
+	)
+		.bind(driftCheckThreshold)
+		.all<{ id: string; hostname: string }>();
+
 	const cacheService = new ProjectCacheService(env.PROJECTS_CACHE);
 
-	for (const domain of pending.results) {
+	for (const domain of activeDomains.results || []) {
 		try {
-			// Refresh status from Cloudflare
-			const cfHostname = await cfClient.getCustomHostname(domain.cloudflare_id);
-			if (!cfHostname) continue;
+			const dnsResult = await verifyDns(domain.hostname);
 
-			const jackStatus = mapCloudflareToJackStatus(cfHostname.status, cfHostname.ssl?.status);
+			if (dnsResult.verified) {
+				// DNS still valid - update check timestamp
+				await env.DB.prepare(
+					`UPDATE custom_domains
+           SET dns_last_checked_at = ?,
+               dns_target = ?,
+               dns_error = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+				)
+					.bind(nowStr, dnsResult.target, domain.id)
+					.run();
+			} else {
+				// DNS drifted - mark as 'moved' and remove from cache
+				await env.DB.prepare(
+					`UPDATE custom_domains
+           SET status = 'moved',
+               dns_verified = 0,
+               dns_last_checked_at = ?,
+               dns_target = ?,
+               dns_error = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+				)
+					.bind(nowStr, dnsResult.target, dnsResult.error, domain.id)
+					.run();
 
-			// Update DB if status changed
-			await env.DB.prepare(
-				`UPDATE custom_domains
-         SET status = ?, ssl_status = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-			)
-				.bind(jackStatus, cfHostname.ssl?.status || null, domain.id)
-				.run();
-
-			// If now active and project is active, write to cache
-			if (jackStatus === "active" && domain.project_status === "active") {
-				const projectConfig = await cacheService.getProjectConfig(domain.project_id);
-				if (projectConfig) {
-					await cacheService.setCustomDomainConfig(domain.hostname, projectConfig);
-				}
+				// Remove from cache since domain no longer points to us
+				await cacheService.deleteCustomDomainConfig(domain.hostname);
 			}
 		} catch (error) {
-			console.error(`Failed to poll domain ${domain.hostname}:`, error);
-			// Continue with next domain
+			console.error(`Failed to check DNS drift for ${domain.hostname}:`, error);
 		}
 	}
 }

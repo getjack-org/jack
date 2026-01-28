@@ -20,15 +20,22 @@ function getStatusIcon(status: DomainStatus): string {
 	switch (status) {
 		case "active":
 			return `${colors.green}✓${colors.reset}`;
+		case "claimed":
+			return `${colors.dim}○${colors.reset}`;
+		case "unassigned":
+			return `${colors.cyan}○${colors.reset}`;
 		case "pending":
+		case "pending_dns":
 		case "pending_owner":
 		case "pending_ssl":
 			return `${colors.yellow}⏳${colors.reset}`;
 		case "failed":
 		case "blocked":
+		case "expired":
 			return `${colors.red}✗${colors.reset}`;
 		case "moved":
 		case "deleting":
+		case "deleted":
 			return `${colors.cyan}○${colors.reset}`;
 		default:
 			return "○";
@@ -42,8 +49,14 @@ function getStatusLabel(status: DomainStatus): string {
 	switch (status) {
 		case "active":
 			return "active";
+		case "claimed":
+			return "reserved";
+		case "unassigned":
+			return "ready";
 		case "pending":
 			return "pending DNS";
+		case "pending_dns":
+			return "configure DNS";
 		case "pending_owner":
 			return "pending ownership";
 		case "pending_ssl":
@@ -56,6 +69,10 @@ function getStatusLabel(status: DomainStatus): string {
 			return "moved";
 		case "deleting":
 			return "deleting";
+		case "expired":
+			return "expired";
+		case "deleted":
+			return "deleted";
 		default:
 			return status;
 	}
@@ -134,11 +151,20 @@ export default async function domains(options: DomainsOptions = {}): Promise<voi
 		// Group by status
 		const active = data.domains.filter((d) => d.status === "active");
 		const pending = data.domains.filter((d) =>
-			["pending", "pending_owner", "pending_ssl"].includes(d.status),
+			["pending", "pending_dns", "pending_owner", "pending_ssl"].includes(d.status),
 		);
 		const unassigned = data.domains.filter((d) => d.status === "claimed");
 		const other = data.domains.filter(
-			(d) => !["active", "pending", "pending_owner", "pending_ssl", "claimed"].includes(d.status),
+			(d) =>
+				![
+					"active",
+					"pending",
+					"pending_dns",
+					"pending_owner",
+					"pending_ssl",
+					"claimed",
+					"deleted",
+				].includes(d.status),
 		);
 
 		// Show active domains
