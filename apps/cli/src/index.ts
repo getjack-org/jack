@@ -35,6 +35,7 @@ const cli = meow(
     login               Sign in
     logout              Sign out
     whoami              Show current user
+    tokens              Manage API tokens
     update              Update jack to latest version
 
   Project Management
@@ -399,6 +400,11 @@ try {
 			await withTelemetry("secrets", secrets, { subcommand: args[0] })(args[0], args.slice(1), {
 				project: cli.flags.project,
 			});
+			break;
+		}
+		case "tokens": {
+			const { default: tokens } = await import("./commands/tokens.ts");
+			await withTelemetry("tokens", tokens, { subcommand: args[0] })(args[0], args.slice(1));
 			break;
 		}
 		case "domain": {

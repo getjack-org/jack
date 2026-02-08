@@ -73,6 +73,16 @@ export async function refreshToken(refreshTokenValue: string): Promise<TokenResp
 }
 
 export async function getValidAccessToken(): Promise<string | null> {
+	// Priority 1: API token from environment
+	const apiToken = process.env.JACK_API_TOKEN;
+	if (apiToken) {
+		if (!apiToken.startsWith("jkt_")) {
+			console.error("Warning: JACK_API_TOKEN should start with 'jkt_'");
+		}
+		return apiToken;
+	}
+
+	// Priority 2: Stored OAuth credentials
 	const creds = await getCredentials();
 	if (!creds) {
 		return null;
@@ -102,7 +112,7 @@ export async function getValidAccessToken(): Promise<string | null> {
 export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
 	const token = await getValidAccessToken();
 	if (!token) {
-		throw new Error("Not authenticated. Run 'jack login' first.");
+		throw new Error("Not authenticated. Run 'jack login' or set JACK_API_TOKEN.");
 	}
 
 	return fetch(url, {

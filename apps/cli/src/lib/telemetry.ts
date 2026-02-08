@@ -44,6 +44,9 @@ export const Events = {
 	BYO_DEPLOY_STARTED: "byo_deploy_started",
 	BYO_DEPLOY_COMPLETED: "byo_deploy_completed",
 	BYO_DEPLOY_FAILED: "byo_deploy_failed",
+	// Token management events
+	TOKEN_CREATED: "token_created",
+	TOKEN_REVOKED: "token_revoked",
 } as const;
 
 type EventName = (typeof Events)[keyof typeof Events];
@@ -127,6 +130,7 @@ export interface UserProperties {
 	is_tty?: boolean;
 	locale?: string;
 	config_style?: "byoc" | "jack-cloud";
+	auth_method?: "oauth" | "token";
 }
 
 // Detect environment properties (for user profile - stable properties)
