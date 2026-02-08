@@ -19,13 +19,17 @@ export default async function whoami(): Promise<void> {
 		item(`Name: ${creds.user.first_name}${creds.user.last_name ? ` ${creds.user.last_name}` : ""}`);
 	}
 
-	const expiresIn = creds.expires_at - Math.floor(Date.now() / 1000);
-	if (expiresIn > 0) {
-		const hours = Math.floor(expiresIn / 3600);
-		const minutes = Math.floor((expiresIn % 3600) / 60);
-		item(`Token expires: ${hours}h ${minutes}m`);
+	if (process.env.JACK_API_TOKEN) {
+		item("Auth: API token");
 	} else {
-		item("Token: expired (will refresh on next request)");
+		const expiresIn = creds.expires_at - Math.floor(Date.now() / 1000);
+		if (expiresIn > 0) {
+			const hours = Math.floor(expiresIn / 3600);
+			const minutes = Math.floor((expiresIn % 3600) / 60);
+			item(`Token expires: ${hours}h ${minutes}m`);
+		} else {
+			item("Token: expired (will refresh on next request)");
+		}
 	}
 	console.error("");
 }
