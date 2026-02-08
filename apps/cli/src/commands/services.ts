@@ -99,6 +99,7 @@ async function resolveDatabaseInfo(projectName: string): Promise<ResolvedDatabas
 
 interface ServiceOptions {
 	project?: string;
+	json?: boolean;
 }
 
 export default async function services(
@@ -209,17 +210,23 @@ async function resolveProjectName(options: ServiceOptions): Promise<string> {
  * Show database information
  */
 async function dbInfo(options: ServiceOptions): Promise<void> {
+	const jsonOutput = options.json ?? false;
 	const projectName = await resolveProjectName(options);
 	const projectDir = process.cwd();
 	const link = await readProjectLink(projectDir);
 
 	// For managed projects, use control plane API (no wrangler dependency)
 	if (link?.deploy_mode === "managed") {
-		outputSpinner.start("Fetching database info...");
+		if (!jsonOutput) outputSpinner.start("Fetching database info...");
 		try {
 			const { getManagedDatabaseInfo } = await import("../lib/control-plane.ts");
 			const dbInfo = await getManagedDatabaseInfo(link.project_id);
-			outputSpinner.stop();
+			if (!jsonOutput) outputSpinner.stop();
+
+			if (jsonOutput) {
+				console.log(JSON.stringify({ name: dbInfo.name, id: dbInfo.id, sizeBytes: dbInfo.sizeBytes, numTables: dbInfo.numTables, source: "managed" }));
+				return;
+			}
 
 			console.error("");
 			success(`Database: ${dbInfo.name}`);
@@ -624,10 +631,16 @@ async function dbCreate(args: string[], options: ServiceOptions): Promise<void> 
  * List all databases in the project
  */
 async function dbList(options: ServiceOptions): Promise<void> {
-	outputSpinner.start("Fetching databases...");
+	const jsonOutput = options.json ?? false;
+	if (!jsonOutput) outputSpinner.start("Fetching databases...");
 	try {
 		const databases = await listDatabases(process.cwd());
-		outputSpinner.stop();
+		if (!jsonOutput) outputSpinner.stop();
+
+		if (jsonOutput) {
+			console.log(JSON.stringify(databases));
+			return;
+		}
 
 		if (databases.length === 0) {
 			console.error("");
@@ -654,7 +667,11 @@ async function dbList(options: ServiceOptions): Promise<void> {
 			console.error("");
 		}
 	} catch (err) {
-		outputSpinner.stop();
+		if (!jsonOutput) outputSpinner.stop();
+		if (jsonOutput) {
+			console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+			process.exit(1);
+		}
 		console.error("");
 		error(`Failed to list databases: ${err instanceof Error ? err.message : String(err)}`);
 		process.exit(1);
@@ -729,7 +746,8 @@ function parseExecuteArgs(args: string[]): ExecuteArgs {
 /**
  * Execute SQL against the database
  */
-async function dbExecute(args: string[], _options: ServiceOptions): Promise<void> {
+async function dbExecute(args: string[], options: ServiceOptions): Promise<void> {
+	const jsonOutput = options.json ?? false;
 	const execArgs = parseExecuteArgs(args);
 
 	// Validate input
@@ -857,10 +875,35 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 				error_type: "execution_failed",
 			});
 
+			if (jsonOutput) {
+				console.log(JSON.stringify({ success: false, error: result.error || "SQL execution failed" }));
+				process.exit(1);
+			}
+
 			console.error("");
 			error(result.error || "SQL execution failed");
 			console.error("");
 			process.exit(1);
+		}
+
+		// Track telemetry
+		track(Events.SQL_EXECUTED, {
+			success: true,
+			risk_level: result.risk,
+			statement_count: result.statements.length,
+			from_file: !!execArgs.filePath,
+		});
+
+		// JSON output mode — structured result for agents
+		if (jsonOutput) {
+			console.log(JSON.stringify({
+				success: true,
+				results: result.results ?? [],
+				meta: result.meta,
+				risk: result.risk,
+				warning: result.warning,
+			}));
+			return;
 		}
 
 		// Show results
@@ -886,14 +929,6 @@ async function dbExecute(args: string[], _options: ServiceOptions): Promise<void
 			console.log(JSON.stringify(result.results, null, 2));
 		}
 		console.error("");
-
-		// Track telemetry
-		track(Events.SQL_EXECUTED, {
-			success: true,
-			risk_level: result.risk,
-			statement_count: result.statements.length,
-			from_file: !!execArgs.filePath,
-		});
 	} catch (err) {
 		outputSpinner.stop();
 

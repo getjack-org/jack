@@ -285,6 +285,7 @@ try {
 				managed: cli.flags.managed,
 				byo: cli.flags.byo,
 				dryRun: cli.flags.dryRun,
+				json: cli.flags.json,
 			});
 			break;
 		}
@@ -389,6 +390,7 @@ try {
 
 			await withTelemetry("services", services, { subcommand })(args[0], serviceArgs, {
 				project: cli.flags.project,
+				json: cli.flags.json,
 			});
 			break;
 		}
