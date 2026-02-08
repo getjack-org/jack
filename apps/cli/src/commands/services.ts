@@ -238,7 +238,14 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 			console.error("");
 			return;
 		} catch (err) {
-			outputSpinner.stop();
+			if (!jsonOutput) outputSpinner.stop();
+			if (jsonOutput) {
+				const msg = err instanceof Error && err.message.includes("No database found")
+					? "No database configured. Run 'jack services db create' to create one."
+					: `Failed to fetch database info: ${err instanceof Error ? err.message : String(err)}`;
+				console.log(JSON.stringify({ success: false, error: msg }));
+				process.exit(1);
+			}
 			console.error("");
 			if (err instanceof Error && err.message.includes("No database found")) {
 				error("No database found for this project");
@@ -255,6 +262,10 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 	const dbInfo = await resolveDatabaseInfo(projectName);
 
 	if (!dbInfo) {
+		if (jsonOutput) {
+			console.log(JSON.stringify({ success: false, error: "No database found for this project" }));
+			return;
+		}
 		console.error("");
 		error("No database found for this project");
 		info("Create one with: jack services db create");
@@ -263,16 +274,25 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 	}
 
 	// Fetch detailed database info via wrangler
-	outputSpinner.start("Fetching database info...");
+	if (!jsonOutput) outputSpinner.start("Fetching database info...");
 	const wranglerDbInfo = await getWranglerDatabaseInfo(dbInfo.name);
-	outputSpinner.stop();
+	if (!jsonOutput) outputSpinner.stop();
 
 	if (!wranglerDbInfo) {
+		if (jsonOutput) {
+			console.log(JSON.stringify({ success: false, error: "Database not found" }));
+			process.exit(1);
+		}
 		console.error("");
 		error("Database not found");
 		info("It may have been deleted");
 		console.error("");
 		process.exit(1);
+	}
+
+	if (jsonOutput) {
+		console.log(JSON.stringify({ name: wranglerDbInfo.name, id: dbInfo.id || wranglerDbInfo.id, sizeBytes: wranglerDbInfo.sizeBytes, numTables: wranglerDbInfo.numTables, source: "byo" }));
+		return;
 	}
 
 	// Display info
@@ -784,7 +804,7 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 	const projectDir = process.cwd();
 
 	try {
-		outputSpinner.start("Executing SQL...");
+		if (!jsonOutput) outputSpinner.start("Executing SQL...");
 
 		let result;
 		if (execArgs.filePath) {
@@ -841,7 +861,7 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 			}
 
 			// NOW execute with confirmation
-			outputSpinner.start("Executing SQL...");
+			if (!jsonOutput) outputSpinner.start("Executing SQL...");
 			if (execArgs.filePath) {
 				result = await executeSqlFile({
 					projectDir,
@@ -939,6 +959,11 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 				risk_level: err.risk,
 			});
 
+			if (jsonOutput) {
+				console.log(JSON.stringify({ success: false, error: err.message, suggestion: "Add --write flag" }));
+				process.exit(1);
+			}
+
 			console.error("");
 			error(err.message);
 			info("Add the --write flag to allow data modification:");
@@ -954,6 +979,11 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 				risk_level: "destructive",
 			});
 
+			if (jsonOutput) {
+				console.log(JSON.stringify({ success: false, error: err.message, suggestion: "Destructive operations require confirmation via CLI" }));
+				process.exit(1);
+			}
+
 			console.error("");
 			error(err.message);
 			info("Destructive operations require confirmation via CLI.");
@@ -965,6 +995,11 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 			success: false,
 			error_type: "unknown",
 		});
+
+		if (jsonOutput) {
+			console.log(JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }));
+			process.exit(1);
+		}
 
 		console.error("");
 		error(`SQL execution failed: ${err instanceof Error ? err.message : String(err)}`);
