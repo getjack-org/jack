@@ -289,3 +289,17 @@ export interface CronScheduleWithProject extends CronSchedule {
 	worker_name: string;
 	cron_secret: string;
 }
+
+// API token interface matching DB schema
+export interface ApiToken {
+	id: string;
+	user_id: string;
+	org_id: string;
+	name: string;
+	token_hash: string;
+	id_prefix: string;
+	created_at: string;
+	last_used_at: string | null;
+	expires_at: string | null;
+	revoked_at: string | null;
+}

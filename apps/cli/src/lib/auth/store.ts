@@ -51,6 +51,9 @@ export type AuthState = "logged-in" | "not-logged-in" | "session-expired";
  * - "session-expired": had credentials but refresh failed
  */
 export async function getAuthState(): Promise<AuthState> {
+	// API token always counts as logged in
+	if (process.env.JACK_API_TOKEN) return "logged-in";
+
 	const creds = await getCredentials();
 	if (!creds) return "not-logged-in";
 

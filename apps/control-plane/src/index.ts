@@ -735,6 +735,98 @@ api.put("/me/username", async (c) => {
 	}
 });
 
+// --- API Token Management ---
+
+api.post("/tokens", async (c) => {
+	const auth = c.get("auth");
+	if (!auth.orgId) {
+		return c.json({ error: "no_org", message: "No organization found" }, 403);
+	}
+
+	const body = await c.req.json<{ name: string; expires_in_days?: number }>();
+
+	const name = body.name?.trim();
+	if (!name || name.length > 64) {
+		return c.json({ error: "invalid_name", message: "Name is required (1-64 chars)" }, 400);
+	}
+
+	const randomBytes = new Uint8Array(32);
+	crypto.getRandomValues(randomBytes);
+	const hexSecret = Array.from(randomBytes)
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+	const rawToken = `jkt_${hexSecret}`;
+	const idPrefix = hexSecret.slice(0, 8);
+	const tokenHash = await hashToken(rawToken);
+
+	const tokenId = `tok_${crypto.randomUUID()}`;
+	const expiresAt = body.expires_in_days
+		? new Date(Date.now() + body.expires_in_days * 86400000).toISOString()
+		: null;
+
+	await c.env.DB.prepare(
+		`INSERT INTO api_tokens (id, user_id, org_id, name, token_hash, id_prefix, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	)
+		.bind(tokenId, auth.userId, auth.orgId, name, tokenHash, idPrefix, expiresAt)
+		.run();
+
+	return c.json(
+		{
+			token: rawToken,
+			id: tokenId,
+			name,
+			created_at: new Date().toISOString(),
+			expires_at: expiresAt,
+		},
+		201,
+	);
+});
+
+api.get("/tokens", async (c) => {
+	const auth = c.get("auth");
+	if (!auth.orgId) {
+		return c.json({ error: "no_org", message: "No organization found" }, 403);
+	}
+
+	const { results } = await c.env.DB.prepare(
+		`SELECT id, name, id_prefix, created_at, last_used_at, expires_at
+		 FROM api_tokens WHERE org_id = ? AND revoked_at IS NULL
+		 ORDER BY created_at DESC`,
+	)
+		.bind(auth.orgId)
+		.all();
+
+	return c.json({ tokens: results });
+});
+
+api.delete("/tokens/:id", async (c) => {
+	const auth = c.get("auth");
+	const tokenId = c.req.param("id");
+
+	if (!auth.orgId) {
+		return c.json({ error: "no_org", message: "No organization found" }, 403);
+	}
+
+	const token = await c.env.DB.prepare(
+		"SELECT id FROM api_tokens WHERE id = ? AND org_id = ? AND revoked_at IS NULL",
+	)
+		.bind(tokenId, auth.orgId)
+		.first();
+
+	if (!token) {
+		return c.json({ error: "not_found", message: "Token not found" }, 404);
+	}
+
+	await c.env.DB.prepare(
+		"UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ?",
+	)
+		.bind(tokenId)
+		.run();
+
+	return c.json({ revoked: true, id: tokenId });
+});
+
 api.get("/orgs", async (c) => {
 	const auth = c.get("auth");
 	const result = await c.env.DB.prepare(
@@ -5306,7 +5398,85 @@ const handler: ExportedHandler<Bindings> = {
 
 export default handler;
 
+async function hashToken(token: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(token);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+	const hashArray = Array.from(new Uint8Array(hashBuffer));
+	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function verifyApiToken(token: string, db: D1Database): Promise<AuthContext> {
+	const hexPart = token.slice(4); // Remove "jkt_" prefix
+	const idPrefix = hexPart.slice(0, 8);
+	const tokenHash = await hashToken(token);
+
+	const { results } = await db
+		.prepare(
+			`SELECT id, user_id, org_id, token_hash, expires_at
+			 FROM api_tokens
+			 WHERE id_prefix = ? AND revoked_at IS NULL`,
+		)
+		.bind(idPrefix)
+		.all<{
+			id: string;
+			user_id: string;
+			org_id: string;
+			token_hash: string;
+			expires_at: string | null;
+		}>();
+
+	const matched = results.find((r) => r.token_hash === tokenHash);
+	if (!matched) {
+		throw new Error("Invalid API token");
+	}
+
+	if (matched.expires_at && new Date(matched.expires_at) < new Date()) {
+		throw new Error("API token has expired");
+	}
+
+	// Look up user info (include workos_user_id to avoid a second query)
+	const user = await db
+		.prepare("SELECT id, email, first_name, last_name, workos_user_id FROM users WHERE id = ?")
+		.bind(matched.user_id)
+		.first<{
+			id: string;
+			email: string;
+			first_name: string | null;
+			last_name: string | null;
+			workos_user_id: string;
+		}>();
+
+	if (!user) {
+		throw new Error("Token owner not found");
+	}
+
+	const org = await db
+		.prepare("SELECT workos_org_id FROM orgs WHERE id = ?")
+		.bind(matched.org_id)
+		.first<{ workos_org_id: string }>();
+
+	// Fire-and-forget: update last_used_at
+	db.prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?")
+		.bind(matched.id)
+		.run();
+
+	return {
+		userId: user.id,
+		orgId: matched.org_id,
+		workosUserId: user.workos_user_id,
+		workosOrgId: org?.workos_org_id,
+		email: user.email,
+		firstName: user.first_name ?? undefined,
+		lastName: user.last_name ?? undefined,
+	};
+}
+
 async function verifyAuth(token: string, db: D1Database): Promise<AuthContext> {
+	if (token.startsWith("jkt_")) {
+		return verifyApiToken(token, db);
+	}
+
 	const payload = (await verifyJwt(token)) as WorkosJwtPayload;
 	if (!payload.sub) {
 		throw new Error("Missing subject in token");

@@ -13,7 +13,7 @@ export async function requireAuth(): Promise<string> {
 		throw new JackError(
 			JackErrorCode.AUTH_FAILED,
 			"Not logged in",
-			"Run 'jack login' to sign in to jack cloud",
+			"Run 'jack login' to sign in, or set JACK_API_TOKEN for headless use",
 		);
 	}
 
