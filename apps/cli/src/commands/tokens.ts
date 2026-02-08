@@ -14,7 +14,11 @@ import {
 } from "../lib/services/token-operations.ts";
 import { Events, track } from "../lib/telemetry.ts";
 
-export default async function tokens(subcommand?: string, args: string[] = []): Promise<void> {
+export default async function tokens(
+	subcommand?: string,
+	args: string[] = [],
+	flags: Record<string, unknown> = {},
+): Promise<void> {
 	if (!subcommand) {
 		return showHelp();
 	}
@@ -26,7 +30,7 @@ export default async function tokens(subcommand?: string, args: string[] = []): 
 	switch (subcommand) {
 		case "create":
 		case "new":
-			return await createToken(args);
+			return await createToken(args, flags);
 		case "list":
 		case "ls":
 			return await listTokens();
@@ -46,7 +50,7 @@ function showHelp(): void {
 	info("jack tokens - Manage API tokens for headless authentication");
 	console.error("");
 	console.error("Commands:");
-	console.error("  create [--name <label>]   Create a new API token");
+	console.error("  create [name]             Create a new API token");
 	console.error("  list                      List active tokens");
 	console.error("  revoke <id>               Revoke a token");
 	console.error("");
@@ -56,11 +60,13 @@ function showHelp(): void {
 	console.error("");
 }
 
-async function createToken(args: string[]): Promise<void> {
+async function createToken(args: string[], flags: Record<string, unknown> = {}): Promise<void> {
+	// Accept name from --name flag or first positional arg
 	let name = "CLI Token";
-	const nameIdx = args.indexOf("--name");
-	if (nameIdx !== -1 && args[nameIdx + 1]) {
-		name = args[nameIdx + 1];
+	if (flags.name && typeof flags.name === "string") {
+		name = flags.name;
+	} else if (args[0] && !args[0].startsWith("-")) {
+		name = args[0];
 	}
 
 	const data = await createApiToken(name);

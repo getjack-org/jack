@@ -182,6 +182,9 @@ const cli = meow(
 			sort: {
 				type: "string",
 			},
+			name: {
+				type: "string",
+			},
 		},
 	},
 );
@@ -404,7 +407,11 @@ try {
 		}
 		case "tokens": {
 			const { default: tokens } = await import("./commands/tokens.ts");
-			await withTelemetry("tokens", tokens, { subcommand: args[0] })(args[0], args.slice(1));
+			await withTelemetry("tokens", tokens, { subcommand: args[0] })(
+				args[0],
+				args.slice(1),
+				cli.flags,
+			);
 			break;
 		}
 		case "domain": {
