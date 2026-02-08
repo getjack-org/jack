@@ -5,6 +5,10 @@ import { formatSize } from "../lib/format.ts";
 import { error, info, item, output as outputSpinner, success, warn } from "../lib/output.ts";
 import { readProjectLink } from "../lib/project-link.ts";
 import { parseWranglerResources } from "../lib/resources.ts";
+import { createCronSchedule } from "../lib/services/cron-create.ts";
+import { deleteCronSchedule } from "../lib/services/cron-delete.ts";
+import { listCronSchedules } from "../lib/services/cron-list.ts";
+import { COMMON_CRON_PATTERNS, testCronExpression } from "../lib/services/cron-test.ts";
 import { createDatabase } from "../lib/services/db-create.ts";
 import {
 	DestructiveOperationError,
@@ -111,9 +115,11 @@ export default async function services(
 			return await dbCommand(args, options);
 		case "storage":
 			return await storageCommand(args, options);
+		case "cron":
+			return await cronCommand(args, options);
 		default:
 			error(`Unknown service: ${subcommand}`);
-			info("Available: db, storage");
+			info("Available: db, storage, cron");
 			process.exit(1);
 	}
 }
@@ -125,6 +131,7 @@ function showHelp(): void {
 	console.error("Commands:");
 	console.error("  db         Manage database");
 	console.error("  storage    Manage storage (R2 buckets)");
+	console.error("  cron       Manage scheduled tasks");
 	console.error("");
 	console.error("Run 'jack services <command>' for more information.");
 	console.error("");
@@ -1179,5 +1186,297 @@ async function storageDelete(args: string[], options: ServiceOptions): Promise<v
 		console.error("");
 		error(`Failed to delete bucket: ${err instanceof Error ? err.message : String(err)}`);
 		process.exit(1);
+	}
+}
+
+// ============================================================================
+// Cron Commands
+// ============================================================================
+
+function showCronHelp(): void {
+	console.error("");
+	info("jack services cron - Manage scheduled tasks");
+	console.error("");
+	console.error("Actions:");
+	console.error('  create <expression>   Add a cron schedule (e.g., "0 * * * *")');
+	console.error("  list                  List all cron schedules");
+	console.error("  delete <expression>   Remove a cron schedule");
+	console.error("  test <expression>     Validate and preview a cron expression");
+	console.error("");
+	console.error("Examples:");
+	console.error('  jack services cron create "0 * * * *"   Schedule hourly runs');
+	console.error("  jack services cron list                 Show all schedules");
+	console.error('  jack services cron delete "0 * * * *"   Remove a schedule');
+	console.error('  jack services cron test "*/15 * * * *"  Preview next run times');
+	console.error("");
+	console.error("Common patterns:");
+	for (const pattern of COMMON_CRON_PATTERNS) {
+		console.error(`  ${pattern.expression.padEnd(15)} ${pattern.description}`);
+	}
+	console.error("");
+	console.error("Note: Cron schedules require Jack Cloud (managed) projects.");
+	console.error("All times are in UTC.");
+	console.error("");
+}
+
+async function cronCommand(args: string[], options: ServiceOptions): Promise<void> {
+	// Check if any argument is --help or -h
+	if (args.includes("--help") || args.includes("-h")) {
+		return showCronHelp();
+	}
+
+	const action = args[0] || "list"; // Default to list
+
+	switch (action) {
+		case "help":
+			return showCronHelp();
+		case "create":
+			return await cronCreate(args.slice(1), options);
+		case "list":
+			return await cronList(options);
+		case "delete":
+			return await cronDelete(args.slice(1), options);
+		case "test":
+			return await cronTest(args.slice(1), options);
+		default:
+			error(`Unknown action: ${action}`);
+			info("Available: create, list, delete, test");
+			process.exit(1);
+	}
+}
+
+/**
+ * Create a new cron schedule
+ */
+async function cronCreate(args: string[], options: ServiceOptions): Promise<void> {
+	const expression = args[0];
+
+	if (!expression) {
+		console.error("");
+		error("Cron expression required");
+		info('Usage: jack services cron create "<expression>"');
+		console.error("");
+		console.error("Common patterns:");
+		for (const pattern of COMMON_CRON_PATTERNS) {
+			console.error(`  ${pattern.expression.padEnd(15)} ${pattern.description}`);
+		}
+		console.error("");
+		process.exit(1);
+	}
+
+	outputSpinner.start("Creating cron schedule...");
+	try {
+		const result = await createCronSchedule(process.cwd(), expression, {
+			interactive: true,
+		});
+		outputSpinner.stop();
+
+		// Track telemetry
+		track(Events.SERVICE_CREATED, {
+			service_type: "cron",
+			created: result.created,
+		});
+
+		console.error("");
+		success("Cron schedule created");
+		console.error("");
+		item(`Expression: ${result.expression}`);
+		item(`Schedule: ${result.description}`);
+		item(`Next run: ${result.nextRunAt}`);
+		console.error("");
+		info("Make sure your Worker handles POST /__scheduled requests.");
+		console.error("");
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to create cron schedule: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * List all cron schedules
+ */
+async function cronList(options: ServiceOptions): Promise<void> {
+	outputSpinner.start("Fetching cron schedules...");
+	try {
+		const schedules = await listCronSchedules(process.cwd());
+		outputSpinner.stop();
+
+		if (schedules.length === 0) {
+			console.error("");
+			info("No cron schedules found for this project.");
+			console.error("");
+			info('Create one with: jack services cron create "0 * * * *"');
+			console.error("");
+			return;
+		}
+
+		console.error("");
+		success(`Found ${schedules.length} cron schedule${schedules.length === 1 ? "" : "s"}:`);
+		console.error("");
+
+		for (const schedule of schedules) {
+			const statusIcon = schedule.enabled ? "+" : "-";
+			item(`${statusIcon} ${schedule.expression}`);
+			item(`  ${schedule.description}`);
+			item(`  Next: ${schedule.nextRunAt}`);
+			if (schedule.lastRunAt) {
+				const statusLabel =
+					schedule.lastRunStatus === "success"
+						? "success"
+						: `${schedule.lastRunStatus} (${schedule.consecutiveFailures} failures)`;
+				item(`  Last: ${schedule.lastRunAt} - ${statusLabel}`);
+				if (schedule.lastRunDurationMs !== null) {
+					item(`  Duration: ${schedule.lastRunDurationMs}ms`);
+				}
+			}
+			console.error("");
+		}
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to list cron schedules: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * Delete a cron schedule
+ */
+async function cronDelete(args: string[], options: ServiceOptions): Promise<void> {
+	const expression = args[0];
+
+	if (!expression) {
+		console.error("");
+		error("Cron expression required");
+		info('Usage: jack services cron delete "<expression>"');
+		console.error("");
+		process.exit(1);
+	}
+
+	// Show what will be deleted
+	console.error("");
+	info(`Cron schedule: ${expression}`);
+	console.error("");
+	warn("This will stop all future scheduled runs");
+	console.error("");
+
+	// Confirm deletion
+	const { promptSelect } = await import("../lib/hooks.ts");
+	const choice = await promptSelect(
+		["Yes, delete", "No, cancel"],
+		`Delete cron schedule '${expression}'?`,
+	);
+
+	if (choice !== 0) {
+		info("Cancelled");
+		return;
+	}
+
+	outputSpinner.start("Deleting cron schedule...");
+	try {
+		const result = await deleteCronSchedule(process.cwd(), expression, {
+			interactive: true,
+		});
+		outputSpinner.stop();
+
+		// Track telemetry
+		track(Events.SERVICE_DELETED, {
+			service_type: "cron",
+			deleted: result.deleted,
+		});
+
+		console.error("");
+		success("Cron schedule deleted");
+		console.error("");
+	} catch (err) {
+		outputSpinner.stop();
+		console.error("");
+		error(`Failed to delete cron schedule: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * Test/validate a cron expression
+ */
+async function cronTest(args: string[], options: ServiceOptions): Promise<void> {
+	const expression = args[0];
+
+	if (!expression) {
+		console.error("");
+		error("Cron expression required");
+		info('Usage: jack services cron test "<expression>"');
+		console.error("");
+		console.error("Common patterns:");
+		for (const pattern of COMMON_CRON_PATTERNS) {
+			console.error(`  ${pattern.expression.padEnd(15)} ${pattern.description}`);
+		}
+		console.error("");
+		process.exit(1);
+	}
+
+	// Test the expression (no production trigger by default)
+	const result = await testCronExpression(process.cwd(), expression, {
+		interactive: true,
+	});
+
+	if (!result.valid) {
+		console.error("");
+		error(`Invalid cron expression: ${result.error}`);
+		console.error("");
+		console.error("Common patterns:");
+		for (const pattern of COMMON_CRON_PATTERNS) {
+			console.error(`  ${pattern.expression.padEnd(15)} ${pattern.description}`);
+		}
+		console.error("");
+		process.exit(1);
+	}
+
+	console.error("");
+	success("Valid cron expression");
+	console.error("");
+	item(`Expression: ${result.expression}`);
+	item(`Schedule: ${result.description}`);
+	console.error("");
+	info("Next 5 runs (UTC):");
+	for (const time of result.nextTimes!) {
+		item(`  ${time.toISOString()}`);
+	}
+	console.error("");
+
+	// Check if this is a managed project for optional trigger
+	const link = await readProjectLink(process.cwd());
+	if (link?.deploy_mode === "managed") {
+		const { promptSelect } = await import("../lib/hooks.ts");
+		const choice = await promptSelect(
+			["Yes, trigger now", "No, skip"],
+			"Trigger scheduled handler on production?",
+		);
+
+		if (choice === 0) {
+			outputSpinner.start("Triggering scheduled handler...");
+			try {
+				const triggerResult = await testCronExpression(process.cwd(), expression, {
+					triggerProduction: true,
+					interactive: true,
+				});
+				outputSpinner.stop();
+
+				if (triggerResult.triggerResult) {
+					console.error("");
+					success(
+						`Triggered! Status: ${triggerResult.triggerResult.status}, Duration: ${triggerResult.triggerResult.durationMs}ms`,
+					);
+					console.error("");
+				}
+			} catch (err) {
+				outputSpinner.stop();
+				console.error("");
+				error(`Failed to trigger: ${err instanceof Error ? err.message : String(err)}`);
+				console.error("");
+			}
+		}
 	}
 }

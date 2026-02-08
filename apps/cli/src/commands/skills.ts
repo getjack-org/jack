@@ -124,9 +124,12 @@ export default async function skills(subcommand?: string, args: string[] = []): 
 		case "remove":
 		case "rm":
 			return await removeSkill(args[0]);
+		case "upgrade":
+		case "update":
+			return await upgradeSkill(args[0]);
 		default:
 			error(`Unknown subcommand: ${subcommand}`);
-			info("Available: run, list, remove");
+			info("Available: run, list, remove, upgrade");
 			process.exit(1);
 	}
 }
@@ -139,6 +142,7 @@ async function showHelp(): Promise<void> {
 	console.log("  run <name>          Install (if needed) and launch agent with skill");
 	console.log("  list                List installed skills in current project");
 	console.log("  remove <name>       Remove a skill from project");
+	console.log("  upgrade <name>      Re-install skill to get latest version");
 	console.log("");
 	const skills = await fetchAvailableSkills();
 	if (skills.length > 0) {
@@ -332,4 +336,57 @@ async function removeSkill(skillName?: string): Promise<void> {
 	} else {
 		info(`Skill ${skillName} not found in project`);
 	}
+}
+
+async function upgradeSkill(skillName?: string): Promise<void> {
+	if (!skillName) {
+		error("Missing skill name");
+		info("Usage: jack skills upgrade <name>");
+		process.exit(1);
+	}
+
+	const projectDir = process.cwd();
+	const skillPath = join(projectDir, ".claude/skills", skillName);
+
+	// Check if installed
+	if (!existsSync(skillPath)) {
+		error(`Skill ${skillName} not installed`);
+		info(`Install it first: jack skills run ${skillName}`);
+		process.exit(1);
+	}
+
+	// Remove existing installation
+	info(`Removing old version of ${skillName}...`);
+	const dirs = [".agents/skills", ".claude/skills", ".codex/skills", ".cursor/skills"];
+	for (const dir of dirs) {
+		const path = join(projectDir, dir, skillName);
+		if (existsSync(path)) {
+			await rm(path, { recursive: true, force: true });
+		}
+	}
+
+	// Re-install from GitHub
+	info(`Installing latest ${skillName}...`);
+	const agentFlags = SUPPORTED_AGENTS.flatMap((a) => ["--agent", a]);
+	const proc = Bun.spawn(
+		["npx", "skills", "add", SKILLS_REPO, "--skill", skillName, ...agentFlags, "--yes"],
+		{
+			cwd: projectDir,
+			stdout: "pipe",
+			stderr: "pipe",
+		},
+	);
+
+	const stderr = await new Response(proc.stderr).text();
+	await proc.exited;
+
+	if (proc.exitCode !== 0) {
+		error(`Failed to upgrade skill: ${skillName}`);
+		if (stderr.trim()) {
+			console.error(stderr);
+		}
+		process.exit(1);
+	}
+
+	success(`Upgraded ${skillName} to latest version`);
 }

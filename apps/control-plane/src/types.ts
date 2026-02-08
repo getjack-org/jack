@@ -266,3 +266,26 @@ export interface Credit {
 	note: string | null;
 	created_at: string;
 }
+
+// Cron schedule interface matching DB schema
+export interface CronSchedule {
+	id: string;
+	project_id: string;
+	expression: string;
+	expression_normalized: string;
+	enabled: number; // SQLite boolean (0 or 1)
+	is_running: number; // SQLite boolean (0 or 1)
+	run_started_at: string | null;
+	last_run_at: string | null;
+	next_run_at: string;
+	last_run_status: string | null;
+	last_run_duration_ms: number | null;
+	consecutive_failures: number;
+	created_at: string;
+}
+
+// Extended cron schedule with project info for cron runner
+export interface CronScheduleWithProject extends CronSchedule {
+	worker_name: string;
+	cron_secret: string;
+}

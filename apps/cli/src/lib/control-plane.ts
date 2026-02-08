@@ -806,6 +806,36 @@ export interface LogSessionInfo {
 	expires_at: string;
 }
 
+// ============================================================================
+// Cron Schedule Types
+// ============================================================================
+
+export interface CronScheduleInfo {
+	id: string;
+	expression: string;
+	description: string;
+	enabled: boolean;
+	next_run_at: string;
+	last_run_at: string | null;
+	last_run_status: string | null;
+	last_run_duration_ms: number | null;
+	consecutive_failures: number;
+	created_at: string;
+}
+
+export interface CreateCronScheduleResponse {
+	id: string;
+	expression: string;
+	description: string;
+	next_run_at: string;
+}
+
+export interface TriggerCronScheduleResponse {
+	triggered: boolean;
+	status: string;
+	duration_ms: number;
+}
+
 export interface StartLogSessionResponse {
 	success: boolean;
 	session: LogSessionInfo;
@@ -835,4 +865,101 @@ export async function startLogSession(
 	}
 
 	return response.json() as Promise<StartLogSessionResponse>;
+}
+
+// ============================================================================
+// Cron Schedule Operations
+// ============================================================================
+
+/**
+ * Create a cron schedule for a managed project.
+ */
+export async function createCronSchedule(
+	projectId: string,
+	expression: string,
+): Promise<CreateCronScheduleResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/crons`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ expression }),
+	});
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to create cron schedule: ${response.status}`);
+	}
+
+	return response.json() as Promise<CreateCronScheduleResponse>;
+}
+
+/**
+ * List all cron schedules for a managed project.
+ */
+export async function listCronSchedules(projectId: string): Promise<CronScheduleInfo[]> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/crons`);
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to list cron schedules: ${response.status}`);
+	}
+
+	const data = (await response.json()) as { schedules: CronScheduleInfo[] };
+	return data.schedules;
+}
+
+/**
+ * Delete a cron schedule from a managed project.
+ */
+export async function deleteCronSchedule(projectId: string, cronId: string): Promise<void> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${projectId}/crons/${cronId}`,
+		{ method: "DELETE" },
+	);
+
+	if (response.status === 404) {
+		// Already deleted, treat as success
+		return;
+	}
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to delete cron schedule: ${response.status}`);
+	}
+}
+
+/**
+ * Manually trigger a cron schedule on a managed project.
+ */
+export async function triggerCronSchedule(
+	projectId: string,
+	expression: string,
+): Promise<TriggerCronScheduleResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/crons/trigger`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ expression }),
+	});
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to trigger cron schedule: ${response.status}`);
+	}
+
+	return response.json() as Promise<TriggerCronScheduleResponse>;
 }

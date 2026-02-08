@@ -2045,6 +2045,427 @@ api.get("/projects/:projectId/database/export", async (c) => {
 	}
 });
 
+// =====================================================
+// Cron Schedule Endpoints
+// =====================================================
+
+const MAX_CRONS_PER_PROJECT = 5;
+const MIN_CRON_INTERVAL_MINUTES = 15;
+
+// Helper function to normalize cron expression
+function normalizeCronExpression(expression: string): string {
+	return expression.trim().replace(/\s+/g, " ");
+}
+
+// Helper function to validate cron expression and compute next run time
+async function validateAndParseCron(
+	expression: string,
+): Promise<{ valid: boolean; error?: string; nextRun?: string; description?: string }> {
+	try {
+		// Dynamic import for cron-parser (ESM)
+		const cronParser = await import("cron-parser");
+		const cronstrue = await import("cronstrue");
+
+		const normalized = normalizeCronExpression(expression);
+
+		// Parse and validate
+		const interval = cronParser.parseExpression(normalized);
+
+		// Check minimum interval (15 minutes)
+		const now = new Date();
+		const first = interval.next().toDate();
+		interval.reset();
+		const second = interval.next().toDate();
+		interval.reset();
+		interval.next(); // skip first
+		const secondRun = interval.next().toDate();
+
+		const intervalMs = secondRun.getTime() - first.getTime();
+		const intervalMinutes = intervalMs / (1000 * 60);
+
+		if (intervalMinutes < MIN_CRON_INTERVAL_MINUTES) {
+			return {
+				valid: false,
+				error: `Cron interval must be at least ${MIN_CRON_INTERVAL_MINUTES} minutes. This expression runs every ${Math.round(intervalMinutes)} minutes.`,
+			};
+		}
+
+		// Get next run time
+		interval.reset();
+		const nextRun = interval.next().toDate().toISOString();
+
+		// Get human-readable description
+		let description: string;
+		try {
+			description = cronstrue.toString(normalized);
+		} catch {
+			description = normalized;
+		}
+
+		return { valid: true, nextRun, description };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Invalid cron expression";
+		return { valid: false, error: message };
+	}
+}
+
+// POST /v1/projects/:projectId/crons - Create a cron schedule
+api.post("/projects/:projectId/crons", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string; slug: string; cron_secret: string | null }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Parse request body
+	const body = await c.req.json<{ expression: string }>();
+	if (!body.expression || typeof body.expression !== "string") {
+		return c.json(
+			{ error: "invalid_request", message: "expression is required and must be a string" },
+			400,
+		);
+	}
+
+	// Validate cron expression
+	const validation = await validateAndParseCron(body.expression);
+	if (!validation.valid) {
+		return c.json({ error: "invalid_cron", message: validation.error }, 400);
+	}
+
+	const normalized = normalizeCronExpression(body.expression);
+
+	// Check existing cron count
+	const countResult = await c.env.DB.prepare(
+		"SELECT COUNT(*) as count FROM cron_schedules WHERE project_id = ?",
+	)
+		.bind(projectId)
+		.first<{ count: number }>();
+
+	if (countResult && countResult.count >= MAX_CRONS_PER_PROJECT) {
+		return c.json(
+			{
+				error: "limit_exceeded",
+				message: `Maximum ${MAX_CRONS_PER_PROJECT} cron schedules per project`,
+			},
+			400,
+		);
+	}
+
+	// Check for duplicate expression
+	const existing = await c.env.DB.prepare(
+		"SELECT id FROM cron_schedules WHERE project_id = ? AND expression_normalized = ?",
+	)
+		.bind(projectId, normalized)
+		.first<{ id: string }>();
+
+	if (existing) {
+		// Return existing schedule (idempotent)
+		const schedule = await c.env.DB.prepare("SELECT * FROM cron_schedules WHERE id = ?")
+			.bind(existing.id)
+			.first();
+
+		return c.json({
+			id: existing.id,
+			expression: body.expression,
+			expression_normalized: normalized,
+			description: validation.description,
+			next_run_at: validation.nextRun,
+			created: false,
+			message: "Schedule already exists",
+		});
+	}
+
+	// Generate cron_secret if not exists
+	let cronSecret = project.cron_secret;
+	if (!cronSecret) {
+		cronSecret = crypto.randomUUID();
+		await c.env.DB.prepare(
+			"UPDATE projects SET cron_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		)
+			.bind(cronSecret, projectId)
+			.run();
+	}
+
+	// Create cron schedule
+	const cronId = `cron_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+	const now = new Date().toISOString();
+
+	await c.env.DB.prepare(
+		`INSERT INTO cron_schedules (id, project_id, expression, expression_normalized, next_run_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+	)
+		.bind(cronId, projectId, body.expression, normalized, validation.nextRun, now)
+		.run();
+
+	return c.json(
+		{
+			id: cronId,
+			expression: body.expression,
+			expression_normalized: normalized,
+			description: validation.description,
+			next_run_at: validation.nextRun,
+			created_at: now,
+			created: true,
+		},
+		201,
+	);
+});
+
+// GET /v1/projects/:projectId/crons - List cron schedules
+api.get("/projects/:projectId/crons", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Get all cron schedules for project
+	const schedules = await c.env.DB.prepare(
+		`SELECT * FROM cron_schedules WHERE project_id = ? ORDER BY created_at DESC`,
+	)
+		.bind(projectId)
+		.all<{
+			id: string;
+			expression: string;
+			expression_normalized: string;
+			enabled: number;
+			is_running: number;
+			last_run_at: string | null;
+			next_run_at: string;
+			last_run_status: string | null;
+			last_run_duration_ms: number | null;
+			consecutive_failures: number;
+			created_at: string;
+		}>();
+
+	// Add human-readable descriptions
+	const cronstrue = await import("cronstrue");
+	const schedulesWithDescription = (schedules.results || []).map((s) => {
+		let description: string;
+		try {
+			description = cronstrue.toString(s.expression_normalized);
+		} catch {
+			description = s.expression_normalized;
+		}
+
+		return {
+			id: s.id,
+			expression: s.expression,
+			description,
+			enabled: s.enabled === 1,
+			is_running: s.is_running === 1,
+			next_run_at: s.next_run_at,
+			last_run_at: s.last_run_at,
+			last_run_status: s.last_run_status,
+			last_run_duration_ms: s.last_run_duration_ms,
+			consecutive_failures: s.consecutive_failures,
+			created_at: s.created_at,
+		};
+	});
+
+	return c.json({ schedules: schedulesWithDescription });
+});
+
+// DELETE /v1/projects/:projectId/crons/:cronId - Delete a cron schedule
+api.delete("/projects/:projectId/crons/:cronId", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const cronId = c.req.param("cronId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Check if cron exists
+	const schedule = await c.env.DB.prepare(
+		"SELECT id FROM cron_schedules WHERE id = ? AND project_id = ?",
+	)
+		.bind(cronId, projectId)
+		.first<{ id: string }>();
+
+	if (!schedule) {
+		return c.json({ error: "not_found", message: "Cron schedule not found" }, 404);
+	}
+
+	// Delete the schedule
+	await c.env.DB.prepare("DELETE FROM cron_schedules WHERE id = ?").bind(cronId).run();
+
+	return c.json({
+		success: true,
+		deleted_id: cronId,
+		deleted_at: new Date().toISOString(),
+	});
+});
+
+// POST /v1/projects/:projectId/crons/trigger - Manually trigger a cron schedule
+api.post("/projects/:projectId/crons/trigger", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project and verify ownership
+	const project = await c.env.DB.prepare(
+		`SELECT p.*, r.resource_name as worker_name FROM projects p
+     LEFT JOIN resources r ON r.project_id = p.id AND r.resource_type = 'worker' AND r.status != 'deleted'
+     WHERE p.id = ? AND p.status != 'deleted'`,
+	)
+		.bind(projectId)
+		.first<{
+			id: string;
+			org_id: string;
+			cron_secret: string | null;
+			worker_name: string | null;
+		}>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	if (!project.worker_name) {
+		return c.json({ error: "not_deployed", message: "Project has no deployed worker" }, 400);
+	}
+
+	// Parse request body
+	const body = await c.req.json<{ expression: string }>();
+	if (!body.expression || typeof body.expression !== "string") {
+		return c.json(
+			{ error: "invalid_request", message: "expression is required and must be a string" },
+			400,
+		);
+	}
+
+	const normalized = normalizeCronExpression(body.expression);
+
+	// Check if schedule exists
+	const schedule = await c.env.DB.prepare(
+		"SELECT id FROM cron_schedules WHERE project_id = ? AND expression_normalized = ?",
+	)
+		.bind(projectId, normalized)
+		.first<{ id: string }>();
+
+	if (!schedule) {
+		return c.json(
+			{ error: "not_found", message: "Cron schedule not found. Create it first." },
+			404,
+		);
+	}
+
+	// Execute the cron
+	const startTime = Date.now();
+	let status = "success";
+	let responseStatus: number | null = null;
+
+	try {
+		const worker = c.env.TENANT_DISPATCH.get(project.worker_name);
+
+		// Build signed request (use empty secret if not set)
+		const cronSecret = project.cron_secret || "";
+		const timestamp = Date.now().toString();
+		const payload = `${timestamp}.POST./__scheduled.${normalized}`;
+		const key = await crypto.subtle.importKey(
+			"raw",
+			new TextEncoder().encode(cronSecret),
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			["sign"],
+		);
+		const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+		const signature = Array.from(new Uint8Array(sig))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
+
+		const response = await worker.fetch(
+			new Request("https://internal/__scheduled", {
+				method: "POST",
+				headers: {
+					"X-Jack-Cron": normalized,
+					"X-Jack-Timestamp": timestamp,
+					"X-Jack-Signature": signature,
+				},
+			}),
+		);
+
+		responseStatus = response.status;
+		if (!response.ok) {
+			status = `error:${response.status}`;
+		}
+	} catch (error) {
+		status = "error:exception";
+		console.error(`Manual cron trigger for ${projectId} failed:`, error);
+	}
+
+	const duration = Date.now() - startTime;
+
+	return c.json({
+		triggered: true,
+		status,
+		response_status: responseStatus,
+		duration_ms: duration,
+	});
+});
+
 // Project deletion endpoint
 api.delete("/projects/:projectId", async (c) => {
 	const auth = c.get("auth");
@@ -4726,11 +5147,160 @@ async function pollPendingCustomDomains(env: Bindings): Promise<void> {
 	}
 }
 
+// =====================================================
+// Cron Schedule Runner
+// =====================================================
+
+interface CronScheduleRow {
+	id: string;
+	project_id: string;
+	expression: string;
+	expression_normalized: string;
+	worker_name: string;
+	cron_secret: string | null;
+}
+
+async function processDueCronSchedules(env: Bindings, ctx: ExecutionContext): Promise<void> {
+	const now = new Date();
+	const nowIso = now.toISOString();
+	const nowD1 = nowIso.replace("T", " ").replace("Z", "");
+
+	// 1. Reset stuck runs (is_running=1 and run_started_at > 5 minutes ago)
+	const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+	const stuckThreshold = fiveMinutesAgo.toISOString().replace("T", " ").replace("Z", "");
+
+	await env.DB.prepare(
+		`UPDATE cron_schedules
+     SET is_running = 0,
+         last_run_status = 'timeout',
+         consecutive_failures = consecutive_failures + 1
+     WHERE is_running = 1 AND run_started_at < ?`,
+	)
+		.bind(stuckThreshold)
+		.run();
+
+	// 2. Get candidates (not yet claimed, due to run)
+	const candidates = await env.DB.prepare(
+		`SELECT cs.id, cs.project_id, cs.expression, cs.expression_normalized,
+            r.resource_name as worker_name, p.cron_secret
+     FROM cron_schedules cs
+     JOIN projects p ON cs.project_id = p.id
+     JOIN resources r ON r.project_id = p.id AND r.resource_type = 'worker' AND r.status != 'deleted'
+     WHERE cs.enabled = 1
+       AND cs.is_running = 0
+       AND cs.next_run_at <= ?
+       AND p.status = 'active'
+     ORDER BY cs.next_run_at
+     LIMIT 50`,
+	)
+		.bind(nowD1)
+		.all<CronScheduleRow>();
+
+	if (!candidates.results?.length) return;
+
+	// 3. Process each candidate
+	for (const schedule of candidates.results) {
+		// ATOMIC CLAIM - prevents race condition
+		const claimed = await env.DB.prepare(
+			`UPDATE cron_schedules SET is_running = 1, run_started_at = ?
+       WHERE id = ? AND is_running = 0`,
+		)
+			.bind(nowD1, schedule.id)
+			.run();
+
+		if (claimed.meta.changes === 0) {
+			// Already claimed by another worker
+			continue;
+		}
+
+		// Execute in background
+		ctx.waitUntil(executeCronSchedule(env, schedule));
+	}
+}
+
+async function executeCronSchedule(env: Bindings, schedule: CronScheduleRow): Promise<void> {
+	const startTime = Date.now();
+	let status = "success";
+
+	try {
+		const worker = env.TENANT_DISPATCH.get(schedule.worker_name);
+
+		// Build signed request
+		const cronSecret = schedule.cron_secret || "";
+		const timestamp = Date.now().toString();
+		const payload = `${timestamp}.POST./__scheduled.${schedule.expression_normalized}`;
+		const key = await crypto.subtle.importKey(
+			"raw",
+			new TextEncoder().encode(cronSecret),
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			["sign"],
+		);
+		const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+		const signature = Array.from(new Uint8Array(sig))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
+
+		const response = await worker.fetch(
+			new Request("https://internal/__scheduled", {
+				method: "POST",
+				headers: {
+					"X-Jack-Cron": schedule.expression_normalized,
+					"X-Jack-Timestamp": timestamp,
+					"X-Jack-Signature": signature,
+				},
+			}),
+		);
+
+		// CHECK RESPONSE STATUS - don't assume success
+		if (!response.ok) {
+			status = `error:${response.status}`;
+			console.error(`Cron ${schedule.id} returned ${response.status}`);
+		}
+	} catch (error) {
+		status = "error:exception";
+		console.error(`Cron ${schedule.id} failed:`, error);
+	}
+
+	// ALWAYS release lock and update status
+	const duration = Date.now() - startTime;
+	const isFailure = !status.startsWith("success");
+
+	// Compute next run time
+	let nextRun: string;
+	try {
+		const cronParser = await import("cron-parser");
+		const interval = cronParser.parseExpression(schedule.expression_normalized);
+		nextRun = interval.next().toDate().toISOString();
+	} catch {
+		// If parsing fails, set next run to 1 hour from now
+		nextRun = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+	}
+
+	const nowD1 = new Date().toISOString().replace("T", " ").replace("Z", "");
+	const nextRunD1 = nextRun.replace("T", " ").replace("Z", "");
+
+	await env.DB.prepare(
+		`UPDATE cron_schedules
+     SET is_running = 0,
+         run_started_at = NULL,
+         last_run_at = ?,
+         last_run_status = ?,
+         last_run_duration_ms = ?,
+         next_run_at = ?,
+         consecutive_failures = CASE WHEN ? THEN consecutive_failures + 1 ELSE 0 END
+     WHERE id = ?`,
+	)
+		.bind(nowD1, status, duration, nextRunD1, isFailure ? 1 : 0, schedule.id)
+		.run();
+}
+
 const handler: ExportedHandler<Bindings> = {
 	fetch: app.fetch,
 	scheduled: (_event, env, ctx) => {
 		ctx.waitUntil(sweepExpiredLogSessions(env));
 		ctx.waitUntil(pollPendingCustomDomains(env));
+		ctx.waitUntil(processDueCronSchedules(env, ctx));
 	},
 };
 
