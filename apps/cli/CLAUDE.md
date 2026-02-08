@@ -292,6 +292,10 @@ jack mcp serve --project /path/to/app  # Explicit project path
 | `get_storage_info` | `jack services storage info` | Get bucket info |
 | `start_log_session` | `jack logs` | Start real-time log session |
 | `tail_logs` | `jack logs` | Collect log samples |
+| `create_cron` | `jack services cron create` | Create cron schedule (managed only) |
+| `list_crons` | `jack services cron list` | List project cron schedules |
+| `delete_cron` | `jack services cron delete` | Delete cron schedule |
+| `test_cron` | `jack services cron test` | Validate and test cron expression |
 
 **Missing MCP tools (CLI-only):**
 - `jack domain connect/assign/unassign/disconnect` - custom domain management

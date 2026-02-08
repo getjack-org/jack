@@ -15,6 +15,10 @@ import {
 	wrapResultsForMcp,
 } from "../../lib/services/db-execute.ts";
 import { listDatabases } from "../../lib/services/db-list.ts";
+import { createCronSchedule } from "../../lib/services/cron-create.ts";
+import { deleteCronSchedule } from "../../lib/services/cron-delete.ts";
+import { listCronSchedules } from "../../lib/services/cron-list.ts";
+import { testCronExpression } from "../../lib/services/cron-test.ts";
 import {
 	assignDomain,
 	connectDomain,
@@ -213,6 +217,42 @@ const UnassignDomainSchema = z.object({
 
 const DisconnectDomainSchema = z.object({
 	hostname: z.string().describe("The domain hostname to disconnect (fully remove)"),
+});
+
+const CreateCronSchema = z.object({
+	expression: z.string().describe("Cron expression (e.g., '0 * * * *' for hourly, '*/15 * * * *' for every 15 min)"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const ListCronsSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const DeleteCronSchema = z.object({
+	expression: z.string().describe("Cron expression to delete"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const TestCronSchema = z.object({
+	expression: z.string().describe("Cron expression to test"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+	trigger_production: z
+		.boolean()
+		.optional()
+		.default(false)
+		.describe("Whether to trigger the cron handler on production (requires managed project)"),
 });
 
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
@@ -609,6 +649,80 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							},
 						},
 						required: ["hostname"],
+					},
+				},
+				{
+					name: "create_cron",
+					description:
+						"Create a cron schedule for a managed (Jack Cloud) project. Minimum interval is 15 minutes. The worker must have a scheduled() handler or POST /__scheduled route.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							expression: {
+								type: "string",
+								description: "Cron expression (e.g., '0 * * * *' for hourly, '*/15 * * * *' for every 15 min)",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+						required: ["expression"],
+					},
+				},
+				{
+					name: "list_crons",
+					description: "List all cron schedules for a managed (Jack Cloud) project.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "delete_cron",
+					description: "Delete a cron schedule by its expression.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							expression: {
+								type: "string",
+								description: "Cron expression to delete",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+						required: ["expression"],
+					},
+				},
+				{
+					name: "test_cron",
+					description:
+						"Test a cron expression: validate, show human-readable description, and display next 5 scheduled times. Optionally trigger the handler on production.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							expression: {
+								type: "string",
+								description: "Cron expression to test",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+							trigger_production: {
+								type: "boolean",
+								default: false,
+								description: "Whether to trigger the cron handler on production (requires managed project)",
+							},
+						},
+						required: ["expression"],
 					},
 				},
 			],
@@ -1555,6 +1669,171 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					);
 
 					const result = await wrappedDisconnectDomain(args.hostname);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "create_cron": {
+					const args = CreateCronSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedCreateCron = withTelemetry(
+						"create_cron",
+						async (projectDir: string, expression: string) => {
+							const result = await createCronSchedule(projectDir, expression, {
+								interactive: false,
+							});
+
+							track(Events.SERVICE_CREATED, {
+								service_type: "cron",
+								platform: "mcp",
+							});
+
+							return {
+								id: result.id,
+								expression: result.expression,
+								description: result.description,
+								next_run_at: result.nextRunAt,
+								created: result.created,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedCreateCron(projectPath, args.expression);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "list_crons": {
+					const args = ListCronsSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedListCrons = withTelemetry(
+						"list_crons",
+						async (projectDir: string) => {
+							const schedules = await listCronSchedules(projectDir);
+							return {
+								schedules: schedules.map((s) => ({
+									id: s.id,
+									expression: s.expression,
+									description: s.description,
+									enabled: s.enabled,
+									next_run_at: s.nextRunAt,
+									last_run_at: s.lastRunAt,
+									last_run_status: s.lastRunStatus,
+									last_run_duration_ms: s.lastRunDurationMs,
+									consecutive_failures: s.consecutiveFailures,
+									created_at: s.createdAt,
+								})),
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedListCrons(projectPath);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "delete_cron": {
+					const args = DeleteCronSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedDeleteCron = withTelemetry(
+						"delete_cron",
+						async (projectDir: string, expression: string) => {
+							const result = await deleteCronSchedule(projectDir, expression, {
+								interactive: false,
+							});
+
+							track(Events.SERVICE_DELETED, {
+								service_type: "cron",
+								platform: "mcp",
+							});
+
+							return {
+								expression: result.expression,
+								deleted: result.deleted,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedDeleteCron(projectPath, args.expression);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "test_cron": {
+					const args = TestCronSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedTestCron = withTelemetry(
+						"test_cron",
+						async (projectDir: string, expression: string, triggerProduction: boolean) => {
+							const result = await testCronExpression(projectDir, expression, {
+								triggerProduction,
+								interactive: false,
+							});
+
+							if (!result.valid) {
+								return {
+									valid: false,
+									error: result.error,
+								};
+							}
+
+							return {
+								valid: true,
+								expression: result.expression,
+								description: result.description,
+								next_times: result.nextTimes?.map((d) => d.toISOString()),
+								trigger_result: result.triggerResult
+									? {
+											triggered: result.triggerResult.triggered,
+											status: result.triggerResult.status,
+											duration_ms: result.triggerResult.durationMs,
+										}
+									: undefined,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedTestCron(
+						projectPath,
+						args.expression,
+						args.trigger_production ?? false,
+					);
 
 					return {
 						content: [

@@ -9,6 +9,7 @@ import { CONFIG_DIR } from "./config.ts";
  * MCP server configuration structure
  */
 export interface McpServerConfig {
+	type: "stdio";
 	command: string;
 	args: string[];
 	env?: Record<string, string>;
@@ -49,18 +50,39 @@ const JACK_MCP_CONFIG_DIR = join(CONFIG_DIR, "mcp");
 const JACK_MCP_CONFIG_PATH = join(JACK_MCP_CONFIG_DIR, "config.json");
 
 /**
+ * Find the jack binary path
+ * Checks common install locations
+ */
+function findJackBinary(): string {
+	const bunBin = join(homedir(), ".bun", "bin", "jack");
+	const npmBin = join(homedir(), ".npm-global", "bin", "jack");
+	const homebrewBin = "/opt/homebrew/bin/jack";
+	const usrLocalBin = "/usr/local/bin/jack";
+
+	// Check in order of priority
+	for (const path of [bunBin, npmBin, homebrewBin, usrLocalBin]) {
+		if (existsSync(path)) {
+			return path;
+		}
+	}
+
+	// Fallback to just "jack" and hope PATH works
+	return "jack";
+}
+
+/**
  * Returns the jack MCP server configuration
- * Includes PATH with common install locations so Claude Desktop can find jack
+ * Uses full path to jack binary for reliability
  */
 export function getJackMcpConfig(): McpServerConfig {
-	// Build PATH with common locations where jack might be installed
-	// ~/.bun/bin is where `bun link` installs global commands
+	// Build PATH with common locations (still needed for child processes)
 	const bunBin = join(homedir(), ".bun", "bin");
 	const npmBin = join(homedir(), ".npm-global", "bin");
 	const defaultPaths = [bunBin, npmBin, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
 
 	return {
-		command: "jack",
+		type: "stdio",
+		command: findJackBinary(),
 		args: ["mcp", "serve"],
 		env: {
 			PATH: defaultPaths.join(":"),
