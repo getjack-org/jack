@@ -43,8 +43,31 @@ export async function createMcpServer(options: McpServerOptions = {}) {
 	return { server, debug };
 }
 
+/**
+ * Install runtime guards that prevent accidental stdout writes from corrupting
+ * the MCP JSON-RPC stdio transport. This catches console.log() and
+ * process.stdout.write() but NOT Bun.spawn({ stdout: "inherit" }) which writes
+ * directly to fd 1 — that case is handled by the `interactive` flag in hooks.
+ */
+function installStdoutGuards() {
+	// Redirect console.log to stderr so accidental calls don't corrupt the stream.
+	// We don't wrap process.stdout.write because the MCP SDK writes JSON-RPC
+	// messages through it — intercepting those risks breaking the protocol if
+	// messages are chunked or newlines are written separately.
+	console.log = (...args: unknown[]) => {
+		console.error(
+			"[jack-mcp] WARNING: console.log intercepted (would corrupt MCP protocol):",
+			...args,
+		);
+	};
+}
+
 export async function startMcpServer(options: McpServerOptions = {}) {
 	const { server, debug } = await createMcpServer(options);
+
+	// Install stdout guards BEFORE connecting transport to prevent corruption
+	installStdoutGuards();
+
 	const transport = new StdioServerTransport();
 
 	debug("Starting MCP server on stdio transport");

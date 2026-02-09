@@ -260,6 +260,27 @@ const template = await promptSelectValue("Select a template:", [
 
 jack includes a bundled MCP (Model Context Protocol) server for AI agent integration. This allows Claude Code and Claude Desktop to use jack programmatically.
 
+### CRITICAL: Stdout Safety
+
+The MCP server uses **stdio transport** where **stdout IS the JSON-RPC pipe**. Any accidental writes to stdout corrupt the protocol and cause the host (Claude Code, etc.) to hang indefinitely.
+
+**The rule:** Code in `src/lib/` and `src/mcp/` must NEVER write to stdout. Use `console.error()` for logging.
+
+**Safe pattern for subprocesses:**
+```typescript
+stdout: interactive ? "inherit" : "pipe"
+```
+
+**Anti-patterns (will be caught by `mcp-stdout-safety.test.ts`):**
+- `console.log()` in `src/lib/` or `src/mcp/` — use `console.error()`
+- `stdout: "inherit"` without gating on `interactive` flag
+- `process.stdout.write()` in `src/lib/`
+
+**Defense layers:**
+1. **Runtime guard** in `src/mcp/server.ts` — intercepts `console.log` and non-JSON-RPC `stdout.write`
+2. **Static analysis test** in `tests/mcp-stdout-safety.test.ts` — catches violations at CI time
+3. **This documentation** — prevents new code from introducing violations
+
 ### Automatic Setup
 
 MCP configs are installed automatically during `jack init` to all detected IDEs (currently Claude Code and Claude Desktop).
