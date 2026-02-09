@@ -1,0 +1,84 @@
+# OpenClaw / Claude Code
+
+Deploy from your agent. Jack Cloud gives your AI agent everything it needs to create APIs, add databases, and ship to production — no config, no dashboard.
+
+## Install the Skill
+
+```bash
+npx clawhub@latest install jack-cloud
+```
+
+This drops the skill into `.claude/skills/jack-cloud/` and your agent picks it up automatically next conversation.
+
+Browse on ClawHub: [clawhub.ai/hellno/jack-cloud](https://clawhub.ai/hellno/jack-cloud)
+
+## What Your Agent Learns
+
+One skill. Full cloud deployment.
+
+- **Create projects** — `jack new my-api` scaffolds, configures, and deploys in one command
+- **Ship changes** — `jack ship` builds and pushes to production in seconds
+- **Add a database** — `jack services db create` provisions D1 and wires the bindings
+- **Query data** — `jack db execute "SELECT * FROM users"` runs against production
+- **Stream logs** — `jack logs` for real-time debugging
+- **Manage secrets** — `jack secrets set API_KEY` without touching a dashboard
+
+Plus storage, vector search, cron jobs, and custom domains when you need them.
+
+Works with MCP tools or CLI. No Cloudflare account required.
+
+## Prerequisites
+
+Your agent needs jack installed:
+
+```bash
+npm i -g @getjack/jack
+jack login
+```
+
+## CLI or MCP — Both Work
+
+The skill teaches CLI-first commands, with MCP tool equivalents noted throughout. If your agent has `mcp__jack__*` tools available (via `jack mcp serve`), it will prefer those automatically.
+
+| Task | CLI | MCP Tool |
+|------|-----|----------|
+| Deploy | `jack ship` | `mcp__jack__deploy_project` |
+| Status | `jack info` | `mcp__jack__get_project_status` |
+| Query DB | `jack db execute "..."` | `mcp__jack__execute_sql` |
+| Create DB | `jack services db create` | `mcp__jack__create_database` |
+| Logs | `jack logs` | `mcp__jack__tail_logs` |
+
+## JSON Output for Agents
+
+Key commands support `--json` for machine-readable output:
+
+```bash
+jack ship --json
+# {"success":true,"projectName":"my-api","url":"https://my-api.runjack.xyz","deployMode":"managed"}
+
+jack db execute --json "SELECT count(*) as n FROM users"
+# {"success":true,"results":[{"n":42}],"meta":{"duration_ms":12}}
+```
+
+## Example: Agent Deploys an API
+
+Here's what a typical agent workflow looks like after installing the skill:
+
+```
+Agent: I'll create a new API project with a database.
+
+> jack new my-api --template api
+> jack services db create
+> jack db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+
+Now I'll add a route to query items and deploy.
+
+> [edits src/index.ts]
+> jack ship
+
+Your API is live at https://my-api.runjack.xyz/api/items
+```
+
+## Source
+
+The skill is open source: [github.com/getjack-org/skills](https://github.com/getjack-org/skills)
