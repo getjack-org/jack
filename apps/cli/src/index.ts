@@ -212,6 +212,7 @@ const [command, ...args] = cli.input;
 			os: process.platform,
 			arch: process.arch,
 			node_version: process.version,
+			auth_method: process.env.JACK_API_TOKEN ? "token" : "oauth",
 		});
 
 		// Update lastIdentifyDate
@@ -224,6 +225,7 @@ const [command, ...args] = cli.input;
 			os: process.platform,
 			arch: process.arch,
 			node_version: process.version,
+			auth_method: process.env.JACK_API_TOKEN ? "token" : "oauth",
 		});
 	}
 })();
