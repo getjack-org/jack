@@ -67,6 +67,7 @@ export default defineConfig({
 		{
 			text: "Guides",
 			items: [
+				{ text: "OpenClaw / Claude Code", link: "/guides/openclaw" },
 				{ text: "AI & Vectorize Bindings", link: "/guides/ai-vectorize" },
 				{ text: "Using with AI Agents", link: "/guides/ai-agents" },
 				{ text: "Troubleshooting", link: "/guides/troubleshooting" },
