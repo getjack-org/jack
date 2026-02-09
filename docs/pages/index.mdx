@@ -10,23 +10,14 @@
   .dark .hero-logo .logo-light { display: none; }
 `}</style>
 
-# Ship before you forget why you started.
-
-Ever find yourself with a dozen half-finished projects scattered across your machine? Each one was going to be *the thing*, but then you had to set up env vars, configure secrets, figure out deployment... and suddenly it's 2am. Again. (We don't judge.)
-
-Your AI wrote the app. Now it's rotting in localhost because deploys are *a whole thing*.
+# One command to deploy, add a database, and ship.
 
 ```bash
-jack new my-app
+npm i -g @getjack/jack
+jack new my-api --template api
 ```
 
-That's it. Live URL. No config files, no deployment ceremony, no context-switching to dashboards.
-
-```bash
-bun add -g @getjack/jack
-```
-
-Or try without installing: `bunx @getjack/jack new my-app`
+Live URL. Database ready. No config files, no dashboard, no Cloudflare account needed.
 
 <div style={{ display: 'flex', gap: '1.5rem', margin: '1.5rem 0', fontSize: '1.1rem' }}>
   <a href="https://www.npmjs.com/package/@getjack/jack">npm</a>
@@ -38,44 +29,71 @@ Or try without installing: `bunx @getjack/jack new my-app`
 
 ---
 
-## Philosophy
+## The full flow
 
-**Infrastructure should disappear.** The best deploy tooling is the kind you don't think about. `jack new` works immediately—no accounts, no config, no ceremony. If you need to read docs before shipping your first project, we've failed.
+```bash
+jack new my-api --template api        # Create and deploy
+jack services db create               # Add a database
+jack db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+jack ship                             # Push changes live
+```
 
-**Creation is free.** You'll have dozens of experiments. That's the point. jack never blocks you from creating because old projects exist. `jack ls` shows everything; cleanup is optional, never forced.
-
-**No lock-in.** Everything jack creates is standard tooling—wrangler.jsonc, package.json, TypeScript. Your projects work without jack installed. We earn continued use through convenience, not capture.
-
----
-
-## Who this is for
-
-Vibecoders. People who ship experiments constantly. Solo devs with more ideas than weekends.
-
-You move fast. AI makes it worse—now you can prototype anything in an afternoon. But each prototype needs its own env vars, secrets, deploy config.
-
-jack handles the boring parts. You stay in flow.
+Your API is running. Database is wired. Took about 30 seconds.
 
 ---
 
-## Why jack?
+## What you get
 
-- **Instant deployment** — `jack new` creates AND deploys. One command, live URL.
-- **Works with your agent** — Every project includes context files so your AI understands the stack.
-- **Roaming secrets** — Configure once, use across all projects. No per-project ceremony.
-- **Project tracking** — Projects scattered everywhere? `jack ls` finds them all.
+| Capability | How |
+|-----------|-----|
+| **Deploy** | `jack ship` — builds and pushes to production |
+| **Database** | `jack services db create` — provisions D1, wires bindings |
+| **Query** | `jack db execute "SELECT * FROM users"` — runs against production |
+| **Secrets** | `jack secrets set API_KEY` — stored securely, available as `env.API_KEY` |
+| **Logs** | `jack logs` — real-time production logs |
+| **Storage** | `jack services storage create` — R2 bucket for file uploads |
+| **Vector search** | `jack services vectorize create` — embeddings index |
+| **Cron** | `jack services cron create "0 * * * *"` — scheduled tasks |
+| **Custom domains** | `jack domain connect app.example.com` |
+
+[Full command reference →](/commands)
+
+---
+
+## Works with AI agents
+
+jack is built for agents. Every project includes context files, and there's a built-in MCP server so agents can deploy and manage services directly.
+
+```bash
+jack mcp serve                        # Start MCP server
+```
+
+Or install the [OpenClaw skill](https://clawhub.ai/hellno/jack-cloud) to teach your agent the full workflow:
+
+```bash
+npx clawhub@latest install jack-cloud
+```
+
+Key commands support `--json` for machine-readable output:
+
+```bash
+jack ship --json
+jack db execute --json "SELECT count(*) as n FROM users"
+```
+
+[AI agents guide →](/guides/ai-agents) · [OpenClaw guide →](/guides/openclaw)
+
+---
+
+## No lock-in
+
+Everything jack creates is standard tooling — `wrangler.jsonc`, `package.json`, TypeScript. Your projects work without jack installed. Eject anytime with `wrangler deploy`.
 
 ---
 
 ## Zero-config deploys
 
-`jack ship` auto-detects your framework. No config files needed.
-
-```bash
-jack ship
-```
-
-That's the deploy.
+`jack ship` auto-detects your framework. No config files to write.
 
 | Supported | Coming Soon |
 |-----------|-------------|
@@ -83,62 +101,7 @@ That's the deploy.
 
 ---
 
-## Every deploy becomes a template
-
-Ship something, then start something new from it:
-
-```bash
-jack new my-new-thing -t my-existing-project
-```
-
-Build on your own work. Private by default.
-
----
-
-## From experiment to production
-
-Your experiment worked. Now what?
-
-jack projects are standard tooling—wrangler.jsonc, package.json, TypeScript. No proprietary config. When you're ready to grow, swap in a custom domain and everything works with wrangler directly. Graduate when you want, not when we let you.
-
----
-
-## Commands
-
-| Command | What it does |
-|---------|--------------|
-| `jack new <name>` | Create and deploy a new project |
-| `jack ship` | Redeploy current project |
-| `jack ls` | List all your projects |
-| `jack open` | Open project in browser |
-
-[Full command reference →](/commands)
-
----
-
-## For the impatient
-
-```bash
-alias j='jack'
-alias jn='jack new'
-alias js='jack ship'
-```
-
-For when even `jack` feels too long.
-
----
-
-## Why "jack"?
-
-In Gibson's *Neuromancer*, jacking in meant plugging directly into cyberspace. The body becomes irrelevant—you're pure thought in the matrix.
-
-jack handles the infrastructure so you stay in creative flow.
-
-Infrastructure disappears. Creativity stays.
-
----
-
-## For AI Agents
+## For AI agents
 
 Docs optimized for LLMs:
 
