@@ -2404,6 +2404,68 @@ api.get("/projects/:projectId/deployments/latest", async (c) => {
 	});
 });
 
+// POST /v1/projects/:projectId/rollback - Roll back to a previous deployment
+api.post("/projects/:projectId/rollback", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Get project (need org_id for auth check AND for resolveBindingsFromManifest)
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify org membership
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Parse optional deployment_id from body
+	// Body may be empty for "rollback to previous"
+	let deploymentId: string | undefined;
+	try {
+		const body = await c.req.json<{ deployment_id?: string }>();
+		deploymentId = body.deployment_id;
+	} catch {
+		// Empty body is fine — means "rollback to previous"
+	}
+
+	try {
+		const deploymentService = new DeploymentService(c.env);
+		const deployment = await deploymentService.rollbackDeployment(
+			projectId,
+			deploymentId,
+		);
+		return c.json({
+			deployment: {
+				id: deployment.id,
+				status: deployment.status,
+				source: deployment.source,
+				created_at: d1DatetimeToIso(deployment.created_at),
+				updated_at: d1DatetimeToIso(deployment.updated_at),
+			},
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Rollback failed";
+		// Distinguish user errors from server errors
+		if (message.includes("not found") || message.includes("No previous") || message.includes("Cannot roll back")) {
+			return c.json({ error: "invalid_request", message }, 400);
+		}
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
+
 // GET /v1/projects/:projectId/crons - List cron schedules
 api.get("/projects/:projectId/crons", async (c) => {
 	const auth = c.get("auth");
@@ -4813,6 +4875,8 @@ api.post("/projects/:projectId/source", async (c) => {
 });
 
 // Download own project's source (authenticated)
+// Derives source from latest live deployment artifacts (same as code browser).
+// Falls back to legacy source_snapshot_key for projects that predate deployment artifacts.
 api.get("/me/projects/:slug/source", async (c) => {
 	const auth = c.get("auth");
 	const slug = c.req.param("slug");
@@ -4821,18 +4885,28 @@ api.get("/me/projects/:slug/source", async (c) => {
 		"SELECT * FROM projects WHERE org_id = ? AND slug = ? AND status != 'deleted'",
 	)
 		.bind(auth.orgId, slug)
-		.first<{ slug: string; source_snapshot_key: string | null }>();
+		.first<{ id: string; slug: string; source_snapshot_key: string | null }>();
 
-	if (!project || !project.source_snapshot_key) {
-		return c.json({ error: "not_found", message: "Project or source not found" }, 404);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
 	}
 
-	const sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
+	// Primary: derive from latest live deployment (stays in sync with rollback)
+	const deploymentService = new DeploymentService(c.env);
+	const deployment = await deploymentService.getLatestDeployment(project.id);
+	let sourceObj: R2ObjectBody | null = null;
+
+	if (deployment?.artifact_bucket_key) {
+		sourceObj = await c.env.CODE_BUCKET.get(`${deployment.artifact_bucket_key}/source.zip`);
+	}
+
+	// Fallback: legacy source_snapshot_key for old projects
+	if (!sourceObj && project.source_snapshot_key) {
+		sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
+	}
+
 	if (!sourceObj) {
-		return c.json(
-			{ error: "source_not_available", message: "Source file not found in storage" },
-			404,
-		);
+		return c.json({ error: "not_found", message: "No source available. Deploy first with 'jack ship'." }, 404);
 	}
 
 	return new Response(sourceObj.body, {
@@ -4874,8 +4948,12 @@ api.post("/projects/:projectId/publish", async (c) => {
 		);
 	}
 
-	// Check project has source snapshot
-	if (!project.source_snapshot_key) {
+	// Check project has deployable source (either via deployment artifacts or legacy snapshot)
+	const deploymentService = new DeploymentService(c.env);
+	const latestDeploy = await deploymentService.getLatestDeployment(projectId);
+	const hasSource = latestDeploy?.artifact_bucket_key || project.source_snapshot_key;
+
+	if (!hasSource) {
 		return c.json(
 			{
 				error: "no_source",
@@ -4950,6 +5028,8 @@ api.post("/projects/:projectId/publish", async (c) => {
 });
 
 // Public endpoint for downloading published project sources (no auth required)
+// Derives source from latest live deployment artifacts (same as code browser).
+// Falls back to legacy source_snapshot_key for projects that predate deployment artifacts.
 app.get("/v1/projects/:owner/:slug/source", async (c) => {
 	const owner = c.req.param("owner");
 	const slug = c.req.param("slug");
@@ -4962,15 +5042,28 @@ app.get("/v1/projects/:owner/:slug/source", async (c) => {
        AND p.status != 'deleted'`,
 	)
 		.bind(owner, slug)
-		.first<{ slug: string; source_snapshot_key: string | null }>();
+		.first<{ id: string; slug: string; source_snapshot_key: string | null }>();
 
-	if (!project || !project.source_snapshot_key) {
+	if (!project) {
 		return c.json({ error: "not_found", message: "Published project not found" }, 404);
 	}
 
-	const sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
+	// Primary: derive from latest live deployment (stays in sync with rollback)
+	const deploymentService = new DeploymentService(c.env);
+	const deployment = await deploymentService.getLatestDeployment(project.id);
+	let sourceObj: R2ObjectBody | null = null;
+
+	if (deployment?.artifact_bucket_key) {
+		sourceObj = await c.env.CODE_BUCKET.get(`${deployment.artifact_bucket_key}/source.zip`);
+	}
+
+	// Fallback: legacy source_snapshot_key for old projects
+	if (!sourceObj && project.source_snapshot_key) {
+		sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
+	}
+
 	if (!sourceObj) {
-		return c.json({ error: "source_not_available", message: "Source file not found" }, 404);
+		return c.json({ error: "not_found", message: "Source not available" }, 404);
 	}
 
 	return new Response(sourceObj.body, {

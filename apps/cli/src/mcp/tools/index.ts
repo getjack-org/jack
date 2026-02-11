@@ -200,6 +200,17 @@ const TailLogsSchema = z.object({
 		.describe("How long to listen before returning (default: 2000ms, max: 10000ms)"),
 });
 
+const RollbackProjectSchema = z.object({
+	deployment_id: z
+		.string()
+		.optional()
+		.describe("Specific deployment ID to roll back to (defaults to previous successful deployment)"),
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
 const ListDomainsSchema = z.object({});
 
 const ConnectDomainSchema = z.object({
@@ -366,6 +377,27 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							duration_ms: {
 								type: "number",
 								description: "How long to listen before returning (default: 2000ms, max: 10000ms)",
+							},
+						},
+					},
+				},
+				{
+					name: "rollback_project",
+					description:
+						"Roll back a managed (jack cloud) project to a previous deployment. " +
+						"Defaults to the previous successful deployment if no deployment_id is specified. " +
+						"Only rolls back code — database state and secrets are unchanged.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							deployment_id: {
+								type: "string",
+								description:
+									"Specific deployment ID to roll back to (defaults to previous successful deployment)",
+							},
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
 							},
 						},
 					},
@@ -654,7 +686,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "create_cron",
 					description:
-						"Create a cron schedule for a managed (Jack Cloud) project. Minimum interval is 15 minutes. The worker must have a scheduled() handler or POST /__scheduled route.",
+						"Create a cron schedule for a managed (Jack Cloud) project. Minimum interval is 15 minutes. The worker must handle POST /__scheduled requests — Cloudflare's native scheduled() export does not work with Jack Cloud crons.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -1046,6 +1078,59 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					};
 				}
 
+				case "rollback_project": {
+					const args = RollbackProjectSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const deployMode = await getDeployMode(projectPath);
+					if (deployMode !== "managed") {
+						throw new JackError(
+							JackErrorCode.VALIDATION_ERROR,
+							"Rollback is only available for managed (jack cloud) projects",
+							"For BYOC projects, use wrangler to manage deployments.",
+						);
+					}
+
+					const projectId = await getProjectId(projectPath);
+					if (!projectId) {
+						throw new JackError(
+							JackErrorCode.PROJECT_NOT_FOUND,
+							"Project not found",
+							"Run this from a linked jack cloud project directory (has .jack/project.json).",
+						);
+					}
+
+					// Import rollbackDeployment from control-plane
+					const { rollbackDeployment } = await import("../../lib/control-plane.ts");
+
+					const wrappedRollback = withTelemetry(
+						"rollback_project",
+						async (id: string, deploymentId?: string) => rollbackDeployment(id, deploymentId),
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedRollback(projectId, args.deployment_id);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(
+									formatSuccessResponse(
+										{
+											...result.deployment,
+											message: "Code rolled back successfully. Database state and secrets are unchanged.",
+										},
+										startTime,
+									),
+									null,
+									2,
+								),
+							},
+						],
+					};
+				}
+
 				case "create_database": {
 					const args = CreateDatabaseSchema.parse(request.params.arguments ?? {});
 					const projectPath = args.project_path ?? process.cwd();
@@ -1268,7 +1353,13 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 						content: [
 							{
 								type: "text",
-								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+								text: JSON.stringify(
+									formatSuccessResponse(result, startTime, [
+										"Vectorize indexes have eventual consistency. Newly inserted vectors typically take 2-3 minutes to become queryable.",
+									]),
+									null,
+									2,
+								),
 							},
 						],
 					};
