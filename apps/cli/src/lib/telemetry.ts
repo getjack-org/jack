@@ -47,6 +47,8 @@ export const Events = {
 	// Token management events
 	TOKEN_CREATED: "token_created",
 	TOKEN_REVOKED: "token_revoked",
+	// Hook events
+	HOOK_SESSION_CONTEXT: "hook_session_context",
 } as const;
 
 type EventName = (typeof Events)[keyof typeof Events];

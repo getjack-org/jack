@@ -702,7 +702,9 @@ const actionHandlers: {
 		const proc = Bun.spawn(["sh", "-c", command], {
 			cwd,
 			stdin: interactive ? "inherit" : "ignore",
-			stdout: "inherit",
+			// In non-interactive mode (MCP), stdout must NOT inherit because it would
+			// write into the JSON-RPC stdio transport and corrupt the protocol.
+			stdout: interactive ? "inherit" : "pipe",
 			stderr: "inherit",
 		});
 		await proc.exited;

@@ -5,6 +5,7 @@
 export interface McpToolResponse<T = unknown> {
 	success: boolean;
 	data?: T;
+	notes?: string[]; // Situational context for AI agents (e.g. eventual consistency caveats)
 	error?: {
 		code: string; // Machine-readable: 'AUTH_FAILED', 'PROJECT_NOT_FOUND'
 		message: string; // Human-readable description

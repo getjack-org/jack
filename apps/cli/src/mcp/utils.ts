@@ -5,10 +5,11 @@ import { McpErrorCode, type McpToolResponse } from "./types.ts";
 /**
  * Format a successful MCP tool response
  */
-export function formatSuccessResponse<T>(data: T, startTime: number): McpToolResponse<T> {
+export function formatSuccessResponse<T>(data: T, startTime: number, notes?: string[]): McpToolResponse<T> {
 	return {
 		success: true,
 		data,
+		...(notes?.length && { notes }),
 		meta: {
 			duration_ms: Date.now() - startTime,
 			jack_version: packageJson.version,

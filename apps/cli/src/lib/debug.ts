@@ -1,6 +1,7 @@
 // Debug utilities for timing and verbose logging
 
-let debugEnabled = false;
+let debugEnabled =
+	process.env.JACK_DEBUG === "1" || process.env.JACK_DEBUG === "true";
 const timers: Map<string, number> = new Map();
 const startTime = Date.now();
 

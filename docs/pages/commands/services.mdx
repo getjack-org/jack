@@ -1,6 +1,6 @@
 # jack services
 
-Manage databases and storage for your project.
+Manage databases, storage, and scheduled tasks for your project.
 
 ## Usage
 
@@ -14,6 +14,7 @@ jack services [service] [action]
 |---------|-------------|
 | `db` | SQLite database (D1) |
 | `storage` | Object storage (R2) |
+| `cron` | Scheduled tasks |
 
 ## Database (D1)
 
@@ -97,6 +98,62 @@ if (head) {
   console.log("Size:", head.size);
 }
 ```
+
+## Scheduled Tasks (Cron)
+
+Cron schedules are only available for Jack Cloud (managed) projects. All times are UTC.
+
+### Commands
+
+```bash
+jack services cron list                   # List all schedules
+jack services cron create "0 * * * *"     # Schedule hourly runs
+jack services cron delete "0 * * * *"     # Remove a schedule
+jack services cron test "*/15 * * * *"    # Validate and preview next runs
+```
+
+Minimum interval is 15 minutes. Maximum 5 schedules per project.
+
+### Handling cron requests in your worker
+
+Jack Cloud invokes crons by sending `POST /__scheduled` to your worker's HTTP handler. You must add an explicit route for this. Cloudflare's native `scheduled()` export does **not** work with Jack Cloud — Jack uses HTTP, not the Workers scheduled event.
+
+Hono example:
+
+```typescript
+app.post('/__scheduled', async (c) => {
+  const cron = c.req.header('X-Jack-Cron');
+  // your cron logic here
+  return c.json({ ok: true });
+});
+```
+
+Plain worker example:
+
+```typescript
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/__scheduled') {
+      // your cron logic here
+      return Response.json({ ok: true });
+    }
+    // ... other routes
+  }
+};
+```
+
+The request includes these headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-Jack-Cron` | The cron expression that triggered this run |
+| `X-Jack-Timestamp` | Unix timestamp of the invocation |
+| `X-Jack-Signature` | HMAC-SHA256 signature for verification |
+
+### Checking cron health
+
+Run `jack services cron list` to see each schedule's last run status and consecutive failure count. If your crons are returning errors, verify that your worker handles `POST /__scheduled`.
 
 ## What Happens
 

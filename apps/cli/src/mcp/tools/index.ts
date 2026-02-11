@@ -7,6 +7,10 @@ import { JackError, JackErrorCode } from "../../lib/errors.ts";
 import { getDeployMode, getProjectId } from "../../lib/project-link.ts";
 import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
 import { listAllProjects } from "../../lib/project-resolver.ts";
+import { createCronSchedule } from "../../lib/services/cron-create.ts";
+import { deleteCronSchedule } from "../../lib/services/cron-delete.ts";
+import { listCronSchedules } from "../../lib/services/cron-list.ts";
+import { testCronExpression } from "../../lib/services/cron-test.ts";
 import { createDatabase } from "../../lib/services/db-create.ts";
 import {
 	DestructiveOperationError,
@@ -15,10 +19,6 @@ import {
 	wrapResultsForMcp,
 } from "../../lib/services/db-execute.ts";
 import { listDatabases } from "../../lib/services/db-list.ts";
-import { createCronSchedule } from "../../lib/services/cron-create.ts";
-import { deleteCronSchedule } from "../../lib/services/cron-delete.ts";
-import { listCronSchedules } from "../../lib/services/cron-list.ts";
-import { testCronExpression } from "../../lib/services/cron-test.ts";
 import {
 	assignDomain,
 	connectDomain,
@@ -204,7 +204,9 @@ const RollbackProjectSchema = z.object({
 	deployment_id: z
 		.string()
 		.optional()
-		.describe("Specific deployment ID to roll back to (defaults to previous successful deployment)"),
+		.describe(
+			"Specific deployment ID to roll back to (defaults to previous successful deployment)",
+		),
 	project_path: z
 		.string()
 		.optional()
@@ -231,7 +233,9 @@ const DisconnectDomainSchema = z.object({
 });
 
 const CreateCronSchema = z.object({
-	expression: z.string().describe("Cron expression (e.g., '0 * * * *' for hourly, '*/15 * * * *' for every 15 min)"),
+	expression: z
+		.string()
+		.describe("Cron expression (e.g., '0 * * * *' for hourly, '*/15 * * * *' for every 15 min)"),
 	project_path: z
 		.string()
 		.optional()
@@ -293,7 +297,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "deploy_project",
 					description:
-						"Deploy an existing project to Cloudflare Workers. Builds the project if needed and pushes to production.",
+						"Deploy code changes to production. Builds, packages, and pushes to Cloudflare Workers. Returns deployment ID, status, and live URL.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -307,7 +311,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "get_project_status",
 					description:
-						"Get detailed status information for a specific project, including deployment status, local path, and backup status.",
+						"Get live deployment state: URL, last deploy time, deploy count, status (live/failed), and deploy source. Call this first to understand what's currently deployed before making changes.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -358,7 +362,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "tail_logs",
 					description:
-						"Collect a short sample of live log events (JSON) from a managed (jack cloud) project. Useful for agentic debugging.",
+						"Collect live log events from production. Use after deploying to verify changes work, or to debug errors. Returns JSON log entries with timestamps and messages.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -692,7 +696,8 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 						properties: {
 							expression: {
 								type: "string",
-								description: "Cron expression (e.g., '0 * * * *' for hourly, '*/15 * * * *' for every 15 min)",
+								description:
+									"Cron expression (e.g., '0 * * * *' for hourly, '*/15 * * * *' for every 15 min)",
 							},
 							project_path: {
 								type: "string",
@@ -751,7 +756,8 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							trigger_production: {
 								type: "boolean",
 								default: false,
-								description: "Whether to trigger the cron handler on production (requires managed project)",
+								description:
+									"Whether to trigger the cron handler on production (requires managed project)",
 							},
 						},
 						required: ["expression"],
@@ -1119,7 +1125,8 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 									formatSuccessResponse(
 										{
 											...result.deployment,
-											message: "Code rolled back successfully. Database state and secrets are unchanged.",
+											message:
+												"Code rolled back successfully. Database state and secrets are unchanged.",
 										},
 										startTime,
 									),
