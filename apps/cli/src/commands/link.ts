@@ -32,6 +32,14 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 			}
 		}
 
+		// Ensure hooks are installed for existing projects (idempotent)
+		try {
+			const { installClaudeCodeHooks } = await import("../lib/claude-hooks-installer.ts");
+			await installClaudeCodeHooks(process.cwd());
+		} catch {
+			// Non-critical
+		}
+
 		error("This directory is already linked");
 		info(`Linked to: ${projectDisplay}`);
 		info("To re-link, first run: jack unlink");

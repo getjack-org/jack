@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,11 +39,19 @@ export default async function mcp(subcommand?: string, options: McpOptions = {})
 		return;
 	}
 
-	error("Unknown subcommand. Use: jack mcp serve, jack mcp install, or jack mcp test");
+	if (subcommand === "context") {
+		await outputProjectContext();
+		return;
+	}
+
+	error(
+		"Unknown subcommand. Use: jack mcp serve, jack mcp install, jack mcp test, or jack mcp context",
+	);
 	info("Usage:");
 	info("  jack mcp serve [--project /path] [--debug]  Start MCP server");
 	info("  jack mcp install                            Install/repair MCP config for AI agents");
 	info("  jack mcp test                               Test MCP server connectivity");
+	info("  jack mcp context                            Output project context for hooks");
 	process.exit(1);
 }
 
@@ -85,14 +94,14 @@ async function installMcpConfig(): Promise<void> {
 	}
 
 	if (skipped.length > 0) {
-		info(`\nSkipped (not installed):`);
+		info("\nSkipped (not installed):");
 		for (const app of skipped) {
 			item(`  ${app}`);
 		}
 	}
 
 	if (failed.length > 0) {
-		error(`\nFailed to install:`);
+		error("\nFailed to install:");
 		for (const app of failed) {
 			item(`  ${app}`);
 		}
@@ -102,6 +111,68 @@ async function installMcpConfig(): Promise<void> {
 		info("\nRestart your AI agent (Claude Code, Claude Desktop) to use jack MCP tools.");
 	} else if (failed.length === 0 && skipped.length > 0) {
 		info("\nNo supported AI agents detected. Install Claude Code or Claude Desktop first.");
+	}
+}
+
+async function outputProjectContext(): Promise<void> {
+	try {
+		const cwd = process.cwd();
+		const { readProjectLink } = await import("../lib/project-link.ts");
+		const link = await readProjectLink(cwd);
+
+		// Silent exit if not a jack project — don't leak into non-jack sessions
+		if (!link) return;
+
+		// Fire-and-forget telemetry (no latency added)
+		const { track, Events } = await import("../lib/telemetry.ts");
+		track(Events.HOOK_SESSION_CONTEXT, {
+			deploy_mode: link.deploy_mode,
+		});
+
+		const sections: string[] = [];
+
+		const { getProjectNameFromDir } = await import("../lib/storage/index.ts");
+		let name = "unknown";
+		try {
+			name = await getProjectNameFromDir(cwd);
+		} catch {
+			// No wrangler config
+		}
+
+		const lines = [`# Jack Project: ${name}`, ""];
+		if (link.deploy_mode === "managed" && link.owner_username) {
+			lines.push(`- **URL:** https://${link.owner_username}-${name}.runjack.xyz`);
+		}
+		lines.push(`- **Deploy mode:** ${link.deploy_mode}`);
+		lines.push("");
+		lines.push("## Before starting work");
+		lines.push("");
+		lines.push(
+			"Call `mcp__jack__get_project_status` to see the live deployment state (last deploy time, URL, status).",
+		);
+		lines.push("To deploy changes: `mcp__jack__deploy_project`. To debug: `mcp__jack__tail_logs`.");
+		lines.push(
+			"Always prefer `mcp__jack__*` tools over CLI commands or wrangler — they are cloud-aware.",
+		);
+		sections.push(lines.join("\n"));
+
+		for (const filename of ["JACK.md", "AGENTS.md", "CLAUDE.md"]) {
+			const filepath = join(cwd, filename);
+			if (existsSync(filepath)) {
+				try {
+					const content = await readFile(filepath, "utf-8");
+					if (content.trim()) {
+						sections.push(content.trim());
+					}
+				} catch {
+					// Skip unreadable files
+				}
+			}
+		}
+
+		console.log(sections.join("\n\n---\n\n"));
+	} catch {
+		// Silent on failure — never break the session
 	}
 }
 

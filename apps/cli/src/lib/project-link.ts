@@ -116,6 +116,12 @@ export async function linkProject(
 
 	// Auto-add .jack/ to .gitignore
 	await ensureGitignored(projectDir);
+
+	// Install Claude Code SessionStart hook to project-level .claude/settings.json
+	// Non-blocking, fire-and-forget — never delays project linking
+	import("./claude-hooks-installer.ts")
+		.then(({ installClaudeCodeHooks }) => installClaudeCodeHooks(projectDir))
+		.catch(() => {});
 }
 
 /**

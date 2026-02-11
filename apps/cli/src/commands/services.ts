@@ -1354,7 +1354,17 @@ async function cronCreate(args: string[], options: ServiceOptions): Promise<void
 		item(`Schedule: ${result.description}`);
 		item(`Next run: ${result.nextRunAt}`);
 		console.error("");
-		info("Make sure your Worker handles POST /__scheduled requests.");
+		warn("Your worker must handle POST /__scheduled for crons to work.");
+		console.error("");
+		console.error("  Example (Hono):");
+		console.error("");
+		console.error("    app.post('/__scheduled', async (c) => {");
+		console.error("      // your cron logic here");
+		console.error("      return c.json({ ok: true });");
+		console.error("    });");
+		console.error("");
+		info("Cloudflare's native scheduled() export does NOT work with Jack Cloud.");
+		info("Jack invokes crons via HTTP, not the Workers scheduled event.");
 		console.error("");
 	} catch (err) {
 		outputSpinner.stop();
