@@ -18,15 +18,6 @@ Claude Code can then use the MCP tools or CLI to deploy, add databases, and mana
 
 jack includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) server that lets AI agents deploy and manage projects directly.
 
-### Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `create_project` | Create and deploy a new project |
-| `deploy_project` | Deploy the current project |
-| `get_project_status` | Check deployment status |
-| `list_projects` | List all projects |
-
 ### Setup
 
 The MCP server is configured automatically when you run `jack new`. It adds configuration to:
@@ -34,12 +25,96 @@ The MCP server is configured automatically when you run `jack new`. It adds conf
 - Claude Code (`~/.claude/mcp.json`)
 - Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`)
 
-### Manual Setup
-
 To manually start the MCP server:
 
 ```bash
 jack mcp serve
+```
+
+### Available Tools
+
+#### Project Management
+
+| Tool | Description |
+|------|-------------|
+| `create_project` | Create and deploy a new project from a template or fork |
+| `deploy_project` | Deploy the current project |
+| `get_project_status` | Check deployment status, URL, and last deploy time |
+| `list_projects` | List all projects (filter by local, deployed, or cloud) |
+
+#### Forking and Templates
+
+The `create_project` tool supports three template modes:
+
+```
+Built-in:    template: "api"                 → starts from a builtin template
+Fork own:    template: "my-project"          → forks your own deployed project
+Fork public: template: "alice/cool-api"      → forks a published project
+```
+
+All modes create a fully deployed, independent copy.
+
+#### Database (D1)
+
+| Tool | Description |
+|------|-------------|
+| `create_database` | Create a D1 database for a project |
+| `list_databases` | List project databases |
+| `execute_sql` | Execute SQL queries (read-only by default, `allow_write` for mutations) |
+
+#### Vector Search (Vectorize)
+
+| Tool | Description |
+|------|-------------|
+| `create_vectorize_index` | Create a vector index for similarity search |
+| `list_vectorize_indexes` | List project indexes |
+| `get_vectorize_info` | Get index metadata (dimensions, metric, count) |
+| `delete_vectorize_index` | Delete an index |
+
+#### Storage (R2)
+
+| Tool | Description |
+|------|-------------|
+| `create_storage_bucket` | Create an R2 storage bucket |
+| `list_storage_buckets` | List project buckets |
+| `get_storage_info` | Get bucket info |
+| `delete_storage_bucket` | Delete a bucket |
+
+#### Observability
+
+| Tool | Description |
+|------|-------------|
+| `start_log_session` | Start a 1-hour real-time log session |
+| `tail_logs` | Collect a short sample of live log events |
+
+#### Scheduling (Cron)
+
+| Tool | Description |
+|------|-------------|
+| `create_cron` | Create a cron schedule (minimum 15 min interval) |
+| `list_crons` | List project cron schedules |
+| `delete_cron` | Delete a cron schedule |
+| `test_cron` | Validate expression and show next 5 scheduled times |
+
+#### Custom Domains
+
+| Tool | Description |
+|------|-------------|
+| `list_domains` | List all custom domains and their status |
+| `connect_domain` | Reserve a custom domain slot |
+| `assign_domain` | Assign a domain to a project |
+| `unassign_domain` | Unassign a domain from its project |
+| `disconnect_domain` | Fully remove a domain |
+
+### Multi-Project Management
+
+Most tools accept a `project_path` parameter, so an agent can manage multiple projects in a single session:
+
+```
+create_project  name: "api-v2", template: "alice/cool-api"
+deploy_project  project_path: "/projects/api-v1"
+execute_sql     project_path: "/projects/api-v2", sql: "SELECT * FROM users"
+tail_logs       project_path: "/projects/api-v1"
 ```
 
 ## Other Agents
@@ -72,4 +147,5 @@ jack new my-app
 
 1. **Let the agent deploy** - AI agents can run `jack ship` directly
 2. **Use the MCP tools** - Agents with MCP access can create/deploy without CLI
-3. **Check AGENTS.md** - Customize it for your project's specific patterns
+3. **Fork as a starting point** - Use `create_project` with a template to fork existing projects
+4. **Check AGENTS.md** - Customize it for your project's specific patterns

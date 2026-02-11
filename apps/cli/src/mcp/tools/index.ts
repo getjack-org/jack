@@ -41,7 +41,12 @@ import { formatErrorResponse, formatSuccessResponse } from "../utils.ts";
 // Tool schemas
 const CreateProjectSchema = z.object({
 	name: z.string().optional().describe("Project name (auto-generated if not provided)"),
-	template: z.string().optional().describe("Template to use (e.g., 'miniapp', 'api')"),
+	template: z
+		.string()
+		.optional()
+		.describe(
+			"Template to use (e.g., 'miniapp', 'api'). Also supports forking: use 'username/slug' for published projects or 'my-project' to fork your own.",
+		),
 });
 
 const DeployProjectSchema = z.object({
@@ -279,7 +284,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "create_project",
 					description:
-						"Create a new Cloudflare Workers project from a template. Automatically installs dependencies, deploys to Cloudflare, and registers the project.",
+						"Create a new Cloudflare Workers project from a template. Automatically installs dependencies, deploys to Cloudflare, and registers the project. Also supports forking: pass a 'username/slug' template to fork a published project, or a project slug to fork your own.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -289,7 +294,8 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							},
 							template: {
 								type: "string",
-								description: "Template to use (e.g., 'miniapp', 'api')",
+								description:
+									"Template to use (e.g., 'miniapp', 'api'). Also supports forking: use 'username/slug' for published projects or 'my-project' to fork your own.",
 							},
 						},
 					},
