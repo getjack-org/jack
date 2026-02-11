@@ -25,7 +25,7 @@ src/mcp/
 ### `tools/index.ts`
 - Centralized tool registration and dispatch
 - Implements 4 core tools:
-  - `create_project` - Create new Cloudflare Workers project
+  - `create_project` - Create new project (supports forking via template)
   - `deploy_project` - Deploy existing project
   - `get_project_status` - Get project status info
   - `list_projects` - List all projects with filters
