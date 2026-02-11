@@ -18,8 +18,11 @@ import {
 	parseWranglerConfig,
 } from "../apps/cli/src/lib/build-helper.ts";
 import { packageForDeploy } from "../apps/cli/src/lib/zip-packager.ts";
+import { BUILTIN_TEMPLATES } from "../apps/cli/src/templates/index.ts";
 
-const TEMPLATES = ["miniapp", "api", "hello", "nextjs"] as const;
+// Derive from CLI's canonical list, filtered to templates that have a directory
+const TEMPLATES_DIR = resolve(import.meta.dirname, "../apps/cli/templates");
+const TEMPLATES = BUILTIN_TEMPLATES.filter((t) => existsSync(join(TEMPLATES_DIR, t)));
 const R2_BUCKET = "jack-code-internal";
 
 interface TemplateMeta {
