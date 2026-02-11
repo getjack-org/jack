@@ -451,6 +451,37 @@ export async function fetchProjectResources(projectId: string): Promise<ProjectR
 	return data.resources;
 }
 
+export interface DeploymentInfo {
+	id: string;
+	status: "queued" | "building" | "live" | "failed";
+	source: string;
+	error_message: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface DeploymentListResult {
+	deployments: DeploymentInfo[];
+	total: number;
+}
+
+/**
+ * Fetch recent deployments for a managed project.
+ * Returns deployments (up to 10) and total count.
+ */
+export async function fetchDeployments(projectId: string): Promise<DeploymentListResult> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/deployments`);
+
+	if (!response.ok) {
+		return { deployments: [], total: 0 }; // Silent fail — deployment history is supplementary
+	}
+
+	const data = (await response.json()) as { deployments: DeploymentInfo[]; total: number };
+	return { deployments: data.deployments, total: data.total };
+}
+
 /**
  * Create a resource for a managed project.
  * Uses POST /v1/projects/:id/resources/:type endpoint.

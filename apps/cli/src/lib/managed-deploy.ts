@@ -88,7 +88,7 @@ export interface ManagedCodeDeployOptions {
  */
 export async function deployCodeToManagedProject(
 	options: ManagedCodeDeployOptions,
-): Promise<{ deploymentId: string; status: string }> {
+): Promise<{ deploymentId: string; status: string; errorMessage: string | null }> {
 	const { projectId, projectPath, reporter } = options;
 
 	// Track deploy start
@@ -193,6 +193,7 @@ export async function deployCodeToManagedProject(
 		return {
 			deploymentId: result.id,
 			status: result.status,
+			errorMessage: result.error_message,
 		};
 	} catch (error) {
 		reporter?.stop();
@@ -218,7 +219,7 @@ export async function deployToManagedProject(
 	projectId: string,
 	projectPath: string,
 	reporter?: OperationReporter,
-): Promise<{ deploymentId: string; status: string }> {
+): Promise<{ deploymentId: string; status: string; errorMessage: string | null }> {
 	return deployCodeToManagedProject({
 		projectId,
 		projectPath,
