@@ -31,6 +31,7 @@ export interface ManagedCreateResult {
 export interface ManagedCreateOptions {
 	template?: string;
 	usePrebuilt?: boolean;
+	forkedFrom?: string;
 }
 
 /**
@@ -50,6 +51,7 @@ export async function createManagedProjectRemote(
 		const result = await createManagedProject(projectName, {
 			template: options?.template,
 			usePrebuilt: options?.usePrebuilt ?? true,
+			forkedFrom: options?.forkedFrom,
 		});
 
 		const runjackUrl = result.url || `https://${result.project.slug}.runjack.xyz`;

@@ -895,6 +895,7 @@ api.post("/projects", async (c) => {
 		content_bucket?: boolean;
 		use_prebuilt?: boolean;
 		template?: string;
+		forked_from?: string;
 	}>();
 
 	if (!body.name) {
@@ -938,6 +939,7 @@ api.post("/projects", async (c) => {
 			slug,
 			body.content_bucket ?? false,
 			user?.username ?? undefined,
+			body.forked_from,
 		);
 
 		// Construct URL with username if available
@@ -4836,47 +4838,38 @@ api.get("/projects/:projectId/source/file", async (c) => {
 	}
 });
 
-// Upload source snapshot after deploy
-api.post("/projects/:projectId/source", async (c) => {
-	const auth = c.get("auth");
-	const projectId = c.req.param("projectId");
+// Shared handler for serving project source from deployment artifacts
+async function serveProjectSource(
+	env: Bindings,
+	project: { id: string; slug: string },
+): Promise<Response> {
+	const deploymentService = new DeploymentService(env);
+	const deployment = await deploymentService.getLatestDeployment(project.id);
 
-	// Verify ownership
-	const project = await c.env.DB.prepare(
-		"SELECT * FROM projects WHERE id = ? AND org_id = ? AND status != 'deleted'",
-	)
-		.bind(projectId, auth.orgId)
-		.first();
-
-	if (!project) {
-		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	if (!deployment?.artifact_bucket_key) {
+		return Response.json(
+			{ error: "not_found", message: "No source available. Deploy first with 'jack ship'." },
+			{ status: 404 },
+		);
 	}
 
-	// Accept multipart form with source.zip
-	const formData = await c.req.formData();
-	const sourceFile = formData.get("source") as File | null;
-
-	if (!sourceFile) {
-		return c.json({ error: "invalid_request", message: "source file required" }, 400);
+	const sourceObj = await env.CODE_BUCKET.get(`${deployment.artifact_bucket_key}/source.zip`);
+	if (!sourceObj) {
+		return Response.json(
+			{ error: "not_found", message: "No source available. Deploy first with 'jack ship'." },
+			{ status: 404 },
+		);
 	}
 
-	// Store in R2: source/{projectId}/latest.zip
-	const sourceKey = `source/${projectId}/latest.zip`;
-	await c.env.CODE_BUCKET.put(sourceKey, await sourceFile.arrayBuffer());
-
-	// Update project record
-	await c.env.DB.prepare(
-		"UPDATE projects SET source_snapshot_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-	)
-		.bind(sourceKey, projectId)
-		.run();
-
-	return c.json({ success: true, source_key: sourceKey });
-});
+	return new Response(sourceObj.body, {
+		headers: {
+			"Content-Type": "application/zip",
+			"Content-Disposition": `attachment; filename="${project.slug}-source.zip"`,
+		},
+	});
+}
 
 // Download own project's source (authenticated)
-// Derives source from latest live deployment artifacts (same as code browser).
-// Falls back to legacy source_snapshot_key for projects that predate deployment artifacts.
 api.get("/me/projects/:slug/source", async (c) => {
 	const auth = c.get("auth");
 	const slug = c.req.param("slug");
@@ -4885,36 +4878,13 @@ api.get("/me/projects/:slug/source", async (c) => {
 		"SELECT * FROM projects WHERE org_id = ? AND slug = ? AND status != 'deleted'",
 	)
 		.bind(auth.orgId, slug)
-		.first<{ id: string; slug: string; source_snapshot_key: string | null }>();
+		.first<{ id: string; slug: string }>();
 
 	if (!project) {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
 	}
 
-	// Primary: derive from latest live deployment (stays in sync with rollback)
-	const deploymentService = new DeploymentService(c.env);
-	const deployment = await deploymentService.getLatestDeployment(project.id);
-	let sourceObj: R2ObjectBody | null = null;
-
-	if (deployment?.artifact_bucket_key) {
-		sourceObj = await c.env.CODE_BUCKET.get(`${deployment.artifact_bucket_key}/source.zip`);
-	}
-
-	// Fallback: legacy source_snapshot_key for old projects
-	if (!sourceObj && project.source_snapshot_key) {
-		sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
-	}
-
-	if (!sourceObj) {
-		return c.json({ error: "not_found", message: "No source available. Deploy first with 'jack ship'." }, 404);
-	}
-
-	return new Response(sourceObj.body, {
-		headers: {
-			"Content-Type": "application/zip",
-			"Content-Disposition": `attachment; filename="${slug}-source.zip"`,
-		},
-	});
+	return serveProjectSource(c.env, project);
 });
 
 // Publish project for forking
@@ -4927,7 +4897,7 @@ api.post("/projects/:projectId/publish", async (c) => {
 		"SELECT * FROM projects WHERE id = ? AND org_id = ? AND status != 'deleted'",
 	)
 		.bind(projectId, auth.orgId)
-		.first<{ slug: string; source_snapshot_key: string | null }>();
+		.first<{ slug: string }>();
 
 	if (!project) {
 		return c.json({ error: "not_found", message: "Project not found" }, 404);
@@ -4948,12 +4918,22 @@ api.post("/projects/:projectId/publish", async (c) => {
 		);
 	}
 
-	// Check project has deployable source (either via deployment artifacts or legacy snapshot)
+	// Check project has source available via deployment artifacts
 	const deploymentService = new DeploymentService(c.env);
 	const latestDeploy = await deploymentService.getLatestDeployment(projectId);
-	const hasSource = latestDeploy?.artifact_bucket_key || project.source_snapshot_key;
 
-	if (!hasSource) {
+	if (!latestDeploy?.artifact_bucket_key) {
+		return c.json(
+			{
+				error: "no_source",
+				message: "Deploy your project first with jack ship",
+			},
+			400,
+		);
+	}
+
+	const sourceObj = await c.env.CODE_BUCKET.get(`${latestDeploy.artifact_bucket_key}/source.zip`);
+	if (!sourceObj) {
 		return c.json(
 			{
 				error: "no_source",
@@ -5027,51 +5007,23 @@ api.post("/projects/:projectId/publish", async (c) => {
 	});
 });
 
-// Public endpoint for downloading published project sources (no auth required)
-// Derives source from latest live deployment artifacts (same as code browser).
-// Falls back to legacy source_snapshot_key for projects that predate deployment artifacts.
-app.get("/v1/projects/:owner/:slug/source", async (c) => {
+// Published project source (by owner/slug, requires auth)
+api.get("/projects/:owner/:slug/source", async (c) => {
 	const owner = c.req.param("owner");
 	const slug = c.req.param("slug");
 
-	// Find project by owner username and slug, must be public
 	const project = await c.env.DB.prepare(
-		`SELECT p.* FROM projects p
-     WHERE p.owner_username = ? AND p.slug = ?
-       AND p.visibility = 'public'
-       AND p.status != 'deleted'`,
+		`SELECT * FROM projects WHERE owner_username = ? AND slug = ?
+		 AND visibility = 'public' AND status != 'deleted'`,
 	)
 		.bind(owner, slug)
-		.first<{ id: string; slug: string; source_snapshot_key: string | null }>();
+		.first<{ id: string; slug: string }>();
 
 	if (!project) {
 		return c.json({ error: "not_found", message: "Published project not found" }, 404);
 	}
 
-	// Primary: derive from latest live deployment (stays in sync with rollback)
-	const deploymentService = new DeploymentService(c.env);
-	const deployment = await deploymentService.getLatestDeployment(project.id);
-	let sourceObj: R2ObjectBody | null = null;
-
-	if (deployment?.artifact_bucket_key) {
-		sourceObj = await c.env.CODE_BUCKET.get(`${deployment.artifact_bucket_key}/source.zip`);
-	}
-
-	// Fallback: legacy source_snapshot_key for old projects
-	if (!sourceObj && project.source_snapshot_key) {
-		sourceObj = await c.env.CODE_BUCKET.get(project.source_snapshot_key);
-	}
-
-	if (!sourceObj) {
-		return c.json({ error: "not_found", message: "Source not available" }, 404);
-	}
-
-	return new Response(sourceObj.body, {
-		headers: {
-			"Content-Type": "application/zip",
-			"Content-Disposition": `attachment; filename="${slug}-source.zip"`,
-		},
-	});
+	return serveProjectSource(c.env, project);
 });
 
 // Stripe webhook handler (no auth - Stripe signs the request)

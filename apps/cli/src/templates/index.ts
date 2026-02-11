@@ -211,64 +211,32 @@ function extractMetadataFromZip(zipData: ArrayBuffer): Record<string, unknown> {
 }
 
 /**
- * Fetch a published template from jack cloud (public endpoint, no auth)
+ * Fetch a remote template (own project or published).
+ * Both paths require auth.
  */
-async function fetchPublishedTemplate(username: string, slug: string): Promise<Template> {
-	const response = await fetch(
-		`${getControlApiUrl()}/v1/projects/${encodeURIComponent(username)}/${encodeURIComponent(slug)}/source`,
-	);
-
-	if (!response.ok) {
-		if (response.status === 404) {
-			throw new Error(
-				`Template not found: ${username}/${slug}\n\nMake sure the project exists and is published with: jack publish`,
-			);
-		}
-		throw new Error(`Failed to fetch template: ${response.status}`);
-	}
-
-	const zipData = await response.arrayBuffer();
-	const metadata = extractMetadataFromZip(zipData);
-	const files = extractZipToFiles(zipData);
-
-	return {
-		description: (metadata.description as string) || `Fork of ${username}/${slug}`,
-		secrets: (metadata.secrets as string[]) || [],
-		optionalSecrets: metadata.optionalSecrets as Template["optionalSecrets"],
-		envVars: metadata.envVars as Template["envVars"],
-		capabilities: metadata.capabilities as Template["capabilities"],
-		requires: metadata.requires as Template["requires"],
-		hooks: metadata.hooks as Template["hooks"],
-		agentContext: metadata.agentContext as Template["agentContext"],
-		intent: metadata.intent as Template["intent"],
-		files,
-	};
-}
-
-/**
- * Fetch user's own project as a template (authenticated)
- */
-async function fetchUserTemplate(slug: string): Promise<Template | null> {
+async function fetchRemoteTemplate(identifier: string): Promise<Template | null> {
 	const { authFetch } = await import("../lib/auth/index.ts");
 
-	const response = await authFetch(
-		`${getControlApiUrl()}/v1/me/projects/${encodeURIComponent(slug)}/source`,
-	);
-
-	if (response.status === 404) {
-		return null; // Not found, will try other sources
+	// Route to the correct endpoint based on format
+	let url: string;
+	if (identifier.includes("/")) {
+		const [owner, slug] = identifier.split("/", 2) as [string, string];
+		url = `${getControlApiUrl()}/v1/projects/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}/source`;
+	} else {
+		url = `${getControlApiUrl()}/v1/me/projects/${encodeURIComponent(identifier)}/source`;
 	}
 
-	if (!response.ok) {
-		throw new Error(`Failed to fetch your project: ${response.status}`);
-	}
+	const response = await authFetch(url);
+
+	if (response.status === 404) return null;
+	if (!response.ok) throw new Error(`Failed to fetch template: ${response.status}`);
 
 	const zipData = await response.arrayBuffer();
 	const metadata = extractMetadataFromZip(zipData);
 	const files = extractZipToFiles(zipData);
 
 	return {
-		description: (metadata.description as string) || `Your project: ${slug}`,
+		description: (metadata.description as string) || `Fork of ${identifier}`,
 		secrets: (metadata.secrets as string[]) || [],
 		optionalSecrets: metadata.optionalSecrets as Template["optionalSecrets"],
 		envVars: metadata.envVars as Template["envVars"],
@@ -285,33 +253,13 @@ async function fetchUserTemplate(slug: string): Promise<Template | null> {
  * Resolve template by name
  */
 export async function resolveTemplate(template?: string): Promise<Template> {
-	// No template → hello (omakase default)
-	if (!template) {
-		return loadTemplate("hello");
-	}
+	if (!template) return loadTemplate("hello");
+	if (BUILTIN_TEMPLATES.includes(template)) return loadTemplate(template);
 
-	// Built-in template
-	if (BUILTIN_TEMPLATES.includes(template)) {
-		return loadTemplate(template);
-	}
+	// Remote: "username/slug" or "my-own-project"
+	const result = await fetchRemoteTemplate(template);
+	if (result) return result;
 
-	// username/slug format - fetch from jack cloud
-	if (template.includes("/")) {
-		const [username, slug] = template.split("/", 2) as [string, string];
-		return fetchPublishedTemplate(username, slug);
-	}
-
-	// Try as user's own project first
-	try {
-		const userTemplate = await fetchUserTemplate(template);
-		if (userTemplate) {
-			return userTemplate;
-		}
-	} catch (_err) {
-		// If auth fails or project not found, fall through to error
-	}
-
-	// Unknown template
 	throw new Error(
 		`Unknown template: ${template}\n\nAvailable built-in templates: ${BUILTIN_TEMPLATES.join(", ")}\nOr use username/slug format for published projects`,
 	);

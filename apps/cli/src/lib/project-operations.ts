@@ -369,6 +369,7 @@ async function runParallelSetup(
 	options: {
 		template?: string;
 		usePrebuilt?: boolean;
+		forkedFrom?: string;
 		onRemoteReady?: (result: ManagedCreateResult) => void;
 	},
 ): Promise<{
@@ -399,6 +400,7 @@ async function runParallelSetup(
 	const remotePromise = createManagedProjectRemote(projectName, undefined, {
 		template: options.template || "hello",
 		usePrebuilt: options.usePrebuilt ?? true,
+		forkedFrom: options.forkedFrom,
 	}).then((result) => {
 		const duration = ((Date.now() - remoteStart) / 1000).toFixed(1);
 		debug(`Remote project created in ${duration}s (status: ${result.status})`);
@@ -1221,9 +1223,11 @@ export async function createProject(
 			reporter.start("Setting up project...");
 
 			try {
+				const forkedFrom = templateOrigin.type !== "builtin" ? templateOrigin.name : undefined;
 				const result = await runParallelSetup(targetDir, projectName, {
 					template: resolvedTemplate || "hello",
 					usePrebuilt: templateOrigin.type === "builtin", // Only builtin templates have prebuilt bundles
+					forkedFrom,
 					onRemoteReady: (remote) => {
 						// Show URL immediately when prebuilt succeeds
 						reporter.stop();
@@ -1377,22 +1381,8 @@ export async function createProject(
 					reporter.success(`Deployed: ${workerUrl}`);
 				}
 
-				// Upload source snapshot for forking (prebuilt path needs this too)
-				try {
-					const { createSourceZip } = await import("./zip-packager.ts");
-					const { uploadSourceSnapshot } = await import("./control-plane.ts");
-					const { rm } = await import("node:fs/promises");
-
-					const sourceZipPath = await createSourceZip(targetDir);
-					await uploadSourceSnapshot(remoteResult.projectId, sourceZipPath);
-					await rm(sourceZipPath, { force: true });
-					debug("Source snapshot uploaded for prebuilt project");
-				} catch (err) {
-					debug(
-						"Source snapshot upload failed (prebuilt):",
-						err instanceof Error ? err.message : String(err),
-					);
-				}
+				// source.zip is now stored in deployment artifacts by the control plane
+				// during prebuilt deploy — no client-side upload needed
 			} else {
 				// Prebuilt not available - fall back to fresh build
 				if (remoteResult.prebuiltFailed) {
