@@ -58,7 +58,7 @@ jack new my-fork -t alice/cool-api
 
 ### Your Personal Template Library
 
-Every `jack ship` saves a source snapshot. This means:
+Every `jack ship` stores your source alongside the deployment. This means:
 
 - **Build on your own work** — Start new projects from proven foundations
 - **No extra steps** — Just deploy normally, forking is automatic
@@ -84,7 +84,17 @@ Want others to fork your work? Publish it:
 jack publish
 ```
 
-Then anyone can fork with `jack new -t yourname/project`.
+Then any logged-in jack user can fork with `jack new -t yourname/project`.
+
+### AI Agent Forking
+
+AI agents can fork projects directly via the MCP `create_project` tool:
+
+```
+create_project  name: "my-fork", template: "alice/cool-api"
+```
+
+See the [AI Agents guide](/guides/ai-agents) for more.
 
 ## Examples
 

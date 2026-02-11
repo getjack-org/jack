@@ -16,8 +16,8 @@ jack publish
 ## What Happens
 
 1. Verifies you own the project
-2. Checks a source snapshot exists (created automatically on `jack ship`)
-3. Makes the project publicly visible for forking
+2. Checks your latest deployment has source available (created automatically on `jack ship`)
+3. Makes the project visible for forking by any logged-in jack user
 
 ## After Publishing
 
@@ -52,6 +52,6 @@ jack publish
 ## Notes
 
 - Publishing is one-way (no unpublish yet)
-- Source code becomes publicly downloadable
+- Source is downloadable by any authenticated jack user (not open to the public internet)
 - Forked projects are completely independent copies
 - Your deployed worker continues running normally
