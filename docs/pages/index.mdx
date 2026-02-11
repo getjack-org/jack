@@ -13,8 +13,7 @@
 # One command to deploy, add a database, and ship.
 
 ```bash
-npm i -g @getjack/jack
-jack new my-api --template api
+bunx @getjack/jack new my-api --template api
 ```
 
 Live URL. Database ready. No config files, no dashboard, no Cloudflare account needed.
@@ -60,9 +59,9 @@ Your API is running. Database is wired. Took about 30 seconds.
 
 ---
 
-## Works with AI agents
+## Built for Claude Code
 
-jack is built for agents. Every project includes context files, and there's a built-in MCP server so agents can deploy and manage services directly.
+jack is the deployment platform for Claude Code. Every project includes context files, and there's a built-in MCP server so agents can deploy and manage services directly.
 
 ```bash
 jack mcp serve                        # Start MCP server
@@ -101,7 +100,7 @@ Everything jack creates is standard tooling — `wrangler.jsonc`, `package.json`
 
 ---
 
-## For AI agents
+## For Claude Code
 
 Docs optimized for LLMs:
 

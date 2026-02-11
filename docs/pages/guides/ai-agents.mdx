@@ -1,6 +1,18 @@
 # Using with AI Agents
 
-jack is built for AI-assisted development. Here's how to get the most out of it.
+jack is the deployment platform for Claude Code. Here's how to get the most out of it.
+
+## Claude Code
+
+Claude Code is the primary agent for jack. Every project includes context files (`AGENTS.md`, `CLAUDE.md`) and there's a built-in MCP server for direct deployment and service management.
+
+### Quick Start
+
+```bash
+bunx @getjack/jack new my-app
+```
+
+Claude Code can then use the MCP tools or CLI to deploy, add databases, and manage your project.
 
 ## MCP Server
 
@@ -29,6 +41,10 @@ To manually start the MCP server:
 ```bash
 jack mcp serve
 ```
+
+## Other Agents
+
+jack also works with other AI coding agents (Codex, Cursor, etc.) via CLI commands and `--json` output. The MCP server is compatible with any agent that supports the Model Context Protocol.
 
 ## AGENTS.md
 

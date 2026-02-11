@@ -801,11 +801,25 @@ export async function createProject(
 		}
 	}
 
-	// Check if jack init was run (throws if not)
+	// Auto-initialize on first run (replaces "Run: jack init" error)
 	const { isInitialized } = await import("../commands/init.ts");
 	const initialized = await isInitialized();
 	if (!initialized) {
-		throw new JackError(JackErrorCode.VALIDATION_ERROR, "jack is not set up yet", "Run: jack init");
+		const { writeConfig, readConfig } = await import("./config.ts");
+		const existingConfig = await readConfig();
+		await writeConfig({
+			version: 1,
+			initialized: true,
+			initializedAt: existingConfig?.initializedAt || new Date().toISOString(),
+			...existingConfig,
+		});
+
+		// Best-effort MCP config install (non-blocking)
+		try {
+			const { installMcpConfigsToAllApps, saveMcpConfig } = await import("./mcp-config.ts");
+			await installMcpConfigsToAllApps();
+			await saveMcpConfig();
+		} catch {}
 	}
 
 	// Auth gate - check/prompt for authentication before any work

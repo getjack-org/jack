@@ -18,7 +18,7 @@ const miniappMeta = JSON.stringify({
 export default defineConfig({
 	rootDir: "docs",
 	title: "jack",
-	description: "Ship before you forget why you started. The vibecoder's deployment CLI.",
+	description: "The deployment platform for Claude Code.",
 	logoUrl: {
 		light: "/logo-light.svg",
 		dark: "/logo-dark.svg",
