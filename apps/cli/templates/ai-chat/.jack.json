@@ -1,6 +1,6 @@
 {
 	"name": "ai-chat",
-	"description": "AI chat with streaming UI (free Cloudflare AI)",
+	"description": "AI chat with streaming UI (free AI via Jack Cloud)",
 	"secrets": [],
 	"capabilities": ["ai"],
 	"intent": {
