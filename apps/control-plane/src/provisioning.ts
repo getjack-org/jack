@@ -104,6 +104,7 @@ export class ProvisioningService {
 		slug?: string,
 		enableContentBucket = false,
 		ownerUsername: string | null = null,
+		forkedFrom: string | null = null,
 	): Promise<{ project: Project; resources: Resource[] }> {
 		const projectId = `proj_${crypto.randomUUID()}`;
 		const projectSlug = slug || this.generateSlug(name);
@@ -122,8 +123,8 @@ export class ProvisioningService {
 		// Insert project with status 'provisioning'
 		await this.db
 			.prepare(
-				`INSERT INTO projects (id, org_id, name, slug, status, code_bucket_prefix, content_bucket_enabled, owner_username)
-         VALUES (?, ?, ?, ?, 'provisioning', ?, ?, ?)`,
+				`INSERT INTO projects (id, org_id, name, slug, status, code_bucket_prefix, content_bucket_enabled, owner_username, forked_from)
+         VALUES (?, ?, ?, ?, 'provisioning', ?, ?, ?, ?)`,
 			)
 			.bind(
 				projectId,
@@ -133,6 +134,7 @@ export class ProvisioningService {
 				resourceNames.codeBucketPrefix,
 				enableContentBucket ? 1 : 0,
 				ownerUsername,
+				forkedFrom,
 			)
 			.run();
 

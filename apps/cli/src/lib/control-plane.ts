@@ -3,7 +3,6 @@
  */
 
 import { debug } from "./debug.ts";
-import { formatSize } from "./format.ts";
 
 const DEFAULT_CONTROL_API_URL = "https://control.getjack.org";
 
@@ -16,12 +15,14 @@ export interface CreateProjectRequest {
 	slug?: string;
 	template?: string;
 	use_prebuilt?: boolean;
+	forked_from?: string;
 }
 
 export interface CreateManagedProjectOptions {
 	slug?: string;
 	template?: string;
 	usePrebuilt?: boolean;
+	forkedFrom?: string;
 }
 
 export interface CreateProjectResponse {
@@ -110,6 +111,9 @@ export async function createManagedProject(
 	}
 	if (options?.usePrebuilt !== undefined) {
 		requestBody.use_prebuilt = options.usePrebuilt;
+	}
+	if (options?.forkedFrom) {
+		requestBody.forked_from = options.forkedFrom;
 	}
 
 	debug("Creating managed project", {
@@ -785,45 +789,6 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 	} catch {
 		return null;
 	}
-}
-
-export interface SourceSnapshotResponse {
-	success: boolean;
-	source_key: string;
-}
-
-/**
- * Upload a source snapshot for a project.
- * Used to enable project forking.
- */
-export async function uploadSourceSnapshot(
-	projectId: string,
-	sourceZipPath: string,
-): Promise<SourceSnapshotResponse> {
-	const { authFetch } = await import("./auth/index.ts");
-
-	const formData = new FormData();
-	const sourceFile = Bun.file(sourceZipPath);
-	formData.append("source", sourceFile);
-
-	const url = `${getControlApiUrl()}/v1/projects/${projectId}/source`;
-	debug(`Source snapshot: ${formatSize(sourceFile.size)}`);
-
-	const start = Date.now();
-	const response = await authFetch(url, {
-		method: "POST",
-		body: formData,
-	});
-	debug(`Source snapshot: ${response.status} (${((Date.now() - start) / 1000).toFixed(1)}s)`);
-
-	if (!response.ok) {
-		const error = (await response.json().catch(() => ({ message: "Upload failed" }))) as {
-			message?: string;
-		};
-		throw new Error(error.message || `Source upload failed: ${response.status}`);
-	}
-
-	return response.json() as Promise<SourceSnapshotResponse>;
 }
 
 /**

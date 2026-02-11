@@ -1319,12 +1319,13 @@ export class DeploymentService {
 	): Promise<{ deploymentId: string }> {
 		const r2Prefix = `bundles/jack/${templateId}-v${cliVersion}`;
 
-		// Fetch bundle.zip, assets.zip (optional), manifest.json, and asset-manifest.json from R2
-		const [bundleObj, assetsObj, manifestObj, assetManifestObj] = await Promise.all([
+		// Fetch bundle.zip, assets.zip (optional), manifest.json, asset-manifest.json, and source.zip from R2
+		const [bundleObj, assetsObj, manifestObj, assetManifestObj, sourceObj] = await Promise.all([
 			this.codeBucket.get(`${r2Prefix}/bundle.zip`),
 			this.codeBucket.get(`${r2Prefix}/assets.zip`),
 			this.codeBucket.get(`${r2Prefix}/manifest.json`),
 			this.codeBucket.get(`${r2Prefix}/asset-manifest.json`),
+			this.codeBucket.get(`${r2Prefix}/source.zip`),
 		]);
 
 		// Validate required files exist
@@ -1390,6 +1391,14 @@ export class DeploymentService {
 				)
 				.bind(artifactPrefix, deploymentId)
 				.run();
+
+			// Store source.zip alongside bundle in deployment artifacts (enables forking)
+			if (sourceObj) {
+				await this.codeBucket.put(
+					`${artifactPrefix}/source.zip`,
+					await sourceObj.arrayBuffer(),
+				);
+			}
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
 			await this.db

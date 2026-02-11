@@ -97,6 +97,9 @@ async function buildTemplate(template: string, version: string): Promise<void> {
 		// Upload bundle.zip
 		await uploadToR2(packageResult.bundleZipPath, `${r2Prefix}/bundle.zip`);
 
+		// Upload source.zip (enables forking from prebuilt templates)
+		await uploadToR2(packageResult.sourceZipPath, `${r2Prefix}/source.zip`);
+
 		// Upload assets.zip and asset-manifest.json if exists
 		if (packageResult.assetsZipPath) {
 			await uploadToR2(packageResult.assetsZipPath, `${r2Prefix}/assets.zip`);
