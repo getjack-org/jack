@@ -18,6 +18,7 @@ const cli = meow(
     new <name> [path]   Create and deploy a project
     vibe "<phrase>"     Create from an idea
     ship                Push changes to production
+    rollback            Roll back to previous deploy
 
   Projects
     open [name]         Open in browser
@@ -186,6 +187,9 @@ const cli = meow(
 			name: {
 				type: "string",
 			},
+			to: {
+				type: "string",
+			},
 		},
 	},
 );
@@ -305,6 +309,11 @@ try {
 		case "deploys": {
 			const { default: deploys } = await import("./commands/deploys.ts");
 			await withTelemetry("deploys", deploys)({ all: cli.flags.all });
+			break;
+		}
+		case "rollback": {
+			const { default: rollback } = await import("./commands/rollback.ts");
+			await withTelemetry("rollback", rollback)({ to: cli.flags.to });
 			break;
 		}
 		case "agents": {

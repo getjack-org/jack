@@ -432,6 +432,160 @@ export class DeploymentService {
 	}
 
 	/**
+	 * Roll back a project to a previous deployment.
+	 * If targetDeploymentId is provided, rolls back to that specific deployment.
+	 * Otherwise, rolls back to the deployment immediately before the current live one.
+	 */
+	async rollbackDeployment(
+		projectId: string,
+		targetDeploymentId?: string,
+	): Promise<Deployment> {
+		let target: Deployment;
+
+		if (targetDeploymentId) {
+			// Normalize: accept short IDs (e.g. "a1b2c3d4") or full IDs ("dep_a1b2c3d4-...")
+			const lookupId = targetDeploymentId.startsWith("dep_")
+				? targetDeploymentId
+				: `dep_${targetDeploymentId}`;
+
+			// Explicit target: fetch and validate (IDOR prevention — MUST check project_id)
+			// Use prefix match to support short IDs from `jack deploys` output
+			const found = await this.db
+				.prepare(
+					"SELECT * FROM deployments WHERE id LIKE ? AND project_id = ? ORDER BY created_at DESC LIMIT 1",
+				)
+				.bind(`${lookupId}%`, projectId)
+				.first<Deployment>();
+
+			if (!found) {
+				throw new Error(
+					`Deployment "${targetDeploymentId}" not found. Run 'jack deploys' to see available versions.`,
+				);
+			}
+
+			if (found.status !== "live") {
+				throw new Error(
+					`Cannot roll back to deployment ${targetDeploymentId} because its status is "${found.status}". ` +
+						"Only successful (live) deployments can be used as rollback targets.",
+				);
+			}
+
+			if (!found.source.startsWith("code:") && !found.source.startsWith("rollback:")) {
+				throw new Error(
+					`Cannot roll back to deployment ${targetDeploymentId} because its source is "${found.source}". ` +
+						"Only code and rollback deployments can be used as rollback targets (template and prebuilt deployments have a different artifact structure).",
+				);
+			}
+
+			target = found;
+		} else {
+			// No explicit target: roll back to the deployment before the current live one
+			const current = await this.db
+				.prepare(
+					"SELECT * FROM deployments WHERE project_id = ? AND status = 'live' ORDER BY created_at DESC LIMIT 1",
+				)
+				.bind(projectId)
+				.first<Deployment>();
+
+			if (!current) {
+				throw new Error("No live deployment found for this project. Deploy first before rolling back.");
+			}
+
+			const previous = await this.db
+				.prepare(
+					"SELECT * FROM deployments WHERE project_id = ? AND status = 'live' AND (source LIKE 'code:%' OR source LIKE 'rollback:%') AND id != ? ORDER BY created_at DESC LIMIT 1",
+				)
+				.bind(projectId, current.id)
+				.first<Deployment>();
+
+			if (!previous) {
+				throw new Error(
+					"No previous deployment found. This project has only been deployed once.",
+				);
+			}
+
+			target = previous;
+		}
+
+		// Fetch artifacts from R2 using the target deployment's artifact_bucket_key
+		if (!target.artifact_bucket_key) {
+			throw new Error(
+				"Deployment artifacts not found in storage. " +
+					"The target deployment does not have an artifact reference.",
+			);
+		}
+
+		const [bundleObj, manifestObj, assetsObj] = await Promise.all([
+			this.codeBucket.get(`${target.artifact_bucket_key}/bundle.zip`),
+			this.codeBucket.get(`${target.artifact_bucket_key}/manifest.json`),
+			this.codeBucket.get(`${target.artifact_bucket_key}/assets.zip`),
+		]);
+
+		if (!bundleObj || !manifestObj) {
+			throw new Error(
+				"Deployment artifacts not found in storage. " +
+					"The bundle or manifest may have been cleaned up.",
+			);
+		}
+
+		const [bundleZip, manifestText] = await Promise.all([
+			bundleObj.arrayBuffer(),
+			manifestObj.text(),
+		]);
+		const manifest = JSON.parse(manifestText) as ManifestData;
+		const assetsZip = assetsObj ? await assetsObj.arrayBuffer() : null;
+
+		// Create new deployment record
+		const deploymentId = `dep_${crypto.randomUUID()}`;
+		await this.db
+			.prepare(
+				`INSERT INTO deployments (id, project_id, status, source)
+         VALUES (?, ?, 'queued', ?)`,
+			)
+			.bind(deploymentId, projectId, `rollback:${target.id}`)
+			.run();
+
+		try {
+			// Deploy the code (reuse existing method)
+			// Do NOT re-execute schema.sql (forward-only, could be destructive)
+			// Do NOT re-apply secrets (persist on worker, re-applying could revert rotations)
+			await this.deployCodeToWorker(projectId, bundleZip, manifest, deploymentId, assetsZip);
+
+			// Update deployment to 'live', reuse target's artifact prefix (don't copy artifacts)
+			await this.db
+				.prepare(
+					`UPDATE deployments SET status = 'live', artifact_bucket_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				)
+				.bind(target.artifact_bucket_key, deploymentId)
+				.run();
+
+			// Refresh cache after successful deployment
+			await this.refreshProjectCache(projectId);
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "Rollback failed";
+			await this.db
+				.prepare(
+					`UPDATE deployments SET status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				)
+				.bind(errorMessage, deploymentId)
+				.run();
+			throw error;
+		}
+
+		// Fetch and return the final deployment state
+		const deployment = await this.db
+			.prepare("SELECT * FROM deployments WHERE id = ?")
+			.bind(deploymentId)
+			.first<Deployment>();
+
+		if (!deployment) {
+			throw new Error("Failed to retrieve created deployment");
+		}
+
+		return deployment;
+	}
+
+	/**
 	 * Get bindings configuration for a project
 	 */
 	async getBindingsForProject(projectId: string): Promise<DispatchScriptBinding[]> {
@@ -711,6 +865,9 @@ export class DeploymentService {
 				await this.codeBucket.put(`${artifactPrefix}/source.zip`, input.sourceZip);
 			}
 			await this.codeBucket.put(`${artifactPrefix}/manifest.json`, JSON.stringify(input.manifest));
+			if (input.assetsZip && input.assetsZip.byteLength > 0) {
+				await this.codeBucket.put(`${artifactPrefix}/assets.zip`, input.assetsZip);
+			}
 
 			// Execute schema.sql if provided
 			if (input.schemaSql) {

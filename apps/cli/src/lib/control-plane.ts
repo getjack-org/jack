@@ -482,6 +482,47 @@ export async function fetchDeployments(projectId: string): Promise<DeploymentLis
 	return { deployments: data.deployments, total: data.total };
 }
 
+export interface RollbackResponse {
+	deployment: {
+		id: string;
+		status: string;
+		source: string;
+		created_at: string;
+		updated_at: string;
+	};
+}
+
+/**
+ * Rollback a managed project to a previous deployment.
+ * If no deploymentId given, rolls back to the previous successful deployment.
+ */
+export async function rollbackDeployment(
+	projectId: string,
+	deploymentId?: string,
+): Promise<RollbackResponse> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const body: Record<string, string> = {};
+	if (deploymentId) {
+		body.deployment_id = deploymentId;
+	}
+
+	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/rollback`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+
+	if (!response.ok) {
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Rollback failed: ${response.status}`);
+	}
+
+	return response.json() as Promise<RollbackResponse>;
+}
+
 /**
  * Create a resource for a managed project.
  * Uses POST /v1/projects/:id/resources/:type endpoint.
