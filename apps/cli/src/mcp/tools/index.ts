@@ -284,7 +284,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "create_project",
 					description:
-						"Create a new Cloudflare Workers project from a template. Automatically installs dependencies, deploys to Cloudflare, and registers the project. Also supports forking: pass a 'username/slug' template to fork a published project, or a project slug to fork your own.",
+						"Create a new project from a template. Automatically installs dependencies, deploys, and registers the project. Also supports forking: pass a 'username/slug' template to fork a published project, or a project slug to fork your own.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -303,7 +303,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "deploy_project",
 					description:
-						"Deploy code changes to production. Builds, packages, and pushes to Cloudflare Workers. Returns deployment ID, status, and live URL.",
+						"Deploy an existing project to Cloudflare Workers. Builds the project if needed and pushes to production.",
 					inputSchema: {
 						type: "object",
 						properties: {
