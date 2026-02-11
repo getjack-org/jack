@@ -54,15 +54,15 @@ Fork public: template: "alice/cool-api"      → forks a published project
 
 All modes create a fully deployed, independent copy.
 
-#### Database (D1)
+#### Database
 
 | Tool | Description |
 |------|-------------|
-| `create_database` | Create a D1 database for a project |
+| `create_database` | Create a database for a project |
 | `list_databases` | List project databases |
 | `execute_sql` | Execute SQL queries (read-only by default, `allow_write` for mutations) |
 
-#### Vector Search (Vectorize)
+#### Vector Search
 
 | Tool | Description |
 |------|-------------|
@@ -71,11 +71,11 @@ All modes create a fully deployed, independent copy.
 | `get_vectorize_info` | Get index metadata (dimensions, metric, count) |
 | `delete_vectorize_index` | Delete an index |
 
-#### Storage (R2)
+#### Storage
 
 | Tool | Description |
 |------|-------------|
-| `create_storage_bucket` | Create an R2 storage bucket |
+| `create_storage_bucket` | Create a storage bucket |
 | `list_storage_buckets` | List project buckets |
 | `get_storage_info` | Get bucket info |
 | `delete_storage_bucket` | Delete a bucket |
@@ -108,13 +108,17 @@ All modes create a fully deployed, independent copy.
 
 ### Multi-Project Management
 
-Most tools accept a `project_path` parameter, so an agent can manage multiple projects in a single session:
+Most tools accept a `project_path` parameter, so an agent can manage multiple projects in a single session. Tool calls can run in parallel — a single prompt can launch several projects simultaneously, each returning a live URL.
+
+From there, you can keep working across all of them: add databases, seed data, configure cron jobs, check logs — all without switching context.
 
 ```
-create_project  name: "api-v2", template: "alice/cool-api"
-deploy_project  project_path: "/projects/api-v1"
-execute_sql     project_path: "/projects/api-v2", sql: "SELECT * FROM users"
-tail_logs       project_path: "/projects/api-v1"
+create_project    name: "users-api", template: "api"
+create_project    name: "admin-dash", template: "miniapp"
+deploy_project    project_path: "/projects/users-api"
+execute_sql       project_path: "/projects/users-api", sql: "CREATE TABLE users ..."
+create_cron       project_path: "/projects/admin-dash", expression: "0 * * * *"
+tail_logs         project_path: "/projects/users-api"
 ```
 
 ## Other Agents
@@ -145,7 +149,8 @@ jack new my-app
 
 ## Tips for AI-Assisted Development
 
-1. **Let the agent deploy** - AI agents can run `jack ship` directly
-2. **Use the MCP tools** - Agents with MCP access can create/deploy without CLI
-3. **Fork as a starting point** - Use `create_project` with a template to fork existing projects
-4. **Check AGENTS.md** - Customize it for your project's specific patterns
+1. **Let the agent deploy** — agents can run `jack ship` directly
+2. **Use MCP tools** — agents with MCP access can create, deploy, query, and manage without the CLI
+3. **Fork as a starting point** — use `create_project` with a template to fork existing projects
+4. **Go wide** — launch multiple projects in one prompt, manage them all from one session
+5. **Check AGENTS.md** — customize it for your project's specific patterns
