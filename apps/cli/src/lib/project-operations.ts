@@ -109,6 +109,9 @@ export interface DeployResult {
 	projectName: string;
 	deployOutput?: string;
 	deployMode: DeployMode; // The deploy mode used
+	deploymentId?: string;
+	deployStatus?: string;
+	errorMessage?: string | null;
 }
 
 export interface ProjectStatus {
@@ -126,6 +129,11 @@ export interface ProjectStatus {
 	missing: boolean;
 	backupFiles: number | null;
 	backupLastSync: string | null;
+	// Deploy tracking (managed projects only)
+	lastDeployAt: string | null;
+	deployCount: number;
+	lastDeployStatus: string | null;
+	lastDeploySource: string | null;
 }
 
 export interface StaleProject {
@@ -1723,6 +1731,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 
 	let workerUrl: string | null = null;
 	let deployOutput: string | undefined;
+	let managedDeployResult: { deploymentId: string; status: string; errorMessage: string | null } | undefined;
 
 	// Deploy based on mode
 	if (deployMode === "managed") {
@@ -1781,7 +1790,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 
 		// deployToManagedProject now handles both template and code deploy
-		await deployToManagedProject(managedProjectId as string, projectPath, reporter);
+		managedDeployResult = await deployToManagedProject(managedProjectId as string, projectPath, reporter);
 
 		// Construct URL with username if available
 		workerUrl = link?.owner_username
@@ -1936,6 +1945,9 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		projectName,
 		deployOutput: workerUrl ? undefined : deployOutput,
 		deployMode,
+		deploymentId: managedDeployResult?.deploymentId,
+		deployStatus: managedDeployResult?.status,
+		errorMessage: managedDeployResult?.errorMessage,
 	};
 }
 
@@ -2025,11 +2037,33 @@ export async function getProjectStatus(
 		}
 	}
 
+	// Fetch real deployment data for managed projects
+	let lastDeployAt: string | null = null;
+	let deployCount = 0;
+	let lastDeployStatus: string | null = null;
+	let lastDeploySource: string | null = null;
+
+	if (link?.deploy_mode === "managed") {
+		try {
+			const { fetchDeployments } = await import("./control-plane.ts");
+			const result = await fetchDeployments(link.project_id);
+			deployCount = result.total;
+			const latest = result.deployments[0];
+			if (latest) {
+				lastDeployAt = latest.created_at;
+				lastDeployStatus = latest.status;
+				lastDeploySource = latest.source;
+			}
+		} catch {
+			// Silent fail — deploy tracking is supplementary
+		}
+	}
+
 	return {
 		name: projectName,
 		localPath,
 		workerUrl,
-		lastDeployed: link?.linked_at ?? null,
+		lastDeployed: lastDeployAt ?? link?.linked_at ?? null,
 		createdAt: link?.linked_at ?? null,
 		accountId: null, // No longer stored in registry
 		workerId: projectName,
@@ -2040,6 +2074,10 @@ export async function getProjectStatus(
 		missing: false,
 		backupFiles,
 		backupLastSync,
+		lastDeployAt,
+		deployCount,
+		lastDeployStatus,
+		lastDeploySource,
 	};
 }
 

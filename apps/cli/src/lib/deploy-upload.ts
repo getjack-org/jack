@@ -25,6 +25,7 @@ export interface DeployUploadResult {
 	project_id: string;
 	status: "queued" | "building" | "live" | "failed";
 	source: string;
+	error_message: string | null;
 	created_at: string;
 }
 

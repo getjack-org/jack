@@ -22,6 +22,7 @@ const cli = meow(
   Projects
     open [name]         Open in browser
     logs                Stream live logs
+    deploys             List recent deployments
     down [name]         Undeploy from cloud
     ls                  List all projects
     info [name]         Show project details
@@ -299,6 +300,11 @@ try {
 		case "tail": {
 			const { default: logs } = await import("./commands/logs.ts");
 			await withTelemetry("logs", logs)({ label: cli.flags.label });
+			break;
+		}
+		case "deploys": {
+			const { default: deploys } = await import("./commands/deploys.ts");
+			await withTelemetry("deploys", deploys)({ all: cli.flags.all });
 			break;
 		}
 		case "agents": {

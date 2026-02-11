@@ -2321,6 +2321,89 @@ api.post("/projects/:projectId/crons", async (c) => {
 	);
 });
 
+// GET /v1/projects/:projectId/deployments - List recent deployments
+api.get("/projects/:projectId/deployments", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const deploymentService = new DeploymentService(c.env);
+	const all = await deploymentService.listDeployments(projectId);
+	const deployments = all.slice(0, 10).map((d) => ({
+		id: d.id,
+		status: d.status,
+		source: d.source,
+		error_message: d.error_message,
+		created_at: d1DatetimeToIso(d.created_at),
+		updated_at: d1DatetimeToIso(d.updated_at),
+	}));
+
+	return c.json({ deployments, total: all.length });
+});
+
+// GET /v1/projects/:projectId/deployments/latest - Get latest live deployment
+api.get("/projects/:projectId/deployments/latest", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	const project = await c.env.DB.prepare(
+		"SELECT * FROM projects WHERE id = ? AND status != 'deleted'",
+	)
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const deploymentService = new DeploymentService(c.env);
+	const d = await deploymentService.getLatestDeployment(projectId);
+
+	if (!d) {
+		return c.json({ error: "not_found", message: "No deployment found" }, 404);
+	}
+
+	return c.json({
+		deployment: {
+			id: d.id,
+			status: d.status,
+			source: d.source,
+			error_message: d.error_message,
+			created_at: d1DatetimeToIso(d.created_at),
+			updated_at: d1DatetimeToIso(d.updated_at),
+		},
+	});
+});
+
 // GET /v1/projects/:projectId/crons - List cron schedules
 api.get("/projects/:projectId/crons", async (c) => {
 	const auth = c.get("auth");
@@ -2953,33 +3036,6 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 		const message = error instanceof Error ? error.message : "Deployment creation failed";
 		return c.json({ error: "internal_error", message }, 500);
 	}
-});
-
-api.get("/projects/:projectId/deployments", async (c) => {
-	const auth = c.get("auth");
-	const projectId = c.req.param("projectId");
-	const provisioning = new ProvisioningService(c.env);
-
-	// Get project and verify it exists
-	const project = await provisioning.getProject(projectId);
-	if (!project) {
-		return c.json({ error: "not_found", message: "Project not found" }, 404);
-	}
-
-	// Verify user has org membership access
-	const membership = await c.env.DB.prepare(
-		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
-	)
-		.bind(project.org_id, auth.userId)
-		.first();
-
-	if (!membership) {
-		return c.json({ error: "not_found", message: "Project not found" }, 404);
-	}
-
-	const deploymentService = new DeploymentService(c.env);
-	const deployments = await deploymentService.listDeployments(projectId);
-	return c.json({ deployments });
 });
 
 // Secrets endpoints - never stores secrets in D1, passes directly to Cloudflare
