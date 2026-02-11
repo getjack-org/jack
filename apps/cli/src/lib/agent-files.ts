@@ -7,7 +7,7 @@ import type { AgentConfig, AgentDefinition } from "./agents.ts";
  * Template for AGENTS.md
  */
 function generateAgentsMd(projectName: string, template: Template): string {
-	const summary = template.agentContext?.summary || "A Cloudflare Workers project";
+	const summary = template.agentContext?.summary || "A jack project";
 	const fullText = template.agentContext?.full_text || "";
 
 	return `# ${projectName}
@@ -16,10 +16,10 @@ function generateAgentsMd(projectName: string, template: Template): string {
 
 ## Deployment
 
-This project is deployed to Cloudflare Workers using jack:
+This project is deployed and managed via jack:
 
 \`\`\`bash
-jack ship    # Deploy to Cloudflare Workers
+jack ship    # Deploy to production
 jack logs    # Stream production logs
 \`\`\`
 
@@ -39,7 +39,7 @@ See [AGENTS.md](./AGENTS.md) for complete project context and deployment instruc
 
 ## Quick Commands
 
-- **Deploy**: \`jack ship\` - Deploy to Cloudflare Workers
+- **Deploy**: \`jack ship\` - Deploy to production
 - **Logs**: \`jack logs\` - Stream production logs
 
 ## Important

@@ -302,8 +302,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				},
 				{
 					name: "deploy_project",
-					description:
-						"Deploy an existing project to Cloudflare Workers. Builds the project if needed and pushes to production.",
+					description: "Deploy an existing project. Builds if needed and pushes to production.",
 					inputSchema: {
 						type: "object",
 						properties: {

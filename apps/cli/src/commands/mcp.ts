@@ -114,10 +114,67 @@ async function installMcpConfig(): Promise<void> {
 	}
 }
 
+/**
+ * Parse wrangler config (jsonc or toml) and extract binding info.
+ * Returns null on any failure — never blocks session start.
+ */
+async function parseWranglerBindings(cwd: string): Promise<{
+	databases: string[];
+	buckets: string[];
+	vectorize: string[];
+	ai: boolean;
+	kv: string[];
+} | null> {
+	try {
+		const jsoncPath = join(cwd, "wrangler.jsonc");
+		const tomlPath = join(cwd, "wrangler.toml");
+
+		let config: Record<string, unknown> | null = null;
+
+		if (existsSync(jsoncPath)) {
+			const content = await readFile(jsoncPath, "utf-8");
+			const jsonContent = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+			config = JSON.parse(jsonContent);
+		} else if (existsSync(tomlPath)) {
+			// For toml, just check for key patterns — not worth a full parser here
+			const content = await readFile(tomlPath, "utf-8");
+			return {
+				databases: content.includes("d1_databases") ? ["(see wrangler.toml)"] : [],
+				buckets: content.includes("r2_buckets") ? ["(see wrangler.toml)"] : [],
+				vectorize: content.includes("vectorize") ? ["(see wrangler.toml)"] : [],
+				ai: content.includes("[ai]"),
+				kv: content.includes("kv_namespaces") ? ["(see wrangler.toml)"] : [],
+			};
+		}
+
+		if (!config) return null;
+
+		const databases =
+			(config.d1_databases as { database_name?: string; binding?: string }[])?.map(
+				(d) => d.database_name || d.binding || "unknown",
+			) ?? [];
+		const buckets =
+			(config.r2_buckets as { bucket_name?: string; binding?: string }[])?.map(
+				(b) => b.bucket_name || b.binding || "unknown",
+			) ?? [];
+		const vectorize =
+			(config.vectorize as { index_name?: string; binding?: string }[])?.map(
+				(v) => v.index_name || v.binding || "unknown",
+			) ?? [];
+		const ai = !!config.ai;
+		const kv =
+			(config.kv_namespaces as { binding?: string }[])?.map((k) => k.binding || "unknown") ?? [];
+
+		return { databases, buckets, vectorize, ai, kv };
+	} catch {
+		return null;
+	}
+}
+
 async function outputProjectContext(): Promise<void> {
 	try {
 		const cwd = process.cwd();
-		const { readProjectLink } = await import("../lib/project-link.ts");
+		const { readProjectLink, readTemplateMetadata } = await import("../lib/project-link.ts");
 		const link = await readProjectLink(cwd);
 
 		// Silent exit if not a jack project — don't leak into non-jack sessions
@@ -139,23 +196,85 @@ async function outputProjectContext(): Promise<void> {
 			// No wrangler config
 		}
 
+		// --- Section 1: Project identity ---
 		const lines = [`# Jack Project: ${name}`, ""];
 		if (link.deploy_mode === "managed" && link.owner_username) {
 			lines.push(`- **URL:** https://${link.owner_username}-${name}.runjack.xyz`);
 		}
-		lines.push(`- **Deploy mode:** ${link.deploy_mode}`);
-		lines.push("");
-		lines.push("## Before starting work");
-		lines.push("");
+		lines.push(`- **Project ID:** ${link.project_id}`);
 		lines.push(
-			"Call `mcp__jack__get_project_status` to see the live deployment state (last deploy time, URL, status).",
+			`- **Deploy mode:** ${link.deploy_mode === "managed" ? "Jack Cloud (managed)" : "BYO (bring your own Cloudflare account)"}`,
 		);
-		lines.push("To deploy changes: `mcp__jack__deploy_project`. To debug: `mcp__jack__tail_logs`.");
+
+		// Template origin
+		const templateMeta = await readTemplateMetadata(cwd);
+		if (templateMeta) {
+			lines.push(`- **Template:** ${templateMeta.name} (${templateMeta.type})`);
+		}
+
+		// --- Section 2: Detected services ---
+		const bindings = await parseWranglerBindings(cwd);
+		if (bindings) {
+			const services: string[] = [];
+			if (bindings.databases.length > 0)
+				services.push(`D1 databases: ${bindings.databases.join(", ")}`);
+			if (bindings.buckets.length > 0) services.push(`R2 storage: ${bindings.buckets.join(", ")}`);
+			if (bindings.vectorize.length > 0)
+				services.push(`Vectorize indexes: ${bindings.vectorize.join(", ")}`);
+			if (bindings.kv.length > 0) services.push(`KV namespaces: ${bindings.kv.join(", ")}`);
+			if (bindings.ai) services.push("AI (Workers AI)");
+
+			if (services.length > 0) {
+				lines.push("");
+				lines.push("### Services");
+				for (const svc of services) {
+					lines.push(`- ${svc}`);
+				}
+			}
+		}
+
+		// --- Section 3: Mode-specific guidance ---
+		lines.push("");
+		lines.push("## How to work with this project");
+		lines.push("");
+
+		if (link.deploy_mode === "managed") {
+			lines.push("This is a **Jack Cloud** project. All infrastructure is managed by jack.");
+			lines.push("");
+			lines.push("- Deploy: `mcp__jack__deploy_project` or `jack ship`");
+			lines.push("- Database: `mcp__jack__execute_sql` or `jack services db query`");
+			lines.push("- Logs: `mcp__jack__tail_logs` or `jack logs`");
+			lines.push("- Status: `mcp__jack__get_project_status` or `jack info`");
+			lines.push("");
+			lines.push(
+				"**Do NOT run `wrangler` commands.** This project uses Jack Cloud — there are no local Cloudflare credentials.",
+			);
+			lines.push(
+				"The `wrangler.jsonc` file is only used for local dev and build configuration, not for deployment.",
+			);
+		} else {
+			lines.push("This is a **BYO** (Bring Your Own) project deployed to your Cloudflare account.");
+			lines.push("");
+			lines.push("- Deploy: `mcp__jack__deploy_project` or `jack ship`");
+			lines.push("- Logs: `mcp__jack__tail_logs` or `jack logs`");
+			lines.push("- Status: `mcp__jack__get_project_status` or `jack info`");
+			lines.push("");
+			lines.push(
+				"Prefer `mcp__jack__*` tools or `jack` CLI over raw `wrangler` commands for consistency.",
+			);
+		}
+
+		lines.push("");
 		lines.push(
-			"Always prefer `mcp__jack__*` tools over CLI commands or wrangler — they are cloud-aware.",
+			'To fork/clone a project: `mcp__jack__create_project` with `template: "username/slug"` or `template: "my-project"`.',
+		);
+		lines.push("");
+		lines.push(
+			"**Always prefer `mcp__jack__*` tools over CLI commands or wrangler** — they are cloud-aware and work in all deploy modes.",
 		);
 		sections.push(lines.join("\n"));
 
+		// --- Section 4: Existing agent context files ---
 		for (const filename of ["JACK.md", "AGENTS.md", "CLAUDE.md"]) {
 			const filepath = join(cwd, filename);
 			if (existsSync(filepath)) {

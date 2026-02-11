@@ -73,15 +73,24 @@ ${templateSection}## For AI Agents
 
 ### MCP Tools
 
-If jack MCP is connected, prefer these tools over CLI commands:
+If jack MCP is connected, **always prefer these tools over CLI commands or wrangler**:
 
 | Tool | Use for |
 |------|---------|
+| \`mcp__jack__create_project\` | Create a new project (supports forking via \`template: "username/slug"\`) |
 | \`mcp__jack__deploy_project\` | Deploy changes |
-| \`mcp__jack__create_database\` | Create a new database |
-| \`mcp__jack__execute_sql\` | Query the database |
+| \`mcp__jack__get_project_status\` | Check deployment status and URL |
 | \`mcp__jack__list_projects\` | List all projects |
-| \`mcp__jack__get_project_status\` | Check deployment status |
+| \`mcp__jack__create_database\` | Create a database |
+| \`mcp__jack__execute_sql\` | Query the database (read-only by default) |
+| \`mcp__jack__list_databases\` | List project databases |
+| \`mcp__jack__create_storage_bucket\` | Create object storage |
+| \`mcp__jack__create_vectorize_index\` | Create vector search index |
+| \`mcp__jack__tail_logs\` | Debug with live log samples |
+| \`mcp__jack__start_log_session\` | Start real-time log stream |
+| \`mcp__jack__create_cron\` | Create scheduled tasks |
+| \`mcp__jack__list_domains\` | List custom domains |
+| \`mcp__jack__connect_domain\` | Add a custom domain |
 
 ### Documentation
 
