@@ -1,0 +1,54 @@
+{
+	"name": "nextjs-clerk",
+	"description": "Next.js + Clerk (managed auth with pre-built UI components)",
+	"secrets": ["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"],
+	"capabilities": [],
+	"intent": {
+		"keywords": ["clerk", "auth", "login", "nextjs", "managed-auth", "sso"],
+		"examples": ["app with managed auth", "clerk login", "quick auth setup"]
+	},
+	"agentContext": {
+		"summary": "A Next.js app with Clerk managed authentication, pre-built sign-in/sign-up components, and route protection middleware.",
+		"full_text": "## Project Structure\n\n- `app/layout.tsx` - Root layout with ClerkProvider\n- `app/page.tsx` - Landing page with sign-in CTA\n- `app/sign-in/[[...sign-in]]/page.tsx` - Clerk sign-in page\n- `app/sign-up/[[...sign-up]]/page.tsx` - Clerk sign-up page\n- `app/dashboard/page.tsx` - Protected dashboard page\n- `middleware.ts` - Clerk auth middleware for route protection\n- `components/header.tsx` - Header with UserButton for profile/logout\n\n## Authentication\n\nUses Clerk for fully managed auth. No database tables needed for auth.\n\n### Route Protection\n\nThe `middleware.ts` uses `clerkMiddleware()` with `createRouteMatcher()` to protect routes. By default, `/dashboard` and `/dashboard/*` are protected.\n\n### Client Components\n\n```tsx\nimport { SignInButton, SignedIn, SignedOut, UserButton } from '@clerk/nextjs';\n\n// Show sign-in button when signed out\n<SignedOut><SignInButton /></SignedOut>\n\n// Show user button when signed in\n<SignedIn><UserButton /></SignedIn>\n```\n\n### Server Components\n\n```tsx\nimport { auth, currentUser } from '@clerk/nextjs/server';\n\n// Get auth state\nconst { userId } = await auth();\n\n// Get full user object\nconst user = await currentUser();\n```\n\n## Environment Variables\n\n- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` - Clerk publishable key (pk_test_...)\n- `CLERK_SECRET_KEY` - Clerk secret key (sk_test_...)\n\nGet these from https://dashboard.clerk.com\n\n## OpenNext on Cloudflare — Important Rules\n\nThis app runs via OpenNext on Cloudflare Workers. Follow these rules:\n\n### Use window.location.href instead of router.push() for full-page transitions\nOpenNext has a broken webpack chunk URL resolver. `router.push()` to pages whose chunks aren't loaded fails with `ChunkLoadError`. Use `window.location.href` for auth state changes or cross-section navigation. `<Link>` components work fine.\n\n### Add `export const dynamic = 'force-dynamic'` to pages using getCloudflareContext()\nWithout this, static prerendering fails because `getCloudflareContext()` is only available at request time.\n\n### Edge middleware cannot use Node.js APIs\nDo not import Node.js built-in modules in middleware. Clerk's `clerkMiddleware()` is edge-compatible.\n\n## Resources\n\n- [Clerk Docs](https://clerk.com/docs)\n- [Clerk Next.js Quickstart](https://clerk.com/docs/quickstarts/nextjs)\n- [OpenNext Docs](https://opennext.js.org/cloudflare)"
+	},
+	"hooks": {
+		"preCreate": [
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+				"message": "Clerk publishable key",
+				"setupUrl": "https://dashboard.clerk.com",
+				"onMissing": "prompt",
+				"promptMessage": "Enter Clerk Publishable Key (pk_test_...):"
+			},
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "CLERK_SECRET_KEY",
+				"message": "Clerk secret key",
+				"setupUrl": "https://dashboard.clerk.com",
+				"onMissing": "prompt",
+				"promptMessage": "Enter Clerk Secret Key (sk_test_...):"
+			}
+		],
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "box",
+				"title": "Auth ready: {{name}}",
+				"lines": [
+					"{{url}}",
+					"",
+					"Clerk dashboard: https://dashboard.clerk.com",
+					"Sign-up and login pages work immediately.",
+					"Configure social providers in Clerk dashboard."
+				]
+			}
+		]
+	}
+}
