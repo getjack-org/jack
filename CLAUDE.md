@@ -156,6 +156,37 @@ Use `scripts/test-managed-mode-no-cf-auth.sh` to verify managed mode works witho
 
 This simulates a user who has Jack Cloud auth (`~/.config/jack/auth.json`) but no Cloudflare auth (`~/.wrangler/`).
 
+## Templates & Prebuilt Bundles
+
+### Single Source of Truth
+
+The canonical template list is `BUILTIN_TEMPLATES` in `apps/cli/src/templates/index.ts`. Everything else derives from it:
+
+- **Prebuild script** (`scripts/prebuild-templates.ts`) imports `BUILTIN_TEMPLATES` and filters to templates with a directory in `apps/cli/templates/`
+- **Control plane** has no template list — it constructs the R2 key from the template name + CLI version the client sends (`bundles/jack/{template}-v{version}/`) and fails if not found
+- **CLI** sends `use_prebuilt: true` when `templateOrigin.type === "builtin"`
+
+### Adding a New Template
+
+1. Create `apps/cli/templates/{name}/` with source files, `wrangler.jsonc`, `.jack.json`
+2. Add `"{name}"` to `BUILTIN_TEMPLATES` in `apps/cli/src/templates/index.ts`
+3. Run `bun run scripts/prebuild-templates.ts` to build + upload to R2
+4. That's it — prebuild script picks it up automatically, control plane serves it by R2 key
+
+### Rebuilding Templates
+
+After changing any template source, rebuild to update the prebuilt bundles in R2:
+
+```bash
+bun run scripts/prebuild-templates.ts
+```
+
+This builds all templates locally (install deps, wrangler build, package) and uploads bundle.zip, source.zip, assets.zip, manifest.json to R2. The `source.zip` enables forking from prebuilt templates.
+
+### Template Metadata (`.jack.json`)
+
+Each template has a `.jack.json` with `agentContext.summary` and `agentContext.full_text` that get injected into generated AGENTS.md files. Keep these free of infrastructure branding (no "Cloudflare Workers") — use "jack" or generic terms instead, so AI agents don't reach for wrangler.
+
 ## Code Style
 
 - TypeScript with Bun runtime
