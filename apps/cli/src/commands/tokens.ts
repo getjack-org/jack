@@ -51,6 +51,7 @@ function showHelp(): void {
 	console.error("");
 	console.error("Commands:");
 	console.error("  create [name]             Create a new API token");
+	console.error("    --expires <days>        Token expires after N days");
 	console.error("  list                      List active tokens");
 	console.error("  revoke <id>               Revoke a token");
 	console.error("");
@@ -69,7 +70,18 @@ async function createToken(args: string[], flags: Record<string, unknown> = {}):
 		name = args[0];
 	}
 
-	const data = await createApiToken(name);
+	// Parse --expires <days> flag
+	let expiresInDays: number | undefined;
+	if (flags.expires !== undefined) {
+		const parsed = Number(flags.expires);
+		if (!Number.isInteger(parsed) || parsed <= 0) {
+			error("--expires must be a positive integer (number of days)");
+			process.exit(1);
+		}
+		expiresInDays = parsed;
+	}
+
+	const data = await createApiToken(name, expiresInDays);
 
 	track(Events.TOKEN_CREATED);
 
@@ -78,6 +90,9 @@ async function createToken(args: string[], flags: Record<string, unknown> = {}):
 	console.error(`  ${data.token}`);
 	console.error("");
 	console.error("  Save this token -- it will not be shown again.");
+	if (data.expires_at) {
+		console.error(`  Expires: ${data.expires_at}`);
+	}
 	console.error("");
 	console.error("  Usage:");
 	console.error("    export JACK_API_TOKEN=<token>");
