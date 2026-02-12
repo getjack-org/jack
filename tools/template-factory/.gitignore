@@ -1,7 +1,0 @@
-# Runtime artifacts
-.smithers/
-.worktrees/
-node_modules/
-
-# Build
-dist/

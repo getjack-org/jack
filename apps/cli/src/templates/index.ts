@@ -19,6 +19,7 @@ export const BUILTIN_TEMPLATES = [
 	"simple-api-starter",
 	"ai-chat",
 	"semantic-search",
+	"nextjs-shadcn",
 ];
 
 /**

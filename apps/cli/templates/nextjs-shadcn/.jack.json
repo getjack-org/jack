@@ -1,0 +1,34 @@
+{
+	"name": "nextjs-shadcn",
+	"description": "Next.js + shadcn/ui with all components (D1 database)",
+	"secrets": [],
+	"capabilities": ["db"],
+	"requires": ["DB"],
+	"intent": {
+		"keywords": ["next", "nextjs", "shadcn", "ui", "components", "dashboard", "admin", "react", "tailwind"],
+		"examples": ["next.js app with UI components", "admin dashboard", "shadcn starter"]
+	},
+	"agentContext": {
+		"summary": "A Next.js app with all shadcn/ui components pre-installed, Tailwind CSS v4, and D1 database.",
+		"full_text": "## Project Structure\n\n- `app/` - Next.js App Router pages and layouts\n- `components/ui/` - All shadcn/ui components (57 components pre-installed)\n- `components/` - App-level components (sidebar, charts, nav, login form)\n- `components.json` - shadcn/ui configuration\n- `lib/utils.ts` - Utility functions (cn helper)\n- `hooks/` - Custom React hooks\n- `public/` - Static assets\n- `open-next.config.ts` - OpenNext configuration\n- `wrangler.jsonc` - Worker configuration with D1 database\n\n## Commands\n\n- `bun run dev` - Local development\n- `jack ship` - Deploy to production\n- `bun run preview` - Preview production build locally\n\n## shadcn/ui\n\nAll components are pre-installed in `components/ui/`. Import them directly:\n\n```tsx\nimport { Button } from \"@/components/ui/button\"\nimport { Card, CardContent, CardHeader, CardTitle } from \"@/components/ui/card\"\nimport { Input } from \"@/components/ui/input\"\n```\n\nAdd new components: `bunx shadcn@latest add [component]`\n\nAdd pre-built blocks (full page layouts): `bunx shadcn@latest add dashboard-01`\n\nConfiguration: `components.json` (style: new-york, base-color: zinc)\n\n**shadcn/ui AI reference:** Fetch https://ui.shadcn.com/llms.txt for the full component and block documentation index. For component-specific docs, use https://ui.shadcn.com/docs/components/[name].\n\n## Pre-built Pages\n\n- `/dashboard` - Full dashboard with sidebar, charts, and data table (from `dashboard-01` + `sidebar-07` blocks)\n- `/login` - Login form with social providers (from `login-03` block)\n\n## Database\n\nD1 SQLite database is available as `DB` binding. Access it in server components and API routes via `getCloudflareContext()`.\n\n## Conventions\n\n- Uses App Router (not Pages Router)\n- SSR and SSG work out of the box\n- Server Components supported\n- Tailwind CSS v4 with CSS variables for theming\n\n## Resources\n\n- [shadcn/ui Docs](https://ui.shadcn.com)\n- [shadcn/ui LLMs reference](https://ui.shadcn.com/llms.txt)\n- [OpenNext Docs](https://opennext.js.org/cloudflare)\n- [Next.js App Router](https://nextjs.org/docs/app)"
+	},
+	"hooks": {
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "shell",
+				"command": "curl -s {{url}}/health | head -c 200",
+				"message": "Testing API..."
+			},
+			{
+				"action": "box",
+				"title": "Deployed: {{name}}",
+				"lines": ["URL: {{url}}", "", "Next.js + shadcn/ui app is live!"]
+			}
+		]
+	}
+}
