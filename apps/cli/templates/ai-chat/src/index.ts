@@ -1,49 +1,32 @@
+import { Hono } from "hono";
+import { streamText, convertToCoreMessages, type Message } from "ai";
+import { createWorkersAI } from "workers-ai-provider";
 import { createJackAI } from "./jack-ai";
 
 interface Env {
-	// Direct AI binding (for local dev with wrangler)
 	AI?: Ai;
-	// Jack proxy bindings (injected in jack cloud)
 	__AI_PROXY?: Fetcher;
 	__JACK_PROJECT_ID?: string;
 	__JACK_ORG_ID?: string;
-	// Assets binding
 	ASSETS: Fetcher;
+	DB: D1Database;
 }
 
 function getAI(env: Env) {
-	// Prefer jack cloud proxy if available (for metering)
 	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
 		return createJackAI(
-			env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
+			env as Required<
+				Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">
+			>,
 		);
 	}
-	// Fallback to direct binding for local dev
-	if (env.AI) {
-		return env.AI;
-	}
+	if (env.AI) return env.AI;
 	throw new Error("No AI binding available");
 }
 
-interface ChatMessage {
-	role: "user" | "assistant" | "system";
-	content: string;
-}
+const SYSTEM_PROMPT = `You are a helpful AI assistant. Be concise, friendly, and helpful. Keep responses short unless detail is needed.`;
 
-// System prompt - customize this to change the AI's personality
-const SYSTEM_PROMPT = `You are a helpful AI assistant built with jack (getjack.sh).
-
-jack helps developers ship ideas fast - from "what if" to a live URL in seconds. You're running on Jack Cloud, deployed globally close to users worldwide.
-
-Be concise, friendly, and helpful. If asked about jack:
-- jack new creates projects from templates
-- jack ship deploys to production
-- jack open opens your app in browser
-- Docs: https://docs.getjack.sh
-
-Focus on being useful. Keep responses short unless detail is needed.`;
-
-// Rate limiting: 10 requests per minute per IP
+// Rate limiting
 const RATE_LIMIT = 10;
 const RATE_WINDOW_MS = 60_000;
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -51,91 +34,92 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 function checkRateLimit(ip: string): boolean {
 	const now = Date.now();
 	const entry = rateLimitMap.get(ip);
-
 	if (!entry || now >= entry.resetAt) {
 		rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
 		return true;
 	}
-
-	if (entry.count >= RATE_LIMIT) {
-		return false;
-	}
-
+	if (entry.count >= RATE_LIMIT) return false;
 	entry.count++;
 	return true;
 }
 
-// Clean up old entries periodically to prevent memory leaks
-function cleanupRateLimitMap(): void {
-	const now = Date.now();
-	for (const [ip, entry] of rateLimitMap) {
-		if (now >= entry.resetAt) {
-			rateLimitMap.delete(ip);
-		}
+const app = new Hono<{ Bindings: Env }>();
+
+// Create new chat
+app.post("/api/chat/new", async (c) => {
+	const id = crypto.randomUUID();
+	await c.env.DB.prepare("INSERT INTO chats (id) VALUES (?)").bind(id).run();
+	return c.json({ id });
+});
+
+// Load chat history
+app.get("/api/chat/:id", async (c) => {
+	const chatId = c.req.param("id");
+	const { results } = await c.env.DB.prepare(
+		"SELECT id, role, content, created_at FROM messages WHERE chat_id = ? ORDER BY created_at ASC",
+	)
+		.bind(chatId)
+		.all();
+	return c.json({ messages: results || [] });
+});
+
+// Chat endpoint with streaming
+app.post("/api/chat", async (c) => {
+	const ip = c.req.header("cf-connecting-ip") || "unknown";
+	if (!checkRateLimit(ip)) {
+		return c.json({ error: "Too many requests. Please wait a moment." }, 429);
 	}
-}
 
-export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
-		const url = new URL(request.url);
+	const { messages, chatId } = await c.req.json<{
+		messages: Message[];
+		chatId?: string;
+	}>();
+	if (!messages || !Array.isArray(messages)) {
+		return c.json({ error: "Invalid request." }, 400);
+	}
 
-		// Serve static assets for non-API routes
-		if (request.method === "GET" && !url.pathname.startsWith("/api")) {
-			return env.ASSETS.fetch(request);
-		}
+	// Save user message to DB if we have a chatId
+	const lastUserMsg = messages.findLast((m: Message) => m.role === "user");
+	if (chatId && lastUserMsg) {
+		await c.env.DB.prepare(
+			"INSERT INTO messages (id, chat_id, role, content) VALUES (?, ?, ?, ?)",
+		)
+			.bind(
+				crypto.randomUUID(),
+				chatId,
+				"user",
+				typeof lastUserMsg.content === "string"
+					? lastUserMsg.content
+					: JSON.stringify(lastUserMsg.content),
+			)
+			.run();
+	}
 
-		// POST /api/chat - Streaming chat endpoint
-		if (request.method === "POST" && url.pathname === "/api/chat") {
-			const ip = request.headers.get("cf-connecting-ip") || "unknown";
+	const ai = getAI(c.env);
+	const provider = createWorkersAI({ binding: ai as Ai });
 
-			// Check rate limit
-			if (!checkRateLimit(ip)) {
-				// Cleanup old entries occasionally
-				cleanupRateLimitMap();
-				return Response.json(
-					{ error: "Too many requests. Please wait a moment and try again." },
-					{ status: 429 },
-				);
+	const result = streamText({
+		model: provider("@cf/meta/llama-3.3-70b-instruct-fp8-fast"),
+		system: SYSTEM_PROMPT,
+		messages: convertToCoreMessages(messages),
+		onFinish: async ({ text }) => {
+			// Save assistant response to DB
+			if (chatId && text) {
+				await c.env.DB.prepare(
+					"INSERT INTO messages (id, chat_id, role, content) VALUES (?, ?, ?, ?)",
+				)
+					.bind(crypto.randomUUID(), chatId, "assistant", text)
+					.run();
 			}
+		},
+	});
 
-			try {
-				const body = (await request.json()) as { messages?: ChatMessage[] };
-				let messages = body.messages;
+	return result.toDataStreamResponse();
+});
 
-				if (!messages || !Array.isArray(messages)) {
-					return Response.json(
-						{ error: "Invalid request. Please provide a messages array." },
-						{ status: 400 },
-					);
-				}
+// Serve static assets for non-API routes
+app.get("*", async (c) => {
+	return c.env.ASSETS.fetch(c.req.raw);
+});
 
-				// Prepend system prompt if not already present
-				if (messages.length === 0 || messages[0].role !== "system") {
-					messages = [{ role: "system", content: SYSTEM_PROMPT }, ...messages];
-				}
-
-				// Stream response using Llama 3.2 1B - cheapest model with good quality
-				// See: https://developers.cloudflare.com/workers-ai/models/
-				const ai = getAI(env);
-				const stream = await ai.run("@cf/meta/llama-3.2-1b-instruct", {
-					messages,
-					stream: true,
-					max_tokens: 1024,
-				});
-
-				return new Response(stream, {
-					headers: {
-						"Content-Type": "text/event-stream",
-						"Cache-Control": "no-cache",
-						Connection: "keep-alive",
-					},
-				});
-			} catch (err) {
-				console.error("Chat error:", err);
-				return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
-			}
-		}
-
-		return Response.json({ error: "Not found" }, { status: 404 });
-	},
-};
+export default app;

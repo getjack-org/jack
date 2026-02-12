@@ -7,6 +7,11 @@
 		"dev": "wrangler dev",
 		"deploy": "wrangler deploy"
 	},
+	"dependencies": {
+		"ai": "^4",
+		"hono": "^4.6.0",
+		"workers-ai-provider": "^0.7"
+	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20241205.0",
 		"typescript": "^5.0.0"
