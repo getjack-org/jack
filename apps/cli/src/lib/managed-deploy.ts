@@ -81,6 +81,7 @@ export interface ManagedCodeDeployOptions {
 	projectId: string;
 	projectPath: string;
 	reporter?: OperationReporter;
+	message?: string;
 }
 
 /**
@@ -163,6 +164,7 @@ export async function deployCodeToManagedProject(
 			secretsPath: pkg.secretsPath ?? undefined,
 			assetsZipPath: pkg.assetsZipPath ?? undefined,
 			assetManifest: pkg.assetManifest ?? undefined,
+			message: options.message,
 		});
 
 		uploadProgress.complete();
@@ -217,10 +219,12 @@ export async function deployToManagedProject(
 	projectId: string,
 	projectPath: string,
 	reporter?: OperationReporter,
+	message?: string,
 ): Promise<{ deploymentId: string; status: string; errorMessage: string | null }> {
 	return deployCodeToManagedProject({
 		projectId,
 		projectPath,
 		reporter,
+		message,
 	});
 }

@@ -460,6 +460,7 @@ export interface DeploymentInfo {
 	status: "queued" | "building" | "live" | "failed";
 	source: string;
 	error_message: string | null;
+	message: string | null;
 	created_at: string;
 	updated_at: string;
 }

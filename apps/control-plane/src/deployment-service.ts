@@ -224,6 +224,8 @@ interface CodeDeploymentInput {
 	assetsZip: ArrayBuffer | null;
 	/** Pre-computed asset manifest from CLI (saves CPU by avoiding hash computation) */
 	assetManifest?: AssetManifest;
+	/** Optional deploy message describing what changed and why */
+	message?: string;
 }
 
 // Template definitions
@@ -851,10 +853,10 @@ export class DeploymentService {
 		// Insert deployment record with status 'queued'
 		await this.db
 			.prepare(
-				`INSERT INTO deployments (id, project_id, status, source)
-         VALUES (?, ?, 'queued', 'code:v1')`,
+				`INSERT INTO deployments (id, project_id, status, source, message)
+         VALUES (?, ?, 'queued', 'code:v1', ?)`,
 			)
-			.bind(deploymentId, input.projectId)
+			.bind(deploymentId, input.projectId, input.message ?? null)
 			.run();
 
 		try {

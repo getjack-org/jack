@@ -54,6 +54,12 @@ const DeployProjectSchema = z.object({
 		.string()
 		.optional()
 		.describe("Path to project directory (defaults to current directory)"),
+	message: z
+		.string()
+		.optional()
+		.describe(
+			"Deploy message describing what changed and why (e.g., 'Add user auth', 'Fix CORS bug')",
+		),
 });
 
 const GetProjectStatusSchema = z.object({
@@ -302,13 +308,19 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				},
 				{
 					name: "deploy_project",
-					description: "Deploy an existing project. Builds if needed and pushes to production.",
+					description:
+						"Deploy an existing project. Builds if needed and pushes to production. Always provide a 'message' describing what changed and why (e.g., 'Add user auth', 'Fix CORS bug').",
 					inputSchema: {
 						type: "object",
 						properties: {
 							project_path: {
 								type: "string",
 								description: "Path to project directory (defaults to current directory)",
+							},
+							message: {
+								type: "string",
+								description:
+									"Deploy message describing what changed and why (e.g., 'Add user auth', 'Fix CORS bug')",
 							},
 						},
 					},
@@ -820,12 +832,13 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 
 					const wrappedDeployProject = withTelemetry(
 						"deploy_project",
-						async (projectPath?: string) => {
+						async (projectPath?: string, message?: string) => {
 							const result = await deployProject({
 								projectPath,
 								interactive: false,
 								includeSecrets: false,
 								includeSync: false,
+								message,
 							});
 
 							// Track business event
@@ -838,7 +851,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 						{ platform: "mcp" },
 					);
 
-					const result = await wrappedDeployProject(args.project_path);
+					const result = await wrappedDeployProject(args.project_path, args.message);
 
 					return {
 						content: [
