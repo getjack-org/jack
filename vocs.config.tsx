@@ -44,6 +44,7 @@ export default defineConfig({
 			text: "Templates",
 			items: [
 				{ text: "Overview", link: "/templates" },
+				{ text: "Browse All", link: "https://dash.getjack.org/templates" },
 				{ text: "miniapp", link: "/templates/miniapp" },
 				{ text: "api", link: "/templates/api" },
 				{ text: "ai-chat", link: "/templates/ai-chat" },

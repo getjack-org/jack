@@ -246,7 +246,6 @@ if (isCancel(action) || action === "skip") return;
 const template = await promptSelectValue("Select a template:", [
     "miniapp",
     "api",
-    "simple-api-starter",
 ]);
 ```
 
