@@ -533,8 +533,7 @@ const actionHandlers: {
 					const { isCancel, text } = await import("@clack/prompts");
 					const value = await text({ message: promptMsg });
 
-					if (isCancel(value) || !value.trim()) {
-						ui.warn(`Skipped ${action.key}`);
+					if (isCancel(value) || !value || !value.trim()) {
 						return false;
 					}
 

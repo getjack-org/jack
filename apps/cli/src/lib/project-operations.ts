@@ -1045,8 +1045,8 @@ export async function createProject(
 		if (!hookResult.success) {
 			throw new JackError(
 				JackErrorCode.VALIDATION_ERROR,
-				"Project setup incomplete",
-				"Missing required configuration",
+				"Project setup cancelled",
+				`Run the same command again when you're ready — jack new ${projectName} -t ${resolvedTemplate}`,
 			);
 		}
 	}
@@ -1111,7 +1111,7 @@ export async function createProject(
 				placeholder: "paste value or press Esc to skip",
 			});
 
-			if (!isCancel(value) && value.trim()) {
+			if (!isCancel(value) && value && value.trim()) {
 				secretsToUse[optionalSecret.name] = value.trim();
 				// Save to global secrets for reuse
 				await saveSecrets([
@@ -1123,7 +1123,7 @@ export async function createProject(
 				]);
 				reporter.success(`Saved ${optionalSecret.name}`);
 			} else {
-				reporter.info(`Skipped ${optionalSecret.name}`);
+				reporter.info(`Skipped ${optionalSecret.name} — add it later with: jack secrets add ${optionalSecret.name}`);
 			}
 
 			reporter.start("Creating project...");
