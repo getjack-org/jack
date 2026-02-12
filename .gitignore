@@ -20,6 +20,11 @@ docs/internal/
 *.log
 .DS_Store
 
+# Next.js build artifacts (from template prebuilds)
+.next/
+.open-next/
+next-env.d.ts
+
 # Vocs build output
 docs/dist/
 /beige-bugs-doubt
