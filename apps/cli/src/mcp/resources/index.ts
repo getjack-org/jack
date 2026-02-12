@@ -74,30 +74,15 @@ export function registerResources(
 
 		if (uri === "agents://context") {
 			const projectPath = options.projectPath ?? process.cwd();
-			const jackPath = join(projectPath, "JACK.md");
 			const agentsPath = join(projectPath, "AGENTS.md");
 			const claudePath = join(projectPath, "CLAUDE.md");
 
 			const contents: string[] = [];
 
-			// Try to read JACK.md first (jack-specific context)
-			if (existsSync(jackPath)) {
-				try {
-					const jackContent = await Bun.file(jackPath).text();
-					contents.push("# JACK.md\n\n");
-					contents.push(jackContent);
-				} catch {
-					// Ignore read errors
-				}
-			}
-
 			// Try to read AGENTS.md
 			if (existsSync(agentsPath)) {
 				try {
 					const agentsContent = await Bun.file(agentsPath).text();
-					if (contents.length > 0) {
-						contents.push("\n\n---\n\n");
-					}
 					contents.push("# AGENTS.md\n\n");
 					contents.push(agentsContent);
 				} catch {
@@ -143,7 +128,7 @@ If connected, prefer \`mcp__jack__*\` tools over CLI:
 
 Full docs: https://docs.getjack.org/llms-full.txt
 
-Check for JACK.md in the project root for project-specific instructions.
+Check AGENTS.md in the project root for project-specific instructions.
 `;
 				return {
 					contents: [

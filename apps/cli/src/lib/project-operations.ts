@@ -1702,11 +1702,10 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		deployMode = link?.deploy_mode ?? "byo";
 	}
 
-	// Ensure agent integration is set up (JACK.md, MCP config)
+	// Ensure agent integration is set up (MCP config)
 	// This is idempotent and runs silently
 	try {
 		await ensureAgentIntegration(projectPath, {
-			projectName,
 			silent: true,
 		});
 	} catch (err) {
