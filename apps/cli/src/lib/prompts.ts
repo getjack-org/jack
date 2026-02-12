@@ -68,7 +68,7 @@ async function promptAdditionalSecrets(): Promise<
 			message: "Enter secret name (or press enter to finish):",
 		});
 
-		if (isCancel(key) || !key.trim()) {
+		if (isCancel(key) || !key || !key.trim()) {
 			break;
 		}
 
@@ -76,7 +76,7 @@ async function promptAdditionalSecrets(): Promise<
 			message: `Enter value for ${key}:`,
 		});
 
-		if (isCancel(value)) {
+		if (isCancel(value) || !value) {
 			break;
 		}
 
