@@ -1,11 +1,16 @@
 {
 	"name": "ai-chat",
-	"description": "AI chat with streaming UI (free AI via Jack Cloud)",
+	"description": "AI chat with streaming, persistence, and multi-model support",
 	"secrets": [],
-	"capabilities": ["ai"],
+	"capabilities": ["ai", "db"],
+	"requires": ["DB"],
 	"intent": {
-		"keywords": ["ai", "chat", "llm", "llama", "completion", "chatbot"],
-		"examples": ["AI chatbot", "chat interface", "LLM chat app"]
+		"keywords": ["ai", "chat", "llm", "llama", "completion", "chatbot", "streaming"],
+		"examples": ["AI chatbot", "chat interface", "LLM chat app", "persistent chat"]
+	},
+	"agentContext": {
+		"summary": "An AI chat app with streaming UI, D1 chat persistence, and multi-model support via AI SDK.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` - Hono API with chat endpoints and AI SDK integration\n- `src/jack-ai.ts` - Jack AI proxy wrapper (do not modify)\n- `public/index.html` - React app shell\n- `public/app.js` - Chat UI with useChat hook from AI SDK\n- `schema.sql` - D1 schema for chat and message persistence\n\n## AI Integration\n\nUses AI SDK with `workers-ai-provider` routed through Jack's metered AI proxy.\n\n### Changing Models\n\nEdit the model string in `src/index.ts`:\n```typescript\nmodel: provider('@cf/meta/llama-3.3-70b-instruct-fp8-fast')\n```\n\nAvailable models: https://developers.cloudflare.com/workers-ai/models/\n\n## Chat Persistence\n\nChats and messages are stored in D1:\n- `chats` table: chat metadata (id, created_at)\n- `messages` table: individual messages (role, content, chat_id)\n\nMessages persist across page refreshes. Each browser session creates a new chat.\n\n## API Endpoints\n\n- `POST /api/chat` - Send message and get streaming AI response\n- `GET /api/chat/:id` - Load chat history\n- `POST /api/chat/new` - Create a new chat\n\n## Resources\n\n- [AI SDK Docs](https://sdk.vercel.ai/docs)\n- [Workers AI Models](https://developers.cloudflare.com/workers-ai/models)"
 	},
 	"hooks": {
 		"postDeploy": [
@@ -17,7 +22,7 @@
 			{
 				"action": "box",
 				"title": "{{name}}",
-				"lines": ["{{url}}", "", "jack open  to view in browser"]
+				"lines": ["{{url}}", "", "Chat history saved to D1.", "jack open  to start chatting"]
 			}
 		]
 	}

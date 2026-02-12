@@ -5,210 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Chat</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      background: #f5f5f5;
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      padding: 1rem;
-    }
-
-    .chat-container {
-      width: 100%;
-      max-width: 700px;
-      display: flex;
-      flex-direction: column;
-      height: calc(100vh - 2rem);
-    }
-
-    header {
-      text-align: center;
-      padding: 1rem;
-    }
-
-    header h1 {
-      font-size: 1.5rem;
-      color: #333;
-      margin-bottom: 0.25rem;
-    }
-
-    header p {
-      font-size: 0.875rem;
-      color: #666;
-    }
-
-    header a {
-      color: #555;
-      text-decoration: underline;
-    }
-
-    .messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1rem;
-      background: white;
-      border-radius: 12px;
-      margin-bottom: 1rem;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-
-    .message {
-      padding: 0.75rem 1rem;
-      margin-bottom: 0.75rem;
-      border-radius: 12px;
-      max-width: 85%;
-      line-height: 1.5;
-      word-wrap: break-word;
-    }
-
-    .message.user {
-      background: #007bff;
-      color: white;
-      margin-left: auto;
-      border-bottom-right-radius: 4px;
-    }
-
-    .message.assistant {
-      background: #e9ecef;
-      color: #333;
-      margin-right: auto;
-      border-bottom-left-radius: 4px;
-    }
-
-    .message.error {
-      background: #fee;
-      color: #c00;
-      border: 1px solid #fcc;
-    }
-
-    .message.typing {
-      color: #666;
-      font-style: italic;
-    }
-
-    .input-area {
-      display: flex;
-      gap: 0.5rem;
-      background: white;
-      padding: 1rem;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-
-    .input-area input {
-      flex: 1;
-      padding: 0.75rem 1rem;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      font-size: 1rem;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    .input-area input:focus {
-      border-color: #007bff;
-    }
-
-    .input-area input:disabled {
-      background: #f5f5f5;
-      cursor: not-allowed;
-    }
-
-    .input-area button {
-      padding: 0.75rem 1.5rem;
-      background: #007bff;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-
-    .input-area button:hover:not(:disabled) {
-      background: #0056b3;
-    }
-
-    .input-area button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-
-    .empty-state {
-      text-align: center;
-      color: #999;
-      padding: 3rem 1rem;
-    }
-
-    .empty-state p {
-      font-size: 1.1rem;
-      margin-bottom: 0.5rem;
-    }
-
-    .empty-state small {
-      font-size: 0.875rem;
-    }
-
-    @media (max-width: 480px) {
-      body {
-        padding: 0.5rem;
-      }
-
-      .chat-container {
-        height: calc(100vh - 1rem);
-      }
-
-      header h1 {
-        font-size: 1.25rem;
-      }
-
-      .message {
-        max-width: 90%;
-        padding: 0.625rem 0.875rem;
-      }
-
-      .input-area {
-        padding: 0.75rem;
-      }
-
-      .input-area button {
-        padding: 0.75rem 1rem;
-      }
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e5e5e5; height: 100vh; }
+    #root { height: 100%; }
   </style>
 </head>
 <body>
-  <div class="chat-container">
-    <header>
-      <h1>AI Chat</h1>
-      <p>Powered by <a href="https://dash.getjack.org" target="_blank">Jack Cloud</a> (Llama 3.2 1B)</p>
-    </header>
-
-    <div id="messages" class="messages">
-      <div class="empty-state">
-        <p>Start a conversation</p>
-        <small>Type a message below to begin</small>
-      </div>
-    </div>
-
-    <div class="input-area">
-      <input
-        type="text"
-        id="input"
-        placeholder="Type your message..."
-        autocomplete="off"
-      />
-      <button id="send">Send</button>
-    </div>
-  </div>
-
-  <script src="/chat.js"></script>
+  <div id="root"></div>
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19",
+      "react-dom/client": "https://esm.sh/react-dom@19/client",
+      "@ai-sdk/react": "https://esm.sh/@ai-sdk/react@1?external=react"
+    }
+  }
+  </script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

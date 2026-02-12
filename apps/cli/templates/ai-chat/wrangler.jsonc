@@ -2,11 +2,18 @@
 	"name": "jack-template",
 	"main": "src/index.ts",
 	"compatibility_date": "2024-12-01",
+	"compatibility_flags": ["nodejs_compat"],
 	"ai": {
 		"binding": "AI"
 	},
 	"assets": {
 		"directory": "public",
 		"binding": "ASSETS"
-	}
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "jack-template-db"
+		}
+	]
 }

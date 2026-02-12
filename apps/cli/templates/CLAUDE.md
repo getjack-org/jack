@@ -568,6 +568,47 @@ if (!baseUrl) {
 
 The Host header approach is reliable because Cloudflare always sets it to the actual domain being accessed.
 
+## OpenNext (Next.js on Cloudflare) Gotchas
+
+Templates using Next.js via `@opennextjs/cloudflare` have platform-specific limitations. These apply to all Next.js templates (`nextjs-auth`, `nextjs-shadcn`, `nextjs-clerk`, etc.).
+
+### Client-side navigation after auth state changes: use window.location, not router.push
+
+OpenNext's webpack runtime has an empty chunk URL resolver (`r.u=e=>{}`). This means `router.push()` to a page whose chunks aren't already loaded fails with `ChunkLoadError: Loading chunk X failed`.
+
+**Rule:** After any auth state change (sign-in, sign-up, sign-out), always use `window.location.href` for a full page reload. This ensures middleware, server components, and cookies re-evaluate with the new session.
+
+```tsx
+// BAD — ChunkLoadError on OpenNext
+await authClient.signOut();
+router.push("/");
+router.refresh();
+
+// GOOD — full reload, clean auth state
+await authClient.signOut();
+window.location.href = "/";
+```
+
+`<Link>` components work fine for normal navigation because Next.js prefetches their chunks via `<script>` tags in the HTML.
+
+### Pages using getCloudflareContext() need `export const dynamic = 'force-dynamic'`
+
+Without this, Next.js tries to statically prerender the page at build time, which fails because `getCloudflareContext()` is only available at runtime in the Workers environment.
+
+```tsx
+import { getAuth } from "@/lib/auth";
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage() {
+  const auth = await getAuth(); // calls getCloudflareContext() internally
+  // ...
+}
+```
+
+### Edge middleware cannot use Node.js APIs
+
+Next.js middleware runs in the edge runtime. Don't call `auth.api.getSession()` (requires `perf_hooks`) — use cookie-only checks instead.
+
 ## Adding New Templates
 
 1. Create directory: `templates/my-template/`
