@@ -1,0 +1,44 @@
+{
+	"name": "nextjs-auth",
+	"description": "Next.js + Better Auth (self-hosted auth with D1)",
+	"secrets": ["BETTER_AUTH_SECRET"],
+	"capabilities": ["db"],
+	"requires": ["DB"],
+	"intent": {
+		"keywords": ["auth", "login", "signup", "better-auth", "authentication", "session", "nextjs"],
+		"examples": ["app with self-hosted auth", "login system", "authenticated app"]
+	},
+	"agentContext": {
+		"summary": "A Next.js app with Better Auth self-hosted authentication, email/password login, optional GitHub/Google OAuth, and D1 database.",
+		"full_text": "## Project Structure\n\n- `app/layout.tsx` - Root layout\n- `app/page.tsx` - Landing page with sign-in CTA\n- `app/login/page.tsx` - Login page with email/password form\n- `app/signup/page.tsx` - Sign up page\n- `app/dashboard/page.tsx` - Protected dashboard\n- `app/api/auth/[...all]/route.ts` - Better Auth API handler\n- `middleware.ts` - Edge-safe cookie-based auth middleware\n- `lib/auth.ts` - Better Auth server configuration\n- `lib/auth-client.ts` - Better Auth client for client components\n- `schema.sql` - D1 database schema\n\n## Authentication\n\nUses Better Auth with email/password. Auth routes are handled at `/api/auth/*`.\nWorks immediately with zero external dependencies — just email/password.\n\n### Client-side\n```tsx\nimport { authClient } from '@/lib/auth-client';\n\n// Sign up\nawait authClient.signUp.email({ email, password, name });\n\n// Sign in\nawait authClient.signIn.email({ email, password });\n\n// Get session\nconst { data: session } = authClient.useSession();\n\n// Sign out\nawait authClient.signOut();\n```\n\n### Server-side\n```tsx\nimport { getAuth } from '@/lib/auth';\nimport { headers } from 'next/headers';\n\nconst auth = await getAuth();\nconst session = await auth.api.getSession({ headers: await headers() });\n```\n\n## Optional Social Login (Add Later)\n\nSocial providers are pre-wired but disabled by default. Add keys via `jack secrets` to enable:\n\n**GitHub** (easiest — 30 second setup):\n1. Go to github.com/settings/developers → New OAuth App\n2. Set callback URL to `https://your-app.workers.dev/api/auth/callback/github`\n3. Run: `jack secrets` and add `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET`\n\n**Google**:\n1. Go to console.cloud.google.com/apis/credentials\n2. Create OAuth 2.0 Client ID\n3. Run: `jack secrets` and add `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`\n\nThe login form automatically shows buttons for configured providers.\n\n## Database\n\nD1 SQLite via Kysely. Tables: user, session, account, verification.\n\n## Environment Variables\n\n- `BETTER_AUTH_SECRET` - Auth token signing secret (auto-generated)\n- `GITHUB_CLIENT_ID` - GitHub OAuth client ID (optional)\n- `GITHUB_CLIENT_SECRET` - GitHub OAuth client secret (optional)\n- `GOOGLE_CLIENT_ID` - Google OAuth client ID (optional)\n- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret (optional)\n\n## Cloudflare Workers Compatibility Notes\n\nBetter Auth has known compatibility issues with Cloudflare Workers. These are already handled in this template, but be aware when modifying:\n\n### NEVER call auth.api.getSession() in middleware\nNext.js edge middleware cannot use Node.js `perf_hooks` module. The middleware.ts uses cookie-only checks instead. Full session validation happens in server components.\n\n### Auth must be created per-request, not as a singleton\nD1 bindings are only available inside request handlers. The `getAuth()` helper in lib/auth.ts calls `getCloudflareContext()` on each invocation to get the D1 binding. Do NOT try to create a top-level auth instance.\n\n### Required wrangler.jsonc flags\n- `nodejs_compat` compatibility flag is required\n- Use a recent `compatibility_date` (2024-12-30 or later)\n\n### Version pinning\nBetter Auth v1.4+ had `createRequire` and `runWithRequestState` errors on Workers. If you hit module errors, try pinning to the latest working version or using `better-auth@beta`.\n\n### Do NOT use Drizzle adapter directly\nThis template uses Kysely + kysely-d1 for the database adapter. The Drizzle ORM adapter (`drizzleAdapter`) requires `drizzle-orm/d1` which has build-time initialization issues with OpenNext. Kysely works reliably with D1 in this setup.\n\n## OpenNext Navigation Rules\n\nOpenNext on Cloudflare Workers has a broken webpack chunk URL resolver (`r.u` is empty). This means dynamic chunk loading during client-side navigation can fail with `ChunkLoadError: Loading chunk X failed`.\n\n### NEVER use router.push() after auth state changes\nAfter sign-in, sign-up, or sign-out, always use `window.location.href` instead of `router.push()` + `router.refresh()`. Auth state changes need a full page reload so middleware and server components re-evaluate with the new session.\n\n```tsx\n// BAD - causes ChunkLoadError on OpenNext\nawait authClient.signOut();\nrouter.push('/');\nrouter.refresh();\n\n// GOOD - full reload ensures clean auth state\nawait authClient.signOut();\nwindow.location.href = '/';\n```\n\n### Use <Link> for in-app navigation\nNext.js `<Link>` components work because they prefetch chunks via `<script>` tags in the HTML. Only `router.push()` to pages whose chunks aren't already loaded will fail.\n\n### Add `export const dynamic = 'force-dynamic'` to pages using getCloudflareContext\nWithout this, Next.js tries to statically prerender the page at build time, which fails because `getCloudflareContext()` is only available at runtime.\n\n## Resources\n\n- [Better Auth Docs](https://www.betterauth.com/docs)\n- [Better Auth Cloudflare package](https://github.com/zpg6/better-auth-cloudflare)\n- [Hono + Better Auth on Cloudflare](https://hono.dev/examples/better-auth-on-cloudflare)\n- [OpenNext Docs](https://opennext.js.org/cloudflare)"
+	},
+	"hooks": {
+		"preCreate": [
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "BETTER_AUTH_SECRET",
+				"message": "Generating authentication secret...",
+				"onMissing": "generate",
+				"generateCommand": "openssl rand -base64 32"
+			}
+		],
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "box",
+				"title": "Auth ready: {{name}}",
+				"lines": [
+					"{{url}}",
+					"",
+					"Email/password login works out of the box.",
+					"Social login requires OAuth credentials (run jack secrets to add later)."
+				]
+			}
+		]
+	}
+}

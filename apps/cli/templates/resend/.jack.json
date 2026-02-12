@@ -1,0 +1,64 @@
+{
+	"name": "resend",
+	"description": "Transactional email API powered by Resend",
+	"secrets": ["RESEND_API_KEY"],
+	"capabilities": ["db"],
+	"requires": ["DB"],
+	"intent": {
+		"keywords": [
+			"email",
+			"resend",
+			"transactional",
+			"notification",
+			"mail",
+			"smtp"
+		],
+		"examples": [
+			"email sending API",
+			"transactional email service",
+			"notification emails"
+		]
+	},
+	"agentContext": {
+		"summary": "A transactional email API using Resend with D1-backed email logging.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` - Hono API with email send and log endpoints\n- `src/email.ts` - Resend email helper with D1 logging\n- `schema.sql` - D1 schema for email_log table\n\n## Sending Email\n\n```bash\ncurl -X POST https://your-app.workers.dev/api/send \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"to\": \"user@example.com\", \"subject\": \"Hello\", \"html\": \"<p>Welcome!</p>\"}'\n```\n\n## Email Templates\n\nBuilt-in template helpers:\n```typescript\nimport { welcomeEmail, notificationEmail } from './email';\n\n// Send welcome email\nawait sendEmail(env, db, welcomeEmail('user@example.com', 'Alice'));\n\n// Send notification\nawait sendEmail(env, db, notificationEmail('user@example.com', 'New order received', 'Order #123'));\n```\n\n## Email Log\n\nAll sent emails are logged to D1 for tracking:\n```bash\ncurl https://your-app.workers.dev/api/emails        # List recent emails\ncurl https://your-app.workers.dev/api/emails/stats    # Send stats\n```\n\n## Endpoints\n\n- `POST /api/send` - Send an email\n- `GET /api/emails` - List recent emails (last 50)\n- `GET /api/emails/stats` - Email send statistics\n- `GET /health` - Health check\n\n## Environment Variables\n\n- `RESEND_API_KEY` - Resend API key (re_...)\n- `FROM_EMAIL` - Default sender email (defaults to onboarding@resend.dev)\n\n## Resources\n\n- [Resend Docs](https://resend.com/docs)\n- [Resend API Reference](https://resend.com/docs/api-reference)\n- [Hono Documentation](https://hono.dev)"
+	},
+	"hooks": {
+		"preCreate": [
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "RESEND_API_KEY",
+				"message": "Resend API key for transactional email",
+				"setupUrl": "https://resend.com/api-keys",
+				"onMissing": "prompt",
+				"promptMessage": "Enter your Resend API key (re_...):"
+			}
+		],
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "shell",
+				"command": "curl -s {{url}}/health | head -c 200",
+				"message": "Testing worker health..."
+			},
+			{
+				"action": "box",
+				"title": "Email API live: {{name}}",
+				"lines": [
+					"{{url}}",
+					"",
+					"Endpoints:",
+					"  POST {{url}}/api/send    — send an email",
+					"  GET  {{url}}/api/emails  — email log",
+					"",
+					"Verify Resend domain: https://resend.com/domains"
+				]
+			}
+		]
+	}
+}

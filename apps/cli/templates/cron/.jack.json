@@ -1,0 +1,66 @@
+{
+	"name": "cron",
+	"description": "Background tasks with cron scheduling and webhook ingestion",
+	"secrets": [],
+	"capabilities": ["db"],
+	"requires": ["DB", "CRON"],
+	"intent": {
+		"keywords": [
+			"cron",
+			"background",
+			"jobs",
+			"webhook",
+			"scheduled",
+			"queue",
+			"worker",
+			"tasks"
+		],
+		"examples": [
+			"background job processor",
+			"scheduled tasks",
+			"webhook handler",
+			"job queue"
+		]
+	},
+	"agentContext": {
+		"summary": "A background task worker with cron scheduling, D1 job queue, and webhook ingestion.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` - Hono API with cron handler, webhook endpoint, and job status routes\n- `src/jobs.ts` - Job queue: create, process, retry with D1 backend\n- `src/webhooks.ts` - Webhook ingestion with HMAC-SHA256 signature verification\n- `schema.sql` - D1 schema (jobs, webhook_events)\n\n## Cron\n\nThe `POST /__scheduled` route runs on a cron schedule (default: every 5 minutes). It processes pending jobs and retries failed ones.\n\n## Jobs\n\n```typescript\n// Create a job\nawait createJob(db, { type: 'process-order', payload: { orderId: '123' } });\n\n// Jobs are processed automatically by cron\n// Failed jobs retry up to 3 times with exponential backoff\n```\n\n## Webhooks\n\n```\nPOST /webhook\nX-Signature: sha256=abc123...\nContent-Type: application/json\n\n{ \"event\": \"order.completed\", \"data\": { ... } }\n```\n\nWebhooks are verified using HMAC-SHA256, logged to D1, and can create jobs for async processing.\n\n## Endpoints\n\n- `POST /__scheduled` - Cron handler (called by scheduler)\n- `POST /webhook` - Inbound webhook receiver with signature verification\n- `GET /jobs` - List recent jobs with status\n- `GET /health` - Health check\n\n## Environment Variables\n\n- `WEBHOOK_SECRET` - HMAC signing secret for webhook verification (auto-generated)\n\n## Resources\n\n- [Hono Documentation](https://hono.dev)"
+	},
+	"hooks": {
+		"preCreate": [
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "WEBHOOK_SECRET",
+				"message": "Generating webhook signing secret...",
+				"onMissing": "generate",
+				"generateCommand": "openssl rand -hex 32"
+			}
+		],
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			},
+			{
+				"action": "shell",
+				"command": "curl -s {{url}}/health | head -c 200",
+				"message": "Testing worker health..."
+			},
+			{
+				"action": "box",
+				"title": "Background worker live: {{name}}",
+				"lines": [
+					"{{url}}",
+					"",
+					"Endpoints:",
+					"  POST {{url}}/webhook  — inbound webhook receiver",
+					"  GET  {{url}}/jobs     — job queue status",
+					"",
+					"Cron: runs every 5 minutes"
+				]
+			}
+		]
+	}
+}

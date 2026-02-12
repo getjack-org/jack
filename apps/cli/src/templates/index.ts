@@ -14,12 +14,16 @@ export const BUILTIN_TEMPLATES = [
 	"hello",
 	"miniapp",
 	"api",
+	"cron",
+	"resend",
 	"nextjs",
 	"saas",
 	"simple-api-starter",
 	"ai-chat",
 	"semantic-search",
 	"nextjs-shadcn",
+	"nextjs-clerk",
+	"nextjs-auth",
 ];
 
 /**
