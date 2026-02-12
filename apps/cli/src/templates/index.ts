@@ -18,7 +18,6 @@ export const BUILTIN_TEMPLATES = [
 	"resend",
 	"nextjs",
 	"saas",
-	"simple-api-starter",
 	"ai-chat",
 	"semantic-search",
 	"nextjs-shadcn",
