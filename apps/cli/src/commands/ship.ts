@@ -3,7 +3,7 @@ import { createReporter, output } from "../lib/output.ts";
 import { deployProject } from "../lib/project-operations.ts";
 
 export default async function ship(
-	options: { managed?: boolean; byo?: boolean; dryRun?: boolean; json?: boolean } = {},
+	options: { managed?: boolean; byo?: boolean; dryRun?: boolean; json?: boolean; message?: string } = {},
 ): Promise<void> {
 	const isCi = process.env.CI === "true" || process.env.CI === "1";
 	const jsonOutput = options.json ?? false;
@@ -17,6 +17,7 @@ export default async function ship(
 			managed: options.managed,
 			byo: options.byo,
 			dryRun: options.dryRun,
+			message: options.message,
 		});
 
 		if (jsonOutput) {
@@ -26,6 +27,7 @@ export default async function ship(
 					projectName: result.projectName,
 					url: result.workerUrl,
 					deployMode: result.deployMode,
+					...(options.message && { message: options.message }),
 				}),
 			);
 			return;
