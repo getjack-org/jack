@@ -2355,6 +2355,7 @@ api.get("/projects/:projectId/deployments", async (c) => {
 		status: d.status,
 		source: d.source,
 		error_message: d.error_message,
+		message: d.message,
 		created_at: d1DatetimeToIso(d.created_at),
 		updated_at: d1DatetimeToIso(d.updated_at),
 	}));
@@ -2400,6 +2401,7 @@ api.get("/projects/:projectId/deployments/latest", async (c) => {
 			status: d.status,
 			source: d.source,
 			error_message: d.error_message,
+			message: d.message,
 			created_at: d1DatetimeToIso(d.created_at),
 			updated_at: d1DatetimeToIso(d.updated_at),
 		},
@@ -3020,6 +3022,8 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 	const secretsFile = formData.get("secrets") as File | null;
 	const assetsFile = formData.get("assets") as File | null;
 	const assetManifestFile = formData.get("asset-manifest") as File | null;
+	const messageValue = formData.get("message");
+	const deployMessage = typeof messageValue === "string" ? messageValue : null;
 
 	// Validate required parts
 	if (!manifestFile || !bundleFile) {
@@ -3093,6 +3097,7 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 			secretsJson,
 			assetsZip: assetsData,
 			assetManifest,
+			message: deployMessage ?? undefined,
 		});
 
 		return c.json(deployment, 201);

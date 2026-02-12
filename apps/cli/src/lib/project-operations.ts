@@ -102,6 +102,7 @@ export interface DeployOptions {
 	managed?: boolean; // Force managed deploy mode
 	byo?: boolean; // Force BYO deploy mode
 	dryRun?: boolean; // Stop before actual deployment
+	message?: string; // Deploy message describing what changed
 }
 
 export interface DeployResult {
@@ -134,6 +135,7 @@ export interface ProjectStatus {
 	deployCount: number;
 	lastDeployStatus: string | null;
 	lastDeploySource: string | null;
+	lastDeployMessage: string | null;
 }
 
 export interface StaleProject {
@@ -1794,7 +1796,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		}
 
 		// deployToManagedProject now handles both template and code deploy
-		managedDeployResult = await deployToManagedProject(managedProjectId as string, projectPath, reporter);
+		managedDeployResult = await deployToManagedProject(managedProjectId as string, projectPath, reporter, options.message);
 
 		// Construct URL with username if available
 		workerUrl = link?.owner_username
@@ -2046,6 +2048,7 @@ export async function getProjectStatus(
 	let deployCount = 0;
 	let lastDeployStatus: string | null = null;
 	let lastDeploySource: string | null = null;
+	let lastDeployMessage: string | null = null;
 
 	if (link?.deploy_mode === "managed") {
 		try {
@@ -2057,6 +2060,7 @@ export async function getProjectStatus(
 				lastDeployAt = latest.created_at;
 				lastDeployStatus = latest.status;
 				lastDeploySource = latest.source;
+				lastDeployMessage = latest.message;
 			}
 		} catch {
 			// Silent fail — deploy tracking is supplementary
@@ -2082,6 +2086,7 @@ export async function getProjectStatus(
 		deployCount,
 		lastDeployStatus,
 		lastDeploySource,
+		lastDeployMessage,
 	};
 }
 

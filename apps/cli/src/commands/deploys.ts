@@ -79,6 +79,9 @@ export default async function deploys(options: DeploysOptions = {}): Promise<voi
 		const source = humanizeSource(deploy.source);
 		const icon = status === "live" ? "✓" : status === "failed" ? "✗" : "○";
 		item(`${icon} ${shortId}  ${status.padEnd(12)} ${source.padEnd(10)} ${time}`);
+		if (deploy.message) {
+			console.error(`    "${deploy.message}"`);
+		}
 		if (deploy.error_message) {
 			console.error(`    ${deploy.error_message}`);
 		}

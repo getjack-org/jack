@@ -18,6 +18,7 @@ export interface DeployUploadOptions {
 	secretsPath?: string;
 	assetsZipPath?: string;
 	assetManifest?: AssetManifest;
+	message?: string;
 }
 
 export interface DeployUploadResult {
@@ -90,6 +91,10 @@ export async function uploadDeployment(options: DeployUploadOptions): Promise<De
 			"asset-manifest.json",
 		);
 		totalSize += manifestJson.length;
+	}
+
+	if (options.message) {
+		formData.append("message", options.message);
 	}
 
 	const prepareMs = Date.now() - prepareStart;

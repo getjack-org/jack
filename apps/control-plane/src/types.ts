@@ -98,6 +98,7 @@ export interface Deployment {
 	artifact_bucket_key: string | null;
 	worker_version_id: string | null;
 	error_message: string | null;
+	message: string | null;
 	created_at: string;
 	updated_at: string;
 }
