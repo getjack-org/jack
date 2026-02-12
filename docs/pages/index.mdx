@@ -12,7 +12,11 @@
 
 # The deployment platform for Claude Code.
 
-Tell your agent what to build. It deploys, adds databases, and ships — no config, no dashboard.
+One command. Claude creates the project, provisions the database, and ships it to a live URL.
+
+```bash
+bunx @getjack/jack new my-app
+```
 
 <div style={{ display: 'flex', gap: '1.5rem', margin: '1.5rem 0', fontSize: '1.1rem' }}>
   <a href="https://www.npmjs.com/package/@getjack/jack">npm</a>
@@ -24,53 +28,30 @@ Tell your agent what to build. It deploys, adds databases, and ships — no conf
 
 ---
 
-## Build with Claude Code
+## Claude Code deploys for you
 
-Install the skill and your agent can deploy full-stack apps from a single prompt.
+Claude already writes your code. Let it deploy too.
+
+```
+Claude Code
+> "build me a REST API for todos with a database"
+
+✓ Created todo-api from api template
+✓ Provisioned D1 database
+✓ Deployed to edge
+→ https://todo-api.runjack.xyz
+```
 
 ```bash
-npx clawhub@latest install jack-cloud
+curl https://todo-api.runjack.xyz/todos
+# {"todos":[]}
 ```
-
-Then tell Claude what you want:
-
-```
-You: "Build me an API with a database that stores bookmarks"
-
-Claude: I'll create a new project, set up the database, and deploy it.
-> jack new bookmarks-api --template api
-> jack services db create
-> jack db execute --write "CREATE TABLE bookmarks (...)"
-> [writes API routes]
-> jack ship
-
-Your API is live at https://bookmarks-api.runjack.xyz
-```
-
-Your agent handles the full lifecycle — creating projects, adding services, deploying, checking logs, and iterating. [AI agents guide →](/guides/ai-agents)
-
-### MCP Server
-
-jack includes a built-in MCP server, configured automatically on first run. Your agent gets tools for deploying, querying databases, managing secrets, tailing logs, and more.
-
-```
-create_project    name: "my-api", template: "api"
-deploy_project    project_path: "/projects/my-api"
-execute_sql       sql: "SELECT * FROM users", allow_write: false
-tail_logs         duration_ms: 5000
-```
-
-[Full MCP tool reference →](/guides/ai-agents#mcp-server)
 
 ---
 
-## Or use the CLI directly
+## Zero to live URL in one command
 
-```bash
-bunx @getjack/jack new my-api --template api
-```
-
-Live URL. Database ready. No config files, no dashboard, no Cloudflare account needed.
+`jack new` scaffolds from a template, provisions infrastructure, and deploys — all at once.
 
 ```bash
 jack new my-api --template api        # Create and deploy
@@ -81,17 +62,28 @@ jack ship                             # Push changes live
 
 ---
 
-## What you get
+## Databases and storage without dashboards
+
+D1 databases, R2 storage, KV, and vector search. Provisioned and wired automatically.
+
+| Capability | How |
+|-----------|-----|
+| **Database** | `jack services db create` — SQLite, wired automatically |
+| **Query** | `jack db execute "SELECT * FROM users"` — runs against production |
+| **Storage** | `jack services storage create` — file uploads |
+| **Vector search** | `jack services vectorize create` — embeddings index |
+
+---
+
+## Secrets, logs, and domains from the terminal
+
+Manage everything without a browser.
 
 | Capability | How |
 |-----------|-----|
 | **Deploy** | `jack ship` — builds and pushes to production |
-| **Database** | `jack services db create` — D1 SQLite, wired automatically |
-| **Query** | `jack db execute "SELECT * FROM users"` — runs against production |
-| **Secrets** | `jack secrets set API_KEY` — stored securely, available as `env.API_KEY` |
+| **Secrets** | `jack secrets set API_KEY` — available as `env.API_KEY` |
 | **Logs** | `jack logs` — real-time production logs |
-| **Storage** | `jack services storage create` — file uploads |
-| **Vector search** | `jack services vectorize create` — embeddings index |
 | **Cron** | `jack services cron create "0 * * * *"` — scheduled tasks |
 | **Custom domains** | `jack domain connect app.example.com` |
 
@@ -99,9 +91,30 @@ jack ship                             # Push changes live
 
 ---
 
+## Claude deploys autonomously via MCP
+
+jack installs as an MCP server. Claude Code can create projects, ship updates, and query databases without you typing a command.
+
+```
+create_project    name: "my-api", template: "api"
+deploy_project    project_path: "/projects/my-api"
+execute_sql       sql: "SELECT * FROM users", allow_write: false
+tail_logs         duration_ms: 5000
+```
+
+The MCP server is configured automatically on first run. [AI agents guide →](/guides/ai-agents)
+
+Want to teach your agent the full workflow upfront? Install the [OpenClaw skill](https://clawhub.ai/hellno/jack-cloud):
+
+```bash
+npx clawhub@latest install jack-cloud
+```
+
+---
+
 ## Templates
 
-Batteries-included starters for common patterns. [Browse all templates →](https://dash.getjack.org/templates)
+Batteries-included starters. [Browse all →](https://dash.getjack.org/templates)
 
 ```bash
 jack new my-app -t api            # REST API with Hono
