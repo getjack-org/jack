@@ -10,13 +10,9 @@
   .dark .hero-logo .logo-light { display: none; }
 `}</style>
 
-# One command to deploy, add a database, and ship.
+# The deployment platform for Claude Code.
 
-```bash
-bunx @getjack/jack new my-api --template api
-```
-
-Live URL. Database ready. No config files, no dashboard, no Cloudflare account needed.
+Tell your agent what to build. It deploys, adds databases, and ships — no config, no dashboard.
 
 <div style={{ display: 'flex', gap: '1.5rem', margin: '1.5rem 0', fontSize: '1.1rem' }}>
   <a href="https://www.npmjs.com/package/@getjack/jack">npm</a>
@@ -28,16 +24,60 @@ Live URL. Database ready. No config files, no dashboard, no Cloudflare account n
 
 ---
 
-## The full flow
+## Build with Claude Code
+
+Install the skill and your agent can deploy full-stack apps from a single prompt.
+
+```bash
+npx clawhub@latest install jack-cloud
+```
+
+Then tell Claude what you want:
+
+```
+You: "Build me an API with a database that stores bookmarks"
+
+Claude: I'll create a new project, set up the database, and deploy it.
+> jack new bookmarks-api --template api
+> jack services db create
+> jack db execute --write "CREATE TABLE bookmarks (...)"
+> [writes API routes]
+> jack ship
+
+Your API is live at https://bookmarks-api.runjack.xyz
+```
+
+Your agent handles the full lifecycle — creating projects, adding services, deploying, checking logs, and iterating. [AI agents guide →](/guides/ai-agents)
+
+### MCP Server
+
+jack includes a built-in MCP server, configured automatically on first run. Your agent gets tools for deploying, querying databases, managing secrets, tailing logs, and more.
+
+```
+create_project    name: "my-api", template: "api"
+deploy_project    project_path: "/projects/my-api"
+execute_sql       sql: "SELECT * FROM users", allow_write: false
+tail_logs         duration_ms: 5000
+```
+
+[Full MCP tool reference →](/guides/ai-agents#mcp-server)
+
+---
+
+## Or use the CLI directly
+
+```bash
+bunx @getjack/jack new my-api --template api
+```
+
+Live URL. Database ready. No config files, no dashboard, no Cloudflare account needed.
 
 ```bash
 jack new my-api --template api        # Create and deploy
 jack services db create               # Add a database
-jack db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+jack db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)"
 jack ship                             # Push changes live
 ```
-
-Your API is running. Database is wired. Took about 30 seconds.
 
 ---
 
@@ -46,11 +86,11 @@ Your API is running. Database is wired. Took about 30 seconds.
 | Capability | How |
 |-----------|-----|
 | **Deploy** | `jack ship` — builds and pushes to production |
-| **Database** | `jack services db create` — provisions D1, wires bindings |
+| **Database** | `jack services db create` — D1 SQLite, wired automatically |
 | **Query** | `jack db execute "SELECT * FROM users"` — runs against production |
 | **Secrets** | `jack secrets set API_KEY` — stored securely, available as `env.API_KEY` |
 | **Logs** | `jack logs` — real-time production logs |
-| **Storage** | `jack services storage create` — R2 bucket for file uploads |
+| **Storage** | `jack services storage create` — file uploads |
 | **Vector search** | `jack services vectorize create` — embeddings index |
 | **Cron** | `jack services cron create "0 * * * *"` — scheduled tasks |
 | **Custom domains** | `jack domain connect app.example.com` |
@@ -59,28 +99,17 @@ Your API is running. Database is wired. Took about 30 seconds.
 
 ---
 
-## Built for Claude Code
+## Templates
 
-jack is the deployment platform for Claude Code. Every project includes context files, and there's a built-in MCP server so agents can deploy and manage services directly.
-
-```bash
-jack mcp serve                        # Start MCP server
-```
-
-Or install the [OpenClaw skill](https://clawhub.ai/hellno/jack-cloud) to teach your agent the full workflow:
+Batteries-included starters for common patterns. [Browse all templates →](https://dash.getjack.org/templates)
 
 ```bash
-npx clawhub@latest install jack-cloud
+jack new my-app -t api            # REST API with Hono
+jack new my-app -t nextjs         # Next.js SSR
+jack new my-app -t ai-chat        # AI chatbot with streaming
+jack new my-app -t saas           # SaaS with auth + billing
+jack new my-app -t nextjs-auth    # Next.js + self-hosted auth
 ```
-
-Key commands support `--json` for machine-readable output:
-
-```bash
-jack ship --json
-jack db execute --json "SELECT count(*) as n FROM users"
-```
-
-[AI agents guide →](/guides/ai-agents) · [OpenClaw guide →](/guides/openclaw)
 
 ---
 
@@ -90,19 +119,7 @@ Everything jack creates is standard tooling — `wrangler.jsonc`, `package.json`
 
 ---
 
-## Zero-config deploys
+## For LLMs
 
-`jack ship` auto-detects your framework. No config files to write.
-
-| Supported | Coming Soon |
-|-----------|-------------|
-| Vite, Hono, SvelteKit | Astro, React Router, Nuxt, TanStack |
-
----
-
-## For Claude Code
-
-Docs optimized for LLMs:
-
-- [https://docs.getjack.org/llms.txt](https://docs.getjack.org/llms.txt) — Quick context
-- [https://docs.getjack.org/llms-full.txt](https://docs.getjack.org/llms-full.txt) — Full docs
+- [docs.getjack.org/llms.txt](https://docs.getjack.org/llms.txt) — Quick context
+- [docs.getjack.org/llms-full.txt](https://docs.getjack.org/llms-full.txt) — Full docs
