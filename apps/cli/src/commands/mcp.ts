@@ -274,21 +274,6 @@ async function outputProjectContext(): Promise<void> {
 		);
 		sections.push(lines.join("\n"));
 
-		// --- Section 4: Existing agent context files ---
-		for (const filename of ["JACK.md", "AGENTS.md", "CLAUDE.md"]) {
-			const filepath = join(cwd, filename);
-			if (existsSync(filepath)) {
-				try {
-					const content = await readFile(filepath, "utf-8");
-					if (content.trim()) {
-						sections.push(content.trim());
-					}
-				} catch {
-					// Skip unreadable files
-				}
-			}
-		}
-
 		console.log(sections.join("\n\n---\n\n"));
 	} catch {
 		// Silent on failure — never break the session
