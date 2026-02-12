@@ -297,6 +297,7 @@ try {
 				byo: cli.flags.byo,
 				dryRun: cli.flags.dryRun,
 				json: cli.flags.json,
+				message: cli.flags.message,
 			});
 			break;
 		}
