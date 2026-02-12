@@ -5,7 +5,7 @@ import type { Bindings, ProjectConfig } from "./types";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.get("/health", (c) => {
+app.get("/__dispatch/health", (c) => {
 	return c.json({ status: "ok", service: "jack-dispatch" });
 });
 

@@ -226,6 +226,8 @@ interface CodeDeploymentInput {
 	assetManifest?: AssetManifest;
 	/** Optional deploy message describing what changed and why */
 	message?: string;
+	/** Override deployment source label (default: 'code:v1') */
+	source?: string;
 }
 
 // Template definitions
@@ -472,10 +474,14 @@ export class DeploymentService {
 				);
 			}
 
-			if (!found.source.startsWith("code:") && !found.source.startsWith("rollback:")) {
+			if (
+				!found.source.startsWith("code:") &&
+				!found.source.startsWith("rollback:") &&
+				!found.source.startsWith("prebuilt:")
+			) {
 				throw new Error(
 					`Cannot roll back to deployment ${targetDeploymentId} because its source is "${found.source}". ` +
-						"Only code and rollback deployments can be used as rollback targets (template and prebuilt deployments have a different artifact structure).",
+						"Only code, rollback, and prebuilt deployments can be used as rollback targets.",
 				);
 			}
 
@@ -495,7 +501,7 @@ export class DeploymentService {
 
 			const previous = await this.db
 				.prepare(
-					"SELECT * FROM deployments WHERE project_id = ? AND status = 'live' AND (source LIKE 'code:%' OR source LIKE 'rollback:%') AND id != ? ORDER BY created_at DESC LIMIT 1",
+					"SELECT * FROM deployments WHERE project_id = ? AND status = 'live' AND (source LIKE 'code:%' OR source LIKE 'rollback:%' OR source LIKE 'prebuilt:%') AND id != ? ORDER BY created_at DESC LIMIT 1",
 				)
 				.bind(projectId, current.id)
 				.first<Deployment>();
@@ -854,9 +860,9 @@ export class DeploymentService {
 		await this.db
 			.prepare(
 				`INSERT INTO deployments (id, project_id, status, source, message)
-         VALUES (?, ?, 'queued', 'code:v1', ?)`,
+         VALUES (?, ?, 'queued', ?, ?)`,
 			)
-			.bind(deploymentId, input.projectId, input.message ?? null)
+			.bind(deploymentId, input.projectId, input.source ?? "code:v1", input.message ?? null)
 			.run();
 
 		try {
@@ -1321,14 +1327,16 @@ export class DeploymentService {
 	): Promise<{ deploymentId: string }> {
 		const r2Prefix = `bundles/jack/${templateId}-v${cliVersion}`;
 
-		// Fetch bundle.zip, assets.zip (optional), manifest.json, asset-manifest.json, and source.zip from R2
-		const [bundleObj, assetsObj, manifestObj, assetManifestObj, sourceObj] = await Promise.all([
-			this.codeBucket.get(`${r2Prefix}/bundle.zip`),
-			this.codeBucket.get(`${r2Prefix}/assets.zip`),
-			this.codeBucket.get(`${r2Prefix}/manifest.json`),
-			this.codeBucket.get(`${r2Prefix}/asset-manifest.json`),
-			this.codeBucket.get(`${r2Prefix}/source.zip`),
-		]);
+		// Fetch all artifacts from R2
+		const [bundleObj, assetsObj, manifestObj, assetManifestObj, sourceObj, schemaObj] =
+			await Promise.all([
+				this.codeBucket.get(`${r2Prefix}/bundle.zip`),
+				this.codeBucket.get(`${r2Prefix}/assets.zip`),
+				this.codeBucket.get(`${r2Prefix}/manifest.json`),
+				this.codeBucket.get(`${r2Prefix}/asset-manifest.json`),
+				this.codeBucket.get(`${r2Prefix}/source.zip`),
+				this.codeBucket.get(`${r2Prefix}/schema.sql`),
+			]);
 
 		// Validate required files exist
 		if (!bundleObj || !manifestObj) {
@@ -1338,80 +1346,38 @@ export class DeploymentService {
 		// Parse manifest
 		const manifestText = await manifestObj.text();
 		const manifest = JSON.parse(manifestText) as ManifestData;
-
-		// Validate manifest
 		const validation = validateManifest(manifest);
 		if (!validation.valid) {
 			throw new Error(`Invalid template manifest: ${validation.errors.join(", ")}`);
 		}
 
-		// Get bundle as ArrayBuffer
-		const bundleZip = await bundleObj.arrayBuffer();
-
-		// Get assets as ArrayBuffer (optional)
-		const assetsZip = assetsObj ? await assetsObj.arrayBuffer() : null;
-
-		// Get pre-computed asset manifest if available (improves performance, avoids recomputing hashes)
+		// Parse optional asset manifest
 		let precomputedAssetManifest: AssetManifest | undefined;
 		if (assetManifestObj) {
 			try {
-				precomputedAssetManifest = JSON.parse(await assetManifestObj.text()) as AssetManifest;
+				precomputedAssetManifest = JSON.parse(
+					await assetManifestObj.text(),
+				) as AssetManifest;
 			} catch {
-				// Non-fatal: will compute hashes on-the-fly if manifest is invalid
 				console.warn(
 					`Invalid asset-manifest.json for ${templateId}-v${cliVersion}, will compute hashes`,
 				);
 			}
 		}
 
-		// Create deployment record
-		const deploymentId = `dep_${crypto.randomUUID()}`;
-		await this.db
-			.prepare(
-				`INSERT INTO deployments (id, project_id, status, source)
-         VALUES (?, ?, 'queued', ?)`,
-			)
-			.bind(deploymentId, projectId, `prebuilt:${templateId}-v${cliVersion}`)
-			.run();
+		// Build CodeDeploymentInput and delegate to unified deploy path
+		const deployment = await this.createCodeDeployment({
+			projectId,
+			manifest,
+			bundleZip: await bundleObj.arrayBuffer(),
+			sourceZip: sourceObj ? await sourceObj.arrayBuffer() : null,
+			schemaSql: schemaObj ? await schemaObj.text() : null,
+			secretsJson: null,
+			assetsZip: assetsObj ? await assetsObj.arrayBuffer() : null,
+			assetManifest: precomputedAssetManifest,
+			source: `prebuilt:${templateId}-v${cliVersion}`,
+		});
 
-		try {
-			// Deploy code to worker using existing infrastructure
-			await this.deployCodeToWorker(
-				projectId,
-				bundleZip,
-				manifest,
-				deploymentId,
-				assetsZip,
-				precomputedAssetManifest,
-			);
-
-			// Update deployment status to 'live'
-			const artifactPrefix = `projects/${projectId}/deployments/${deploymentId}`;
-			await this.db
-				.prepare(
-					`UPDATE deployments SET status = 'live', artifact_bucket_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-				)
-				.bind(artifactPrefix, deploymentId)
-				.run();
-
-			// Store source.zip alongside bundle in deployment artifacts (enables forking)
-			if (sourceObj) {
-				await this.codeBucket.put(
-					`${artifactPrefix}/source.zip`,
-					await sourceObj.arrayBuffer(),
-				);
-			}
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
-			await this.db
-				.prepare(
-					`UPDATE deployments SET status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-				)
-				.bind(errorMessage, deploymentId)
-				.run();
-			throw error;
-		}
-
-		return { deploymentId };
+		return { deploymentId: deployment.id };
 	}
 }
