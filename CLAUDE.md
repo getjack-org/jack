@@ -187,6 +187,25 @@ This builds all templates locally (install deps, wrangler build, package) and up
 
 Each template has a `.jack.json` with `agentContext.summary` and `agentContext.full_text` that get injected into generated AGENTS.md files. Keep these free of infrastructure branding (no "Cloudflare Workers") — use "jack" or generic terms instead, so AI agents don't reach for wrangler.
 
+## Commit Messages
+
+Use conventional commit prefixes. These are parsed automatically to generate release notes.
+
+| Prefix | When to use | Example |
+|--------|------------|---------|
+| `feat:` | New feature or capability | `feat: add API token auth for headless environments` |
+| `fix:` | Bug fix | `fix: whoami with token-only auth` |
+| `docs:` | Documentation only | `docs: document template architecture in CLAUDE.md` |
+| `refactor:` | Code change that neither fixes a bug nor adds a feature | `refactor: extract deploy upload into shared service` |
+| `chore:` | Build, CI, deps, or other maintenance | `chore: update biome to v1.9` |
+
+Rules:
+- Prefix is **required** on every commit. The publish workflow groups them into release notes.
+- Keep the subject line under 72 characters.
+- Use imperative mood: "add", "fix", "update" — not "added", "fixes", "updates".
+- Optional scope: `fix(mcp): stdout corruption` — use when the change is scoped to one area.
+- Body is optional. Use it for the "why" when the subject isn't enough.
+
 ## Code Style
 
 - TypeScript with Bun runtime

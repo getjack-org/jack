@@ -78,7 +78,48 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bun run scripts/prebuild-templates.ts
 
+      - name: Generate release notes from commits
+        id: changelog
+        run: |
+          # Find the previous tag
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | sed -n '2p')
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="$CURRENT_TAG"
+          else
+            RANGE="$PREV_TAG..$CURRENT_TAG"
+          fi
+
+          # Collect commits by category, stripping the prefix
+          # Handles both "feat: msg" and "feat(scope): msg" formats
+          strip() { sed 's/^- [a-z]*([^)]*): /- /' | sed 's/^- [a-z]*: /- /'; }
+          FEATURES=$(git log "$RANGE" --pretty=format:'- %s' --grep='^feat' | strip)
+          FIXES=$(git log "$RANGE" --pretty=format:'- %s' --grep='^fix' | strip)
+          DOCS=$(git log "$RANGE" --pretty=format:'- %s' --grep='^docs' | strip)
+          OTHER=$(git log "$RANGE" --pretty=format:'- %s' --extended-regexp --grep='^refactor|^chore' | strip)
+
+          # Build the body
+          BODY=""
+          if [ -n "$FEATURES" ]; then
+            BODY="${BODY}## New Features\n${FEATURES}\n\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            BODY="${BODY}## Bug Fixes\n${FIXES}\n\n"
+          fi
+          if [ -n "$DOCS" ]; then
+            BODY="${BODY}## Documentation\n${DOCS}\n\n"
+          fi
+          if [ -n "$OTHER" ]; then
+            BODY="${BODY}## Other Changes\n${OTHER}\n\n"
+          fi
+
+          BODY="${BODY}**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURRENT_TAG}"
+
+          # Write to file to preserve newlines
+          echo -e "$BODY" > /tmp/release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: /tmp/release-notes.md
