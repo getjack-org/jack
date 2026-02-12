@@ -103,6 +103,8 @@ wrangler secret put WORKOS_API_KEY --cwd apps/auth-worker
 
 When uploading Workers to Cloudflare's dispatch namespace, upload ALL files from the wrangler build output (JS + WASM + any modules) via FormData. When debugging API issues, check docs for fields implying unused capabilities - `main_module` existing in Cloudflare's metadata schema revealed multi-file upload support we weren't using.
 
+**Single deploy path:** All deployments (code uploads AND prebuilt templates) go through `createCodeDeployment()` in the deployment service. The prebuilt path (`deployFromPrebuiltTemplate`) fetches artifacts from R2 and feeds them into `createCodeDeployment`. Do NOT add deploy steps (schema, secrets, cache refresh, etc.) outside of `createCodeDeployment` — that's how prebuilt deploys previously missed schema application.
+
 ## Jack MCP (for AI Agents)
 
 **CRITICAL:** When Jack MCP is connected, always prefer `mcp__jack__*` tools over CLI commands or wrangler. MCP tools are cloud-aware and work with Jack Cloud mode where wrangler won't.

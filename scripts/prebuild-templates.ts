@@ -116,6 +116,11 @@ async function buildTemplate(template: string, version: string): Promise<void> {
 			}
 		}
 
+		// Upload schema.sql if exists (needed for DB setup during prebuilt deploy)
+		if (packageResult.schemaPath) {
+			await uploadToR2(packageResult.schemaPath, `${r2Prefix}/schema.sql`);
+		}
+
 		// Upload manifest.json
 		await uploadToR2(packageResult.manifestPath, `${r2Prefix}/manifest.json`);
 

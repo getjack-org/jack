@@ -114,6 +114,27 @@ Before shipping a new template:
 - [ ] Install time < 5s (cold cache + lockfile)
 - [ ] All scripts work without global tools except wrangler
 - [ ] `.gitignore` includes `.env`, `.dev.vars`, `.secrets.json`
+- [ ] Prebuilt builds without env vars: `bun run build` succeeds with zero secrets set
+- [ ] If template has `schema.sql`, verify it's included in prebuild output
+
+## Prebuild Compatibility (IMPORTANT)
+
+Templates are prebuilt at release time **without any env vars or secrets**. The prebuild runs `bun run build` in a clean environment. If the build depends on runtime env vars, it will fail silently (only discovered when someone runs `prebuild-templates.ts`).
+
+**Common failure:** A provider component (e.g., `ClerkProvider`, `AuthProvider`) in the root layout requires an API key at import time. Next.js tries to statically prerender pages and the provider throws because the key is missing.
+
+**Fix:** Add `export const dynamic = "force-dynamic"` to the root layout. This tells Next.js to skip static prerendering for all pages, deferring to runtime where env vars are available.
+
+```tsx
+// app/layout.tsx
+export const dynamic = "force-dynamic"; // Required: provider needs runtime env vars
+
+export default function RootLayout({ children }) {
+  return <SomeProvider>{children}</SomeProvider>;
+}
+```
+
+**General rule:** If a template imports any SDK/provider that reads `process.env` or `env.*` at initialization, that template's layout or pages must be force-dynamic to survive a zero-env-var prebuild.
 
 ## Placeholder System
 

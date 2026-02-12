@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { Header } from "@/components/header";
 import "./globals.css";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
 	title: "jack-template",
 	description: "Next.js + Clerk auth app built with jack",
