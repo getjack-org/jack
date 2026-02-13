@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import type { AssetManifest } from "./asset-hash.ts";
 import { authFetch } from "./auth/index.ts";
 import { getControlApiUrl } from "./control-plane.ts";
+import { encryptSecrets } from "./crypto.ts";
 import { debug } from "./debug.ts";
 import { formatSize } from "./format.ts";
 
@@ -67,13 +68,16 @@ export async function uploadDeployment(options: DeployUploadOptions): Promise<De
 	}
 
 	if (options.secretsPath) {
-		const secretsContent = await readFile(options.secretsPath);
+		const secretsContent = await readFile(options.secretsPath, "utf-8");
+		const secretsJson = JSON.parse(secretsContent) as Record<string, string>;
+		const encryptedEnvelope = await encryptSecrets(secretsJson);
+		const encryptedPayload = JSON.stringify(encryptedEnvelope);
 		formData.append(
 			"secrets",
-			new Blob([secretsContent], { type: "application/json" }),
+			new Blob([encryptedPayload], { type: "application/json" }),
 			"secrets.json",
 		);
-		totalSize += secretsContent.length;
+		totalSize += encryptedPayload.length;
 	}
 
 	if (options.assetsZipPath) {

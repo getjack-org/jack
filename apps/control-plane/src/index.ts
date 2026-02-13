@@ -16,6 +16,7 @@ import {
 	getMimeType,
 } from "./cloudflare-api";
 import { CreditsService } from "./credits-service";
+import { decryptSecretValue, decryptSecrets, isEncryptedEnvelope } from "./crypto";
 import { DaimoBillingService } from "./daimo-billing-service";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { REFERRAL_CAP, TIER_LIMITS, computeLimits } from "./entitlements-config";
@@ -486,6 +487,26 @@ app.get("/health", (c) => {
 	return c.json({ status: "ok", service: "jack-control" });
 });
 
+// Public key for client-side secrets encryption (no auth required)
+app.get("/v1/encryption-key", (c) => {
+	return c.json(
+		{
+			kid: "v1",
+			algorithm: "RSA-OAEP-256",
+			key: {
+				alg: "RSA-OAEP-256",
+				e: "AQAB",
+				ext: true,
+				key_ops: ["encrypt"],
+				kty: "RSA",
+				n: "lwfWlWFQBpMOHv7NNn7XQO_egRNsc8Pkhj-ZugE_nmProyIUfBcDQPXl_iFDqpxpRVs28pSDMdnj9btnE59Y2rA4H0lENxjtVVc5mTFKzHSnsrVWKFU4m6GE2mz9_8_WOcpg6F3GJqYaD5nYagRsj8ph9O0qx4Z84rfM4NxSST61xasc6TVEbTABSY3jZHCn4NqerwAWcTaccJ75MwYfnhF28zBrq4yoBf7vhCxhxxYw1PdnixjFqbia36KK8IN5CzMsY9zILTGAAD4gTLs8XVeWiJ6r_y_by8OGPkmRSUuAzdh3VPMn0GqreXIpB6mwi3YrSVehI6b0j7t1cdm17VHh2cXMFJh78r4cX6ogMjc8AZ6CqX3d93-P5s7usxDLnaG10Xx_9X4RnLFDbBRLvgFmW9WLj2UkX-RNiVUhpbc23iO5kDT4v9z2DkylQ9hfx2tD7WcVQf8ff_go41ynPe3gHKKMIggUdkzGF9JPb0jdM_aRj3E0RECDkNt5i3UQD8rPtWX8orX9CQ0PgNuY5dtfL2mGROquRkqm5WysrT1OqVxHsns1jcaCnMVpsOVjIbMPhvGGoOEiUL6wvnfmbvW0ql-tOcX34SgL9UtqdbbFYsj2RAOfggj4Trps3s8Kej2fAvTZEAZlSJKyT_Yd8PiaRcUGomLwcPmBSZwRDWk",
+			},
+		},
+		200,
+		{ "Cache-Control": "public, max-age=86400" },
+	);
+});
+
 // Feedback endpoint - no auth required
 app.post("/v1/feedback", async (c) => {
 	// Rate limit by IP
@@ -818,9 +839,7 @@ api.delete("/tokens/:id", async (c) => {
 		return c.json({ error: "not_found", message: "Token not found" }, 404);
 	}
 
-	await c.env.DB.prepare(
-		"UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ?",
-	)
+	await c.env.DB.prepare("UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ?")
 		.bind(tokenId)
 		.run();
 
@@ -2447,10 +2466,7 @@ api.post("/projects/:projectId/rollback", async (c) => {
 
 	try {
 		const deploymentService = new DeploymentService(c.env);
-		const deployment = await deploymentService.rollbackDeployment(
-			projectId,
-			deploymentId,
-		);
+		const deployment = await deploymentService.rollbackDeployment(projectId, deploymentId);
 		return c.json({
 			deployment: {
 				id: deployment.id,
@@ -2463,7 +2479,11 @@ api.post("/projects/:projectId/rollback", async (c) => {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Rollback failed";
 		// Distinguish user errors from server errors
-		if (message.includes("not found") || message.includes("No previous") || message.includes("Cannot roll back")) {
+		if (
+			message.includes("not found") ||
+			message.includes("No previous") ||
+			message.includes("Cannot roll back")
+		) {
 			return c.json({ error: "invalid_request", message }, 400);
 		}
 		return c.json({ error: "internal_error", message }, 500);
@@ -3081,7 +3101,27 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 		const sourceData = sourceFile ? await sourceFile.arrayBuffer() : null;
 		const schemaText = schemaFile ? await schemaFile.text() : null;
 		const secretsText = secretsFile ? await secretsFile.text() : null;
-		const secretsJson = secretsText ? JSON.parse(secretsText) : null;
+		let secretsJson: Record<string, string> | null = null;
+		if (secretsText) {
+			const parsed = JSON.parse(secretsText);
+			if (isEncryptedEnvelope(parsed)) {
+				if (!c.env.SECRETS_ENCRYPTION_PRIVATE_KEY) {
+					return c.json(
+						{
+							error: "encryption_not_configured",
+							message: "Server cannot decrypt secrets — encryption key not configured",
+						},
+						500,
+					);
+				}
+				secretsJson = await decryptSecrets(
+					parsed,
+					JSON.parse(c.env.SECRETS_ENCRYPTION_PRIVATE_KEY),
+				);
+			} else {
+				secretsJson = parsed;
+			}
+		}
 		const assetsData = assetsFile ? await assetsFile.arrayBuffer() : null;
 		const assetManifestText = assetManifestFile ? await assetManifestFile.text() : null;
 		const assetManifest = assetManifestText ? JSON.parse(assetManifestText) : undefined;
@@ -3131,7 +3171,7 @@ api.post("/projects/:projectId/secrets", async (c) => {
 	}
 
 	// Parse request body
-	const body = await c.req.json<{ name: string; value: string }>();
+	const body = await c.req.json<{ name: string; value: unknown }>();
 	if (!body.name || !body.value) {
 		return c.json({ error: "invalid_request", message: "name and value are required" }, 400);
 	}
@@ -3144,6 +3184,31 @@ api.post("/projects/:projectId/secrets", async (c) => {
 				message:
 					"Secret name must start with a letter or underscore, and contain only letters, numbers, and underscores",
 			},
+			400,
+		);
+	}
+
+	// Decrypt value if it's an encrypted envelope, otherwise use as-is (backward compat)
+	let secretValue: string;
+	if (isEncryptedEnvelope(body.value)) {
+		if (!c.env.SECRETS_ENCRYPTION_PRIVATE_KEY) {
+			return c.json(
+				{
+					error: "encryption_not_configured",
+					message: "Server cannot decrypt secrets — encryption key not configured",
+				},
+				500,
+			);
+		}
+		secretValue = await decryptSecretValue(
+			body.value,
+			JSON.parse(c.env.SECRETS_ENCRYPTION_PRIVATE_KEY),
+		);
+	} else if (typeof body.value === "string") {
+		secretValue = body.value;
+	} else {
+		return c.json(
+			{ error: "invalid_request", message: "value must be a string or encrypted envelope" },
 			400,
 		);
 	}
@@ -3162,7 +3227,7 @@ api.post("/projects/:projectId/secrets", async (c) => {
 
 		const cfClient = new CloudflareClient(c.env);
 		await cfClient.setDispatchScriptSecrets("jack-tenants", workerResource.resource_name, {
-			[body.name]: body.value,
+			[body.name]: secretValue,
 		});
 
 		return c.json({ success: true, name: body.name }, 201);
