@@ -1,0 +1,15 @@
+name = "jack-mcp"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "mcp.getjack.org", custom_domain = true }
+]
+
+[vars]
+CONTROL_PLANE_URL = "https://control.getjack.org"
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
