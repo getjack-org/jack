@@ -797,10 +797,18 @@ export async function createProject(
 			? resolve(targetDirOption, name)
 			: join(getJackHome(), name);
 		if (existsSync(effectiveTargetDir)) {
+			const existingLink = await readProjectLink(effectiveTargetDir);
+			if (existingLink) {
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					`'${name}' already exists at ${effectiveTargetDir}/`,
+					`Run 'cd ${effectiveTargetDir} && jack ship' to deploy it, or 'jack down ${name}' to remove it first.`,
+				);
+			}
 			throw new JackError(
 				JackErrorCode.VALIDATION_ERROR,
-				`Folder exists at ${effectiveTargetDir}/`,
-				"Remove it first, or use 'jack ship' if it's a project.",
+				`Folder already exists at ${effectiveTargetDir}/`,
+				"Remove it first or pick a different name.",
 			);
 		}
 	}
@@ -873,10 +881,18 @@ export async function createProject(
 
 	// Check directory doesn't exist (only needed for auto-generated names now)
 	if (!nameWasProvided && existsSync(targetDir)) {
+		const existingLink = await readProjectLink(targetDir);
+		if (existingLink) {
+			throw new JackError(
+				JackErrorCode.VALIDATION_ERROR,
+				`'${projectName}' already exists at ${targetDir}/`,
+				`Run 'cd ${targetDir} && jack ship' to deploy it, or 'jack down ${projectName}' to remove it first.`,
+			);
+		}
 		throw new JackError(
 			JackErrorCode.VALIDATION_ERROR,
-			`Folder exists at ${targetDir}/`,
-			"Remove it first, or use 'jack ship' if it's a project.",
+			`Folder already exists at ${targetDir}/`,
+			"Remove it first or pick a different name.",
 		);
 	}
 
