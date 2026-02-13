@@ -23,6 +23,8 @@ export type Bindings = {
 	DAIMO_API_KEY: string;
 	DAIMO_WEBHOOK_SECRET: string;
 	DAIMO_RECEIVER_ADDRESS: string;
+	// Secrets encryption (RSA-OAEP private key JWK, set via wrangler secret put)
+	SECRETS_ENCRYPTION_PRIVATE_KEY: string;
 };
 
 // Project status enum

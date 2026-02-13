@@ -219,11 +219,13 @@ async function setSecret(args: string[], options: SecretsOptions): Promise<void>
  */
 async function setSecretManaged(projectId: string, name: string, value: string): Promise<void> {
 	const { authFetch } = await import("../lib/auth/index.ts");
+	const { encryptSecretValue } = await import("../lib/crypto.ts");
 
+	const encryptedValue = await encryptSecretValue(value);
 	const response = await authFetch(`${getControlApiUrl()}/v1/projects/${projectId}/secrets`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ name, value }),
+		body: JSON.stringify({ name, value: encryptedValue }),
 	});
 
 	if (!response.ok) {
