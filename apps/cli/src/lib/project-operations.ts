@@ -801,14 +801,14 @@ export async function createProject(
 			if (existingLink) {
 				throw new JackError(
 					JackErrorCode.VALIDATION_ERROR,
-					`'${name}' already exists at ${effectiveTargetDir}/`,
-					`Run 'cd ${effectiveTargetDir} && jack ship' to deploy it, or 'jack down ${name}' to remove it first.`,
+					`'${name}' already exists`,
+					`cd ${effectiveTargetDir} && jack ship  to deploy it, or  rm -rf ${effectiveTargetDir}  to start fresh.`,
 				);
 			}
 			throw new JackError(
 				JackErrorCode.VALIDATION_ERROR,
 				`Folder already exists at ${effectiveTargetDir}/`,
-				"Remove it first or pick a different name.",
+				"Remove it or pick a different name.",
 			);
 		}
 	}
@@ -885,8 +885,8 @@ export async function createProject(
 		if (existingLink) {
 			throw new JackError(
 				JackErrorCode.VALIDATION_ERROR,
-				`'${projectName}' already exists at ${targetDir}/`,
-				`Run 'cd ${targetDir} && jack ship' to deploy it, or 'jack down ${projectName}' to remove it first.`,
+				`'${projectName}' already exists`,
+				`cd ${targetDir} && jack ship  to deploy it, or  rm -rf ${targetDir}  to start fresh.`,
 			);
 		}
 		throw new JackError(
