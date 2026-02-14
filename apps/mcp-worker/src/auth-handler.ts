@@ -83,6 +83,7 @@ app.get("/callback", async (c) => {
 
 	const tokenData = (await tokenResponse.json()) as {
 		access_token: string;
+		refresh_token: string;
 		user: { id: string; email: string };
 	};
 
@@ -106,6 +107,7 @@ app.get("/callback", async (c) => {
 		scope: oauthReqInfo.scope,
 		props: {
 			accessToken: tokenData.access_token,
+			refreshToken: tokenData.refresh_token,
 			userId: tokenData.user.id,
 			email: tokenData.user.email,
 		},

@@ -7,6 +7,7 @@ export type Bindings = {
 
 export type Props = {
 	accessToken: string;
+	refreshToken: string;
 	userId: string;
 	email: string;
 };

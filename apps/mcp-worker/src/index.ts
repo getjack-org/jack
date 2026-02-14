@@ -6,6 +6,34 @@ import type { Bindings, Props } from "./types.ts";
 
 type HandlerWithFetch = ExportedHandler & Pick<Required<ExportedHandler>, "fetch">;
 
+function isTokenExpired(token: string): boolean {
+	try {
+		const payload = JSON.parse(atob(token.split(".")[1]));
+		return payload.exp ? payload.exp * 1000 < Date.now() - 30_000 : false;
+	} catch {
+		return false;
+	}
+}
+
+async function refreshWorkosToken(
+	refreshToken: string,
+	env: Bindings,
+): Promise<string | null> {
+	const res = await fetch("https://api.workos.com/user_management/authenticate", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			client_id: env.WORKOS_CLIENT_ID,
+			client_secret: env.WORKOS_API_KEY,
+			grant_type: "refresh_token",
+			refresh_token: refreshToken,
+		}),
+	});
+	if (!res.ok) return null;
+	const data = (await res.json()) as { access_token: string };
+	return data.access_token;
+}
+
 const mcpHandler = {
 	async fetch(
 		request: Request,
@@ -24,7 +52,16 @@ const mcpHandler = {
 		}
 
 		const props = (ctx as ExecutionContext & { props: Props }).props;
-		const token = props.accessToken;
+		let token = props.accessToken;
+
+		// Refresh expired WorkOS tokens (OAuth path only)
+		if (props.refreshToken && isTokenExpired(token)) {
+			const fresh = await refreshWorkosToken(props.refreshToken, env);
+			if (fresh) {
+				token = fresh;
+			}
+		}
+
 		const start = Date.now();
 		const server = createMcpServer(token, env);
 
@@ -86,7 +123,7 @@ export default new OAuthProvider({
 	async resolveExternalToken({ token }) {
 		if (token.startsWith("jkt_")) {
 			return {
-				props: { accessToken: token, userId: "", email: "" },
+				props: { accessToken: token, refreshToken: "", userId: "", email: "" },
 			};
 		}
 
@@ -98,6 +135,7 @@ export default new OAuthProvider({
 					return {
 						props: {
 							accessToken: token,
+							refreshToken: "",
 							userId: payload.sub || "",
 							email: payload.email || "",
 						},
