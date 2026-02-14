@@ -47,8 +47,9 @@ export async function getProjectStatus(
 				: null,
 			resources: resources.map((r) => ({
 				id: r.id,
-				type: r.type,
-				name: r.name,
+				type: r.resource_type,
+				name: r.resource_name,
+				binding_name: r.binding_name,
 			})),
 		});
 	} catch (error) {

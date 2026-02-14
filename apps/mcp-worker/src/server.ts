@@ -82,7 +82,7 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 
 	server.tool(
 		"get_logs",
-		"Collect recent log entries from a project. Listens for up to 5 seconds. Logs appear when the worker receives HTTP requests. Use after deploying to verify the app works or debug errors.",
+		"Open a LIVE log stream for up to 5 seconds and return any log entries captured during that window. This is NOT historical — it only shows logs from requests that happen WHILE listening. To capture logs: call this tool, then immediately ask the user to visit the app URL (or make a request yourself). If no requests hit the worker during the 5-second window, the result will be empty. Use to debug runtime errors after deploying.",
 		{
 			project_id: z.string().describe("The project ID"),
 		},

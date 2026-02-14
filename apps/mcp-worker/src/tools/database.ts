@@ -10,10 +10,10 @@ export async function createDatabase(
 	try {
 		const result = await client.createDatabase(projectId, name, bindingName);
 		return ok({
-			database_name: result.resource.name,
 			database_id: result.resource.id,
+			database_name: result.resource.resource_name,
 			binding_name: result.resource.binding_name,
-			note: "Database created. Redeploy the project for the Worker to access it via the binding.",
+			note: "Database created. Redeploy the project with deploy(changes) for the binding to activate. Use this binding_name in your Worker code (e.g. env.DB).",
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -28,7 +28,11 @@ export async function listDatabases(
 	try {
 		const { resources } = await client.listDatabases(projectId);
 		return ok({
-			databases: resources.map((r) => ({ id: r.id, name: r.name })),
+			databases: resources.map((r) => ({
+				id: r.id,
+				name: r.resource_name,
+				binding_name: r.binding_name,
+			})),
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

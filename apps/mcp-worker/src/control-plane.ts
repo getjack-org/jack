@@ -79,7 +79,14 @@ export class ControlPlaneClient {
 
 	async getProjectResources(
 		projectId: string,
-	): Promise<{ resources: Array<{ id: string; type: string; name: string }> }> {
+	): Promise<{
+		resources: Array<{
+			id: string;
+			resource_type: string;
+			resource_name: string;
+			binding_name: string | null;
+		}>;
+	}> {
 		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/resources`);
 	}
 
@@ -239,7 +246,7 @@ export class ControlPlaneClient {
 		projectId: string,
 		name?: string,
 		bindingName?: string,
-	): Promise<{ resource: { id: string; name: string; binding_name: string } }> {
+	): Promise<{ resource: { id: string; resource_name: string; binding_name: string } }> {
 		const body: Record<string, string> = {};
 		if (name) body.name = name;
 		if (bindingName) body.binding_name = bindingName;
@@ -252,9 +259,11 @@ export class ControlPlaneClient {
 
 	async listDatabases(
 		projectId: string,
-	): Promise<{ resources: Array<{ id: string; type: string; name: string }> }> {
+	): Promise<{
+		resources: Array<{ id: string; resource_type: string; resource_name: string; binding_name: string | null }>;
+	}> {
 		const { resources } = await this.getProjectResources(projectId);
-		return { resources: resources.filter((r) => r.type === "d1") };
+		return { resources: resources.filter((r) => r.resource_type === "d1") };
 	}
 
 	async executeSql(projectId: string, sql: string, params?: unknown[]): Promise<unknown> {
