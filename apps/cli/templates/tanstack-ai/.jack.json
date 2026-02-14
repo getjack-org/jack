@@ -1,0 +1,29 @@
+{
+	"name": "tanstack-ai",
+	"description": "AI chat with TanStack AI, streaming SSE, and D1 persistence",
+	"secrets": [],
+	"capabilities": ["ai", "db"],
+	"requires": ["DB"],
+	"intent": {
+		"keywords": ["tanstack", "ai", "chat", "streaming", "sse", "react", "vite"],
+		"examples": ["TanStack AI chat", "React AI chat", "streaming chat app", "SSE chat"]
+	},
+	"agentContext": {
+		"summary": "A full-stack AI chat app using TanStack AI with streaming SSE, React UI, and D1 chat persistence.",
+		"full_text": "## Project Structure\n\n- `src/worker.ts` - Hono API with TanStack AI chat endpoint and D1 persistence\n- `src/jack-ai.ts` - Jack AI proxy wrapper (do not modify)\n- `src/App.tsx` - React chat UI with useChat hook\n- `src/main.tsx` - React entry point\n- `src/index.css` - Tailwind CSS styles\n- `schema.sql` - D1 schema for chat and message persistence\n\n## AI Integration\n\nUses TanStack AI (`@tanstack/ai`) with `@cloudflare/tanstack-ai` adapter, routed through Jack's metered AI proxy.\n\n### Server-Side\n\n```typescript\nimport { chat, toServerSentEventsResponse } from \"@tanstack/ai\";\nimport { createWorkersAiChat } from \"@cloudflare/tanstack-ai/adapters/workers-ai\";\n\nconst adapter = createWorkersAiChat(MODEL, { binding: ai });\nconst stream = chat({ adapter, messages, systemPrompts: [...] });\nreturn toServerSentEventsResponse(stream);\n```\n\n### Client-Side\n\n```typescript\nimport { useChat, fetchServerSentEvents } from \"@tanstack/ai-react\";\n\nconst { messages, sendMessage, isLoading } = useChat({\n  connection: fetchServerSentEvents(\"/api/chat\"),\n});\n```\n\n### Changing Models\n\nEdit the model string in `src/worker.ts`:\n```typescript\nconst MODEL = \"@cf/meta/llama-3.1-8b-instruct\";\n```\n\nAvailable models: https://developers.cloudflare.com/workers-ai/models/\n\n## Chat Persistence\n\nChats and messages are stored in D1:\n- `chats` table: chat metadata (id, created_at)\n- `messages` table: individual messages (role, content, chat_id)\n\nMessages persist across page refreshes. Each browser session creates a new chat.\n\n## API Endpoints\n\n- `POST /api/chat` - Send messages and get streaming AI response (SSE)\n- `GET /api/chat/:id` - Load chat history\n- `POST /api/chat/new` - Create a new chat\n- `GET /health` - Health check\n\n## Resources\n\n- [TanStack AI Docs](https://tanstack.com/ai/latest)\n- [TanStack AI llms.txt](https://tanstack.com/ai/latest/docs/llms.txt)\n- [Workers AI Models](https://developers.cloudflare.com/workers-ai/models)"
+	},
+	"hooks": {
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "URL copied to clipboard"
+			},
+			{
+				"action": "box",
+				"title": "{{name}}",
+				"lines": ["{{url}}", "", "Chat history saved to D1.", "jack open  to start chatting"]
+			}
+		]
+	}
+}

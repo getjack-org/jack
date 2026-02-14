@@ -116,6 +116,7 @@ Before shipping a new template:
 - [ ] `.gitignore` includes `.env`, `.dev.vars`, `.secrets.json`
 - [ ] Prebuilt builds without env vars: `bun run build` succeeds with zero secrets set
 - [ ] If template has `schema.sql`, verify it's included in prebuild output
+- [ ] If template handles `POST /__scheduled`, add `"crons"` to `.jack.json`
 
 ## Prebuild Compatibility (IMPORTANT)
 

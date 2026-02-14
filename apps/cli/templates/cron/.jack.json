@@ -1,42 +1,31 @@
 {
 	"name": "cron",
-	"description": "Background tasks with cron scheduling and webhook ingestion",
+	"description": "Uptime monitor with cron checks, latency tracking, and live dashboard",
 	"secrets": [],
 	"capabilities": ["db"],
 	"requires": ["DB", "CRON"],
+	"crons": ["*/15 * * * *"],
 	"intent": {
 		"keywords": [
 			"cron",
-			"background",
-			"jobs",
-			"webhook",
+			"uptime",
+			"monitor",
 			"scheduled",
-			"queue",
-			"worker",
-			"tasks"
+			"health",
+			"ping",
+			"status"
 		],
 		"examples": [
-			"background job processor",
-			"scheduled tasks",
-			"webhook handler",
-			"job queue"
+			"uptime monitor",
+			"scheduled health checks",
+			"status page"
 		]
 	},
 	"agentContext": {
-		"summary": "A background task worker with cron scheduling, D1 job queue, and webhook ingestion.",
-		"full_text": "## Project Structure\n\n- `src/index.ts` - Hono API with cron handler, webhook endpoint, and job status routes\n- `src/jobs.ts` - Job queue: create, process, retry with D1 backend\n- `src/webhooks.ts` - Webhook ingestion with HMAC-SHA256 signature verification\n- `schema.sql` - D1 schema (jobs, webhook_events)\n\n## Cron\n\nThe `POST /__scheduled` route runs on a cron schedule (default: every 5 minutes). It processes pending jobs and retries failed ones.\n\n## Jobs\n\n```typescript\n// Create a job\nawait createJob(db, { type: 'process-order', payload: { orderId: '123' } });\n\n// Jobs are processed automatically by cron\n// Failed jobs retry up to 3 times with exponential backoff\n```\n\n## Webhooks\n\n```\nPOST /webhook\nX-Signature: sha256=abc123...\nContent-Type: application/json\n\n{ \"event\": \"order.completed\", \"data\": { ... } }\n```\n\nWebhooks are verified using HMAC-SHA256, logged to D1, and can create jobs for async processing.\n\n## Endpoints\n\n- `POST /__scheduled` - Cron handler (called by scheduler)\n- `POST /webhook` - Inbound webhook receiver with signature verification\n- `GET /jobs` - List recent jobs with status\n- `GET /health` - Health check\n\n## Environment Variables\n\n- `WEBHOOK_SECRET` - HMAC signing secret for webhook verification (auto-generated)\n\n## Resources\n\n- [Hono Documentation](https://hono.dev)"
+		"summary": "An uptime monitor that checks URLs every 15 minutes, tracks latency and uptime percentage, with a live dashboard.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` - Hono API with routes, cron handler, admin page\n- `src/monitor.ts` - URL checking with groups, fetch with timeout, D1 storage\n- `src/admin.ts` - Inline HTML/CSS/JS dashboard (no external deps)\n- `schema.sql` - D1 schema (checks table with group_name)\n\n## Routes\n\n| Method | Path | Purpose |\n|--------|------|---------|\n| GET / | Live dashboard (HTML) |\n| GET /api/status | Per-group uptime stats (URLs hidden) |\n| GET /api/checks | Recent 100 checks (URLs hidden) |\n| POST /api/trigger | Manually trigger checks |\n| POST /__scheduled | Cron handler (called every 15 min) |\n| GET /health | Health check |\n\n## How It Works\n\nEvery 15 minutes the cron checks all monitored URLs grouped by name. URLs are never exposed publicly — only group names appear on the dashboard and in API responses.\n\nBy default it monitors `https://1.1.1.1` (Cloudflare DNS) in the \"Default\" group.\n\n## Configuring Monitor Groups\n\nSet the `MONITOR_URLS` secret with named groups separated by semicolons:\n```\nProduction=https://api.example.com,https://app.example.com;Staging=https://staging.example.com/health\n```\n\nPlain URLs without a group name go into \"Default\":\n```\nhttps://example.com,https://api.example.com\n```\n\n## Dashboard\n\nThe dashboard auto-refreshes every 10 seconds and shows:\n- Status banner (all systems operational / issues detected)\n- Per-group cards with endpoint count, uptime %, avg latency\n- Recent checks table with group name and source (cron/manual)\n\nActual URLs are never shown — only group names are visible publicly.\n\n## Resources\n\n- [Hono Documentation](https://hono.dev)"
 	},
 	"hooks": {
-		"preCreate": [
-			{
-				"action": "require",
-				"source": "secret",
-				"key": "WEBHOOK_SECRET",
-				"message": "Generating webhook signing secret...",
-				"onMissing": "generate",
-				"generateCommand": "openssl rand -hex 32"
-			}
-		],
 		"postDeploy": [
 			{
 				"action": "clipboard",
@@ -50,15 +39,16 @@
 			},
 			{
 				"action": "box",
-				"title": "Background worker live: {{name}}",
+				"title": "Uptime monitor live: {{name}}",
 				"lines": [
 					"{{url}}",
 					"",
-					"Endpoints:",
-					"  POST {{url}}/webhook  — inbound webhook receiver",
-					"  GET  {{url}}/jobs     — job queue status",
+					"Dashboard: {{url}}/",
+					"API:       {{url}}/api/status",
 					"",
-					"Cron: runs every 5 minutes"
+					"Checks every 15 minutes automatically",
+					"Configure: set MONITOR_URLS secret",
+					"  Format: Group=url1,url2;Other=url3"
 				]
 			}
 		]

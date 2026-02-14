@@ -1,0 +1,56 @@
+{
+	"name": "telegram-bot",
+	"description": "Telegram bot with AI-powered responses",
+	"secrets": ["BOT_TOKEN", "WEBHOOK_SECRET"],
+	"requires": ["AI"],
+	"intent": {
+		"keywords": ["telegram", "bot", "chat", "messaging", "ai"],
+		"examples": ["telegram bot", "AI telegram assistant", "messaging bot", "chat bot"]
+	},
+	"agentContext": {
+		"summary": "A Telegram bot with grammY, AI-powered responses, and webhook delivery.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` - grammY bot with webhook handler, commands, and AI integration\n- `src/jack-ai.ts` - Jack AI proxy wrapper (do not modify)\n\n## Commands\n\n- `/start` - Welcome message with available commands\n- `/help` - List all commands\n- `/ask <question>` - Ask the AI anything\n- `/status` - Bot info: region, timestamp, uptime\n\n## AI Responses\n\nThe bot responds with AI in two ways:\n1. `/ask <question>` - Explicit AI query\n2. Reply to any bot message - Treated as a follow-up question\n\nAI uses the jack metered proxy. Change the model in `src/index.ts`.\n\n## Webhook\n\nTelegram delivers updates via webhook POST to your deploy URL. The webhook is auto-registered during deployment. The `WEBHOOK_SECRET` header is verified on every request.\n\n## Environment Variables\n\n- `BOT_TOKEN` - Telegram bot token from @BotFather (secret)\n- `WEBHOOK_SECRET` - Auto-generated webhook verification token (secret)\n\n## Changing the AI Model\n\nEdit the model string in `src/index.ts`:\n```typescript\nconst MODEL = \"@cf/meta/llama-3.1-8b-instruct\";\n```\n\nAvailable models: https://developers.cloudflare.com/workers-ai/models/\n\n## Resources\n\n- [grammY Documentation](https://grammy.dev)\n- [Telegram Bot API](https://core.telegram.org/bots/api)\n- [AI Models](https://developers.cloudflare.com/workers-ai/models)"
+	},
+	"hooks": {
+		"preCreate": [
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "BOT_TOKEN",
+				"message": "Telegram bot token from @BotFather",
+				"setupUrl": "https://t.me/BotFather",
+				"onMissing": "prompt",
+				"promptMessage": "Enter your Telegram Bot Token:",
+				"perProject": true,
+				"validateCommand": "curl -sf --max-time 5 https://api.telegram.org/bot{{value}}/getMe > /dev/null",
+				"validateError": "Invalid bot token. Make sure you copied it correctly from @BotFather."
+			},
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "WEBHOOK_SECRET",
+				"message": "Generating webhook verification secret...",
+				"onMissing": "generate",
+				"generateCommand": "openssl rand -hex 32",
+				"perProject": true
+			}
+		],
+		"postDeploy": [
+			{
+				"action": "shell",
+				"command": "curl -sf --max-time 10 {{url}}/register-webhook > /dev/null || true",
+				"message": "Registering Telegram webhook..."
+			},
+			{
+				"action": "shell",
+				"command": "BOT_LINK=$(curl -sf --max-time 10 {{url}}/bot-link) && [ -n \"$BOT_LINK\" ] && echo \"\" && echo \"  Your bot is live! Open it here:\" && echo \"  $BOT_LINK\" && echo \"\" && echo \"  Send /start — it will respond.\" || true",
+				"message": ""
+			},
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "Deploy URL copied to clipboard"
+			}
+		]
+	}
+}
