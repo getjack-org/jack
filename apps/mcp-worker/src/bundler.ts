@@ -2,13 +2,16 @@ import * as esbuild from "esbuild-wasm";
 // @ts-expect-error — wasm module import
 import esbuildWasm from "esbuild-wasm/esbuild.wasm";
 
-let initialized = false;
+let initPromise: Promise<void> | null = null;
 
 async function ensureInitialized(): Promise<void> {
-	if (!initialized) {
-		await esbuild.initialize({ wasmModule: esbuildWasm, worker: false });
-		initialized = true;
+	if (!initPromise) {
+		initPromise = esbuild.initialize({ wasmModule: esbuildWasm, worker: false }).catch((err) => {
+			initPromise = null;
+			throw err;
+		});
 	}
+	await initPromise;
 }
 
 /**

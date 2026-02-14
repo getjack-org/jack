@@ -39,6 +39,7 @@ app.all("/mcp", async (c) => {
 		}
 
 		const token = authHeader.slice(7);
+		const start = Date.now();
 
 		// Create a fresh server + transport per request (stateless)
 		const server = createMcpServer(token, c.env);
@@ -58,12 +59,28 @@ app.all("/mcp", async (c) => {
 			await transport.close();
 			await server.close();
 
+			console.log(
+				JSON.stringify({
+					event: "mcp_request",
+					duration_ms: Date.now() - start,
+					status: response.status,
+				}),
+			);
+
 			return response;
 		} catch (error) {
 			await transport.close();
 			await server.close();
 
 			const message = error instanceof Error ? error.message : String(error);
+			console.log(
+				JSON.stringify({
+					event: "mcp_request",
+					duration_ms: Date.now() - start,
+					status: 500,
+					error: message,
+				}),
+			);
 			return c.json(
 				{
 					jsonrpc: "2.0",

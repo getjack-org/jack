@@ -1,20 +1,5 @@
 import type { ControlPlaneClient } from "../control-plane.ts";
 
-const BUILTIN_TEMPLATES = [
-	"hello",
-	"miniapp",
-	"api",
-	"cron",
-	"resend",
-	"nextjs",
-	"saas",
-	"ai-chat",
-	"semantic-search",
-	"nextjs-shadcn",
-	"nextjs-clerk",
-	"nextjs-auth",
-];
-
 export async function deployFromTemplate(
 	client: ControlPlaneClient,
 	template: string,
@@ -22,24 +7,13 @@ export async function deployFromTemplate(
 ): Promise<{
 	content: Array<{ type: "text"; text: string }>;
 }> {
-	if (!BUILTIN_TEMPLATES.includes(template)) {
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						success: false,
-						error: `Unknown template: ${template}`,
-						available_templates: BUILTIN_TEMPLATES,
-					}),
-				},
-			],
-		};
-	}
-
 	const name = projectName || `${template}-${Date.now().toString(36)}`;
 
+	const t0 = Date.now();
 	const result = await client.createProjectWithPrebuilt(name, template);
+	const deploy_ms = Date.now() - t0;
+
+	console.log(JSON.stringify({ event: "deploy_from_template", template, deploy_ms }));
 
 	if (result.prebuilt_failed) {
 		return {

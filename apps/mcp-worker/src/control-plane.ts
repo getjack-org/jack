@@ -1,4 +1,5 @@
 const DEFAULT_CONTROL_URL = "https://control.getjack.org";
+const JACK_VERSION = "0.1.34";
 
 export interface ManagedProject {
 	id: string;
@@ -111,7 +112,10 @@ export class ControlPlaneClient {
 	}> {
 		return this.jsonFetch("/projects", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: {
+				"Content-Type": "application/json",
+				"X-Jack-Version": JACK_VERSION,
+			},
 			body: JSON.stringify({
 				name,
 				slug,
@@ -176,14 +180,14 @@ export class ControlPlaneClient {
 		});
 	}
 
-	async rollback(
-		projectId: string,
-		deploymentId?: string,
-	): Promise<{ deployment: DeploymentInfo }> {
-		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/rollback`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(deploymentId ? { deployment_id: deploymentId } : {}),
+	async fetchStream(streamPath: string, signal?: AbortSignal): Promise<Response> {
+		const url = streamPath.startsWith("http") ? streamPath : `${this.baseUrl}${streamPath}`;
+		return fetch(url, {
+			headers: {
+				Authorization: `Bearer ${this.token}`,
+				Accept: "text/event-stream",
+			},
+			signal,
 		});
 	}
 }

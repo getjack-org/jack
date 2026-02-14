@@ -40,7 +40,7 @@ export function createMcpServer(token: string, env: Bindings): McpServer {
 	// --- deploy_from_template ---
 	server.tool(
 		"deploy_from_template",
-		"Deploy a builtin Jack template. Available: hello, miniapp, api, cron, resend, nextjs, saas, ai-chat, semantic-search, nextjs-shadcn, nextjs-clerk, nextjs-auth.",
+		"Deploy a builtin Jack template (e.g. hello, api, miniapp, nextjs, saas). The control plane validates template names — pass the desired template and it will return an error if unknown.",
 		{
 			template: z.string().describe("Template name (e.g. 'api', 'hello', 'miniapp')"),
 			project_name: z.string().optional().describe("Project name (auto-generated if omitted)"),

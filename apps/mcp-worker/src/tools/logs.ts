@@ -30,10 +30,7 @@ export async function getLogs(
 	const timeout = setTimeout(() => controller.abort(), 5000);
 
 	try {
-		const response = await fetch(sessionResult.stream.url, {
-			headers: { Accept: "text/event-stream" },
-			signal: controller.signal,
-		});
+		const response = await client.fetchStream(sessionResult.stream.url, controller.signal);
 
 		if (!response.ok || !response.body) {
 			clearTimeout(timeout);

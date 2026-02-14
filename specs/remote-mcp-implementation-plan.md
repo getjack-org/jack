@@ -300,13 +300,13 @@ esbuild-wasm with two plugins:
 import * as esbuild from "esbuild-wasm";
 import esbuildWasm from "esbuild-wasm/esbuild.wasm";
 
-let initialized = false;
+let initPromise: Promise<void> | null = null;
 
 async function ensureInitialized() {
-  if (!initialized) {
-    await esbuild.initialize({ wasmModule: esbuildWasm, worker: false });
-    initialized = true;
+  if (!initPromise) {
+    initPromise = esbuild.initialize({ wasmModule: esbuildWasm, worker: false });
   }
+  await initPromise;
 }
 
 export async function bundleCode(
@@ -519,10 +519,13 @@ curl -s http://localhost:8787/ | jq .
 
 ### Test 2: MCP Initialize
 
+> **Important:** All POST requests to the MCP endpoint MUST include `Accept: application/json, text/event-stream` — this is required by the MCP Streamable HTTP spec.
+
 ```bash
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer $JACK_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
@@ -542,6 +545,7 @@ curl -s -X POST $MCP_URL \
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer $JACK_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 2,
@@ -557,6 +561,7 @@ curl -s -X POST $MCP_URL \
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer $JACK_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 3,
@@ -575,6 +580,7 @@ curl -s -X POST $MCP_URL \
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer $JACK_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 4,
@@ -596,6 +602,7 @@ curl -s -X POST $MCP_URL \
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer $JACK_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 5,
@@ -622,6 +629,7 @@ This is the key test — validates esbuild-wasm + esm.sh CDN resolution:
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer $JACK_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 6,
@@ -649,6 +657,7 @@ curl -s -X POST $MCP_URL \
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer $JACK_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{
     "jsonrpc": "2.0",
     "id": 7,
@@ -667,6 +676,7 @@ curl -s -X POST $MCP_URL \
 ```bash
 curl -s -X POST $MCP_URL \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq .
 # Expected: 401 { "error": "Missing Authorization header" }
 ```
@@ -677,6 +687,7 @@ curl -s -X POST $MCP_URL \
 curl -s -X POST $MCP_URL \
   -H "Authorization: Bearer jkt_invalid_token" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq .
 # Expected: Error response (control plane returns 401, tool returns error)
 ```

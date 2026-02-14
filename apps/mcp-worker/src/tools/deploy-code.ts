@@ -70,6 +70,9 @@ export async function deployFromCode(
 		};
 	}
 
+	const timing: Record<string, number> = {};
+	let t0 = Date.now();
+
 	// Step 1: Bundle the code
 	let bundleResult: BundleResult;
 	try {
@@ -90,12 +93,30 @@ export async function deployFromCode(
 			],
 		};
 	}
+	timing.bundle_ms = Date.now() - t0;
+
+	// Check bundled output size (Workers have a 10MB limit on paid plans)
+	const bundledSizeBytes = new TextEncoder().encode(bundleResult.code).byteLength;
+	if (bundledSizeBytes > 10_000_000) {
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: JSON.stringify({
+						success: false,
+						error: `Bundled output too large (${Math.round(bundledSizeBytes / 1_000_000)}MB). Workers have a 10MB limit. For large projects, use the local Jack CLI.`,
+					}),
+				},
+			],
+		};
+	}
 
 	// Step 2: Create manifest and zip
 	const manifest = createManifest(compatibilityFlags);
 	const bundleZip = createBundleZip(bundleResult.code);
 
 	// Step 3: Create or reuse project
+	t0 = Date.now();
 	let targetProjectId = projectId;
 	let projectUrl: string | undefined;
 
@@ -105,14 +126,17 @@ export async function deployFromCode(
 		targetProjectId = createResult.project.id;
 		projectUrl = createResult.url;
 	}
+	timing.create_project_ms = Date.now() - t0;
 
 	// Step 4: Upload deployment
+	t0 = Date.now();
 	const deployment = await client.uploadDeployment(
 		targetProjectId,
 		manifest,
 		bundleZip,
 		`Deployed via remote MCP from ${Object.keys(files).length} source file(s)`,
 	);
+	timing.upload_ms = Date.now() - t0;
 
 	// Step 5: If we didn't get a URL from project creation, fetch it
 	if (!projectUrl) {
@@ -124,6 +148,15 @@ export async function deployFromCode(
 		}
 	}
 
+	console.log(
+		JSON.stringify({
+			event: "deploy_from_code",
+			...timing,
+			files: Object.keys(files).length,
+			bundle_size: bundleResult.code.length,
+		}),
+	);
+
 	const result: Record<string, unknown> = {
 		success: true,
 		data: {
@@ -133,6 +166,7 @@ export async function deployFromCode(
 			url: projectUrl,
 			files_bundled: Object.keys(files).length,
 			bundle_size_bytes: bundleResult.code.length,
+			timing,
 		},
 	};
 
