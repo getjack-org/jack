@@ -1,6 +1,17 @@
 import { zipSync } from "fflate";
 import { type BundleResult, bundleCode } from "../bundler.ts";
 import type { ControlPlaneClient } from "../control-plane.ts";
+import { type McpToolResult, err, ok } from "../utils.ts";
+import { deployFromTemplate } from "./deploy-template.ts";
+
+export interface DeployParams {
+	files?: Record<string, string>;
+	template?: string;
+	changes?: Record<string, string | null>;
+	project_id?: string;
+	project_name?: string;
+	compatibility_flags?: string[];
+}
 
 interface ManifestData {
 	version: 1;
@@ -30,156 +41,186 @@ function createBundleZip(bundledCode: string): Uint8Array {
 	});
 }
 
-export async function deployFromCode(
+export async function deploy(
 	client: ControlPlaneClient,
-	files: Record<string, string>,
-	projectName?: string,
-	projectId?: string,
-	compatibilityFlags?: string[],
-): Promise<{
-	content: Array<{ type: "text"; text: string }>;
-}> {
-	// Validate input
-	if (!files || Object.keys(files).length === 0) {
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						success: false,
-						error: "No files provided. Include at least one source file.",
-					}),
-				},
-			],
-		};
+	params: DeployParams,
+): Promise<McpToolResult> {
+	const { files, template, changes, project_id, project_name, compatibility_flags } = params;
+
+	const modeCount = [files, template, changes].filter((v) => v !== undefined).length;
+	if (modeCount === 0) {
+		return err(
+			"VALIDATION_ERROR",
+			"Exactly one of files, template, or changes must be provided.",
+			"Pass files for a full deploy, template for a prebuilt app, or changes for a partial update.",
+		);
+	}
+	if (modeCount > 1) {
+		return err(
+			"VALIDATION_ERROR",
+			"Only one of files, template, or changes can be provided per call.",
+			"Use files for full deploy, template for prebuilt apps, or changes for partial updates.",
+		);
 	}
 
-	// Check total size (limit: 500KB of source)
-	const totalSize = Object.values(files).reduce((sum, content) => sum + content.length, 0);
-	if (totalSize > 500_000) {
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						success: false,
-						error: `Source files too large (${Math.round(totalSize / 1000)}KB). Maximum is 500KB. For larger projects, use the local Jack CLI.`,
-					}),
-				},
-			],
-		};
+	if (changes && !project_id) {
+		return err(
+			"VALIDATION_ERROR",
+			"project_id is required when using changes mode.",
+			"Provide the project_id of the existing project you want to update.",
+		);
 	}
 
-	const timing: Record<string, number> = {};
-	let t0 = Date.now();
-
-	// Step 1: Bundle the code
-	let bundleResult: BundleResult;
-	try {
-		bundleResult = await bundleCode(files);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						success: false,
-						error: `Bundle failed: ${message}`,
-						suggestion:
-							"Check that your imports are valid. The remote MCP supports ESM packages available on esm.sh (hono, zod, itty-router, etc). Complex Node.js packages may not work — use the local Jack CLI instead.",
-					}),
-				},
-			],
-		};
-	}
-	timing.bundle_ms = Date.now() - t0;
-
-	// Check bundled output size (Workers have a 10MB limit on paid plans)
-	const bundledSizeBytes = new TextEncoder().encode(bundleResult.code).byteLength;
-	if (bundledSizeBytes > 10_000_000) {
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						success: false,
-						error: `Bundled output too large (${Math.round(bundledSizeBytes / 1_000_000)}MB). Workers have a 10MB limit. For large projects, use the local Jack CLI.`,
-					}),
-				},
-			],
-		};
+	if (template && project_id) {
+		return err(
+			"VALIDATION_ERROR",
+			"template mode always creates a new project. Do not pass project_id with template.",
+			"Remove project_id, or use files/changes mode to update an existing project.",
+		);
 	}
 
-	// Step 2: Create manifest and zip
-	const manifest = createManifest(compatibilityFlags);
-	const bundleZip = createBundleZip(bundleResult.code);
-
-	// Step 3: Create or reuse project
-	t0 = Date.now();
-	let targetProjectId = projectId;
-	let projectUrl: string | undefined;
-
-	if (!targetProjectId) {
-		const name = projectName || `mcp-${Date.now().toString(36)}`;
-		const createResult = await client.createProject(name);
-		targetProjectId = createResult.project.id;
-		projectUrl = createResult.url;
+	if (template) {
+		return deployFromTemplate(client, template, project_name);
 	}
-	timing.create_project_ms = Date.now() - t0;
 
-	// Step 4: Upload deployment
-	t0 = Date.now();
-	const deployment = await client.uploadDeployment(
-		targetProjectId,
-		manifest,
-		bundleZip,
-		`Deployed via remote MCP from ${Object.keys(files).length} source file(s)`,
-	);
-	timing.upload_ms = Date.now() - t0;
+	let resolvedFiles: Record<string, string>;
 
-	// Step 5: If we didn't get a URL from project creation, fetch it
-	if (!projectUrl) {
+	if (changes) {
 		try {
-			const { project } = await client.getProject(targetProjectId);
-			projectUrl = `https://${project.slug}.runjack.xyz`;
-		} catch {
-			projectUrl = undefined;
+			const existingFiles = await client.getAllSourceFiles(project_id!);
+			const merged = { ...existingFiles };
+
+			for (const [path, content] of Object.entries(changes)) {
+				if (content === null) {
+					delete merged[path];
+				} else {
+					merged[path] = content;
+				}
+			}
+
+			if (Object.keys(merged).length === 0) {
+				return err(
+					"VALIDATION_ERROR",
+					"Merged file set is empty after applying changes.",
+					"Ensure at least one file remains after deletions.",
+				);
+			}
+
+			resolvedFiles = merged;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const is404 =
+				message.includes("404") || message.includes("not found") || message.includes("Not found");
+			return err(
+				is404 ? "NOT_FOUND" : "DEPLOY_FAILED",
+				`Failed to fetch existing source files: ${message}`,
+				is404
+					? "This project may not have stored source (e.g., deployed before source storage was enabled, or deployed from a template). Use files mode with the full file set instead of changes."
+					: undefined,
+			);
 		}
+	} else {
+		resolvedFiles = files!;
 	}
 
-	console.log(
-		JSON.stringify({
-			event: "deploy_from_code",
-			...timing,
-			files: Object.keys(files).length,
-			bundle_size: bundleResult.code.length,
-		}),
-	);
+	try {
+		if (Object.keys(resolvedFiles).length === 0) {
+			return err("VALIDATION_ERROR", "No files provided. Include at least one source file.");
+		}
 
-	const result: Record<string, unknown> = {
-		success: true,
-		data: {
+		const totalSize = Object.values(resolvedFiles).reduce(
+			(sum, content) => sum + content.length,
+			0,
+		);
+		if (totalSize > 500_000) {
+			return err(
+				"SIZE_LIMIT",
+				`Source files too large (${Math.round(totalSize / 1000)}KB). Maximum is 500KB.`,
+				"For larger projects, use the local Jack CLI.",
+			);
+		}
+
+		let bundleResult: BundleResult;
+		try {
+			bundleResult = await bundleCode(resolvedFiles);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return err(
+				"BUNDLE_FAILED",
+				`Bundle failed: ${message}`,
+				"Check that your imports are valid. The remote MCP supports ESM packages available on esm.sh (hono, zod, itty-router, etc). Complex Node.js packages may not work — use the local Jack CLI instead.",
+			);
+		}
+
+		const bundledSizeBytes = new TextEncoder().encode(bundleResult.code).byteLength;
+		if (bundledSizeBytes > 10_000_000) {
+			return err(
+				"SIZE_LIMIT",
+				`Bundled output too large (${Math.round(bundledSizeBytes / 1_000_000)}MB). Workers have a 10MB limit.`,
+				"For large projects, use the local Jack CLI.",
+			);
+		}
+
+		const sourceZip = zipSync(
+			Object.fromEntries(
+				Object.entries(resolvedFiles).map(([p, c]) => [p, new TextEncoder().encode(c)]),
+			),
+		);
+
+		const manifest = createManifest(compatibility_flags);
+		const bundleZip = createBundleZip(bundleResult.code);
+
+		let targetProjectId = project_id;
+		let projectUrl: string | undefined;
+
+		if (!targetProjectId) {
+			const name = project_name || `mcp-${Date.now().toString(36)}`;
+			const createResult = await client.createProject(name);
+			targetProjectId = createResult.project.id;
+			projectUrl = createResult.url;
+		}
+
+		const fileCount = Object.keys(resolvedFiles).length;
+		const deployment = await client.uploadDeployment(
+			targetProjectId,
+			manifest,
+			bundleZip,
+			`Deployed via remote MCP from ${fileCount} source file(s)`,
+			sourceZip,
+		);
+
+		if (!projectUrl) {
+			try {
+				const { project } = await client.getProject(targetProjectId);
+				projectUrl = `https://${project.slug}.runjack.xyz`;
+			} catch {
+				projectUrl = undefined;
+			}
+		}
+
+		console.log(
+			JSON.stringify({
+				event: "deploy",
+				mode: changes ? "changes" : "files",
+				files: fileCount,
+				bundle_size: bundleResult.code.length,
+			}),
+		);
+
+		const data: Record<string, unknown> = {
 			project_id: targetProjectId,
 			deployment_id: deployment.id,
 			status: deployment.status,
 			url: projectUrl,
-			files_bundled: Object.keys(files).length,
-			bundle_size_bytes: bundleResult.code.length,
-			timing,
-		},
-	};
+		};
 
-	if (bundleResult.warnings.length > 0) {
-		(result.data as Record<string, unknown>).warnings = bundleResult.warnings;
+		if (bundleResult.warnings.length > 0) {
+			data.warnings = bundleResult.warnings;
+		}
+
+		return ok(data);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return err("DEPLOY_FAILED", `Deployment failed: ${message}`);
 	}
-
-	return {
-		content: [
-			{
-				type: "text" as const,
-				text: JSON.stringify(result, null, 2),
-			},
-		],
-	};
 }

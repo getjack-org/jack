@@ -9,6 +9,12 @@ routes = [
 
 [vars]
 CONTROL_PLANE_URL = "https://control.getjack.org"
+WORKOS_CLIENT_ID = "client_01KD3D0QAQF4YXP4ZS8DX00CW6"
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "f3491bee7a7d490885ef1c2844a20218"
+preview_id = "78f68a586bf74aba8fa1b1165fc8b3b3"
 
 [[rules]]
 type = "CompiledWasm"

@@ -14,20 +14,12 @@ async function ensureInitialized(): Promise<void> {
 	await initPromise;
 }
 
-/**
- * Detect the entrypoint from the files map.
- * Checks common patterns: src/index.ts, src/index.js, index.ts, index.js,
- * or reads `main` from package.json.
- */
 function detectEntrypoint(files: Record<string, string>): string {
-	// Check package.json main field
 	if (files["package.json"]) {
 		try {
 			const pkg = JSON.parse(files["package.json"]);
 			if (pkg.main && files[pkg.main]) return pkg.main;
-		} catch {
-			// ignore parse errors
-		}
+		} catch {}
 	}
 
 	const candidates = [
@@ -44,7 +36,6 @@ function detectEntrypoint(files: Record<string, string>): string {
 		if (files[candidate]) return candidate;
 	}
 
-	// Fallback: first .ts or .js file
 	const firstSource = Object.keys(files).find(
 		(f) => f.endsWith(".ts") || f.endsWith(".js") || f.endsWith(".tsx"),
 	);
@@ -55,9 +46,6 @@ function detectEntrypoint(files: Record<string, string>): string {
 	);
 }
 
-/**
- * Normalize a path by resolving relative segments.
- */
 function resolvePath(dir: string, relative: string): string {
 	const parts = dir ? dir.split("/") : [];
 	for (const segment of relative.split("/")) {
@@ -70,9 +58,6 @@ function resolvePath(dir: string, relative: string): string {
 	return parts.join("/");
 }
 
-/**
- * Parse dependencies from package.json if it exists in the files map.
- */
 function parseDependencies(files: Record<string, string>): Record<string, string> {
 	if (!files["package.json"]) return {};
 	try {
@@ -83,14 +68,10 @@ function parseDependencies(files: Record<string, string>): Record<string, string
 	}
 }
 
-/**
- * esbuild plugin that serves files from an in-memory map.
- */
 function virtualFsPlugin(files: Record<string, string>): esbuild.Plugin {
 	return {
 		name: "virtual-fs",
 		setup(build) {
-			// Mark the entrypoint as virtual
 			build.onResolve({ filter: /.*/ }, (args) => {
 				if (args.kind === "entry-point") {
 					return { path: args.path, namespace: "virtual" };
@@ -98,7 +79,6 @@ function virtualFsPlugin(files: Record<string, string>): esbuild.Plugin {
 				return undefined;
 			});
 
-			// Resolve relative imports within virtual files
 			build.onResolve({ filter: /^\./ }, (args) => {
 				if (args.namespace !== "virtual") return undefined;
 
@@ -107,19 +87,16 @@ function virtualFsPlugin(files: Record<string, string>): esbuild.Plugin {
 					: "";
 				const resolved = resolvePath(dir, args.path);
 
-				// Try exact match
 				if (files[resolved]) {
 					return { path: resolved, namespace: "virtual" };
 				}
 
-				// Try with extensions
 				for (const ext of [".ts", ".tsx", ".js", ".jsx", ".json"]) {
 					if (files[resolved + ext]) {
 						return { path: resolved + ext, namespace: "virtual" };
 					}
 				}
 
-				// Try index files
 				for (const ext of [".ts", ".tsx", ".js", ".jsx"]) {
 					const indexPath = `${resolved}/index${ext}`;
 					if (files[indexPath]) {
@@ -130,7 +107,6 @@ function virtualFsPlugin(files: Record<string, string>): esbuild.Plugin {
 				return undefined;
 			});
 
-			// Load virtual files
 			build.onLoad({ filter: /.*/, namespace: "virtual" }, (args) => {
 				const content = files[args.path];
 				if (content === undefined) {
@@ -155,46 +131,36 @@ function virtualFsPlugin(files: Record<string, string>): esbuild.Plugin {
 	};
 }
 
-/**
- * esbuild plugin that resolves bare npm specifiers via esm.sh CDN.
- * Uses version pins from package.json dependencies when available.
- */
+/** Resolves bare npm specifiers via esm.sh CDN with version pins from package.json. */
 function esmShPlugin(deps: Record<string, string>): esbuild.Plugin {
 	return {
 		name: "esm-sh",
 		setup(build) {
-			// Resolve bare specifiers (non-relative, non-virtual)
 			build.onResolve({ filter: /^[^./]/ }, (args) => {
-				// Let virtual-fs handle entry points and relative imports
 				if (args.namespace === "virtual" && args.kind === "entry-point") {
 					return undefined;
 				}
 
-				// Skip node: builtins — mark as external
 				if (args.path.startsWith("node:")) {
 					return { path: args.path, external: true };
 				}
 
-				// Parse package name (handle scoped packages like @hono/zod-validator)
 				const parts = args.path.split("/");
 				const pkgName = args.path.startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
 				const subpath = args.path.startsWith("@")
 					? parts.slice(2).join("/")
 					: parts.slice(1).join("/");
 
-				// Use pinned version from package.json, or "latest"
 				const version = deps[pkgName] || "latest";
 				const cleanVersion = version.replace(/^[\^~>=<\s]+/, "");
 
 				let url = `https://esm.sh/${pkgName}@${cleanVersion}`;
 				if (subpath) url += `/${subpath}`;
-				// Target workers-compatible output
 				url += "?target=es2022";
 
 				return { path: url, namespace: "cdn" };
 			});
 
-			// Fetch CDN modules
 			build.onLoad({ filter: /.*/, namespace: "cdn" }, async (args) => {
 				const response = await fetch(args.path, {
 					headers: { "User-Agent": "jack-mcp-bundler/1.0" },
@@ -212,19 +178,16 @@ function esmShPlugin(deps: Record<string, string>): esbuild.Plugin {
 				return { contents, loader: "js" };
 			});
 
-			// Resolve imports within CDN-fetched code
 			build.onResolve({ filter: /.*/, namespace: "cdn" }, (args) => {
 				if (args.path.startsWith("https://")) {
 					return { path: args.path, namespace: "cdn" };
 				}
 				if (args.path.startsWith("/")) {
-					// Absolute path on esm.sh
 					return {
 						path: `https://esm.sh${args.path}`,
 						namespace: "cdn",
 					};
 				}
-				// Relative import within CDN module
 				try {
 					const url = new URL(args.path, args.importer);
 					return { path: url.href, namespace: "cdn" };
@@ -248,10 +211,6 @@ export interface BundleResult {
 	warnings: string[];
 }
 
-/**
- * Bundle source files into a single Worker-compatible ESM JS string.
- * Resolves npm imports via esm.sh CDN.
- */
 export async function bundleCode(files: Record<string, string>): Promise<BundleResult> {
 	await ensureInitialized();
 
@@ -262,10 +221,10 @@ export async function bundleCode(files: Record<string, string>): Promise<BundleR
 		entryPoints: [entrypoint],
 		bundle: true,
 		format: "esm",
-		platform: "browser", // Closest to Workers runtime
+		platform: "browser",
 		target: "es2022",
 		write: false,
-		minify: false, // Keep readable for debugging
+		minify: false,
 		plugins: [virtualFsPlugin(files), esmShPlugin(deps)],
 	});
 

@@ -8,6 +8,7 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@cloudflare/workers-oauth-provider": "^0.2.3",
 		"@modelcontextprotocol/sdk": "^1.25.1",
 		"esbuild-wasm": "^0.25.0",
 		"fflate": "^0.8.2",

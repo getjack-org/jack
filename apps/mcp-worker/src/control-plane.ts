@@ -65,7 +65,7 @@ export class ControlPlaneClient {
 		return this.jsonFetch("/projects");
 	}
 
-	async getProject(projectId: string): Promise<{ project: ManagedProject }> {
+	async getProject(projectId: string): Promise<{ project: ManagedProject; url: string }> {
 		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}`);
 	}
 
@@ -130,6 +130,7 @@ export class ControlPlaneClient {
 		manifest: object,
 		bundleZip: Uint8Array,
 		message?: string,
+		sourceZip?: Uint8Array,
 	): Promise<DeploymentInfo> {
 		const formData = new FormData();
 
@@ -143,6 +144,10 @@ export class ControlPlaneClient {
 
 		if (message) {
 			formData.append("message", message);
+		}
+
+		if (sourceZip) {
+			formData.append("source", new Blob([sourceZip], { type: "application/zip" }), "source.zip");
 		}
 
 		const response = await this.fetch(
@@ -188,6 +193,86 @@ export class ControlPlaneClient {
 				Accept: "text/event-stream",
 			},
 			signal,
+		});
+	}
+
+	async getSourceTree(
+		projectId: string,
+	): Promise<{ files: Array<{ path: string; size: number; type: string }>; total_files: number }> {
+		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/source/tree`);
+	}
+
+	async getSourceFile(projectId: string, path: string): Promise<string> {
+		const response = await this.fetch(
+			`/projects/${encodeURIComponent(projectId)}/source/file?path=${encodeURIComponent(path)}`,
+		);
+		if (!response.ok) {
+			const body = await response.text();
+			let message: string;
+			try {
+				const parsed = JSON.parse(body);
+				message = parsed.message || parsed.error || body;
+			} catch {
+				message = body;
+			}
+			throw new Error(`Source file error (${response.status}): ${message}`);
+		}
+		return response.text();
+	}
+
+	async getAllSourceFiles(projectId: string): Promise<Record<string, string>> {
+		const { files: tree } = await this.getSourceTree(projectId);
+		const fileEntries = tree.filter((f) => f.type === "file");
+
+		const results: Record<string, string> = {};
+		for (let i = 0; i < fileEntries.length; i += 10) {
+			const batch = fileEntries.slice(i, i + 10);
+			const contents = await Promise.all(batch.map((f) => this.getSourceFile(projectId, f.path)));
+			for (let j = 0; j < batch.length; j++) {
+				results[batch[j].path] = contents[j];
+			}
+		}
+		return results;
+	}
+
+	async createDatabase(
+		projectId: string,
+		name?: string,
+		bindingName?: string,
+	): Promise<{ resource: { id: string; name: string; binding_name: string } }> {
+		const body: Record<string, string> = {};
+		if (name) body.name = name;
+		if (bindingName) body.binding_name = bindingName;
+		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/resources/d1`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	}
+
+	async listDatabases(
+		projectId: string,
+	): Promise<{ resources: Array<{ id: string; type: string; name: string }> }> {
+		const { resources } = await this.getProjectResources(projectId);
+		return { resources: resources.filter((r) => r.type === "d1") };
+	}
+
+	async executeSql(projectId: string, sql: string, params?: unknown[]): Promise<unknown> {
+		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/database/execute`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ sql, params }),
+		});
+	}
+
+	async rollbackProject(
+		projectId: string,
+		deploymentId?: string,
+	): Promise<{ deployment: DeploymentInfo }> {
+		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/rollback`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(deploymentId ? { deployment_id: deploymentId } : {}),
 		});
 	}
 }

@@ -1,32 +1,18 @@
 import type { ControlPlaneClient } from "../control-plane.ts";
+import { type McpToolResult, err, ok } from "../utils.ts";
 
 export async function getLogs(
 	client: ControlPlaneClient,
 	projectId: string,
-): Promise<{
-	content: Array<{ type: "text"; text: string }>;
-}> {
+): Promise<McpToolResult> {
 	const sessionResult = await client.startLogSession(projectId);
 
 	if (!sessionResult.success || !sessionResult.stream?.url) {
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({
-						success: false,
-						error: "Failed to start log session",
-					}),
-				},
-			],
-		};
+		return err("INTERNAL_ERROR", "Failed to start log session");
 	}
 
-	// Collect logs from SSE stream for a short window
 	const logs: string[] = [];
 	const controller = new AbortController();
-
-	// Collect for up to 5 seconds
 	const timeout = setTimeout(() => controller.abort(), 5000);
 
 	try {
@@ -34,21 +20,11 @@ export async function getLogs(
 
 		if (!response.ok || !response.body) {
 			clearTimeout(timeout);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: JSON.stringify({
-							success: true,
-							data: {
-								session_id: sessionResult.session.id,
-								logs: [],
-								note: "Log stream started but no entries yet. Logs appear when the worker receives requests.",
-							},
-						}),
-					},
-				],
-			};
+			return ok({
+				session_id: sessionResult.session.id,
+				logs: [],
+				note: "Log stream started but no entries yet. Logs appear when the worker receives requests.",
+			});
 		}
 
 		const reader = response.body.getReader();
@@ -71,7 +47,6 @@ export async function getLogs(
 					}
 				}
 
-				// Cap at 50 entries
 				if (logs.length >= 50) break;
 			}
 		} catch {
@@ -85,23 +60,8 @@ export async function getLogs(
 		clearTimeout(timeout);
 	}
 
-	return {
-		content: [
-			{
-				type: "text" as const,
-				text: JSON.stringify(
-					{
-						success: true,
-						data: {
-							session_id: sessionResult.session.id,
-							log_count: logs.length,
-							logs,
-						},
-					},
-					null,
-					2,
-				),
-			},
-		],
-	};
+	return ok({
+		session_id: sessionResult.session.id,
+		logs,
+	});
 }

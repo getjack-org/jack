@@ -1,61 +1,42 @@
+import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { Hono } from "hono";
-import { cors } from "hono/cors";
+import { AuthHandler } from "./auth-handler.ts";
 import { createMcpServer } from "./server.ts";
-import type { Bindings } from "./types.ts";
+import type { Bindings, Props } from "./types.ts";
 
-const app = new Hono<{ Bindings: Bindings }>();
+type HandlerWithFetch = ExportedHandler & Pick<Required<ExportedHandler>, "fetch">;
 
-app.use(
-	"/*",
-	cors({
-		origin: "*",
-		allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
-		allowHeaders: ["Content-Type", "Authorization", "Accept"],
-	}),
-);
-
-// Health check (no auth)
-app.get("/", (c) => {
-	return c.json({ service: "jack-mcp", status: "ok", version: "1.0.0" });
-});
-
-// MCP endpoint — stateless, one server+transport per request
-// Uses WebStandardStreamableHTTPServerTransport which works with Web Standard Request/Response
-// (not Node.js IncomingMessage/ServerResponse), compatible with Cloudflare Workers.
-app.all("/mcp", async (c) => {
-	// Auth check (only for POST — GET and DELETE return 405 via the transport)
-	if (c.req.method === "POST") {
-		const authHeader = c.req.header("Authorization");
-		if (!authHeader?.startsWith("Bearer ")) {
-			return c.json(
+const mcpHandler = {
+	async fetch(
+		request: Request,
+		env: Bindings,
+		ctx: ExecutionContext,
+	): Promise<Response> {
+		if (request.method !== "POST") {
+			return Response.json(
 				{
 					jsonrpc: "2.0",
-					error: { code: -32001, message: "Missing or invalid Authorization header" },
+					error: { code: -32000, message: "Only POST is supported." },
 					id: null,
 				},
-				401,
+				{ status: 405 },
 			);
 		}
 
-		const token = authHeader.slice(7);
+		const props = (ctx as ExecutionContext & { props: Props }).props;
+		const token = props.accessToken;
 		const start = Date.now();
-
-		// Create a fresh server + transport per request (stateless)
-		const server = createMcpServer(token, c.env);
+		const server = createMcpServer(token, env);
 
 		const transport = new WebStandardStreamableHTTPServerTransport({
-			sessionIdGenerator: undefined, // Stateless mode — no session tracking
-			enableJsonResponse: true, // Return JSON instead of SSE for simple request/response
+			sessionIdGenerator: undefined,
+			enableJsonResponse: true,
 		});
 
 		await server.connect(transport);
 
 		try {
-			// handleRequest takes a Web Standard Request and returns a Web Standard Response
-			const response = await transport.handleRequest(c.req.raw);
-
-			// Close transport after handling
+			const response = await transport.handleRequest(request);
 			await transport.close();
 			await server.close();
 
@@ -64,6 +45,7 @@ app.all("/mcp", async (c) => {
 					event: "mcp_request",
 					duration_ms: Date.now() - start,
 					status: response.status,
+					auth: props.userId ? "oauth" : "token",
 				}),
 			);
 
@@ -81,29 +63,51 @@ app.all("/mcp", async (c) => {
 					error: message,
 				}),
 			);
-			return c.json(
+
+			return Response.json(
 				{
 					jsonrpc: "2.0",
 					error: { code: -32603, message: `Internal error: ${message}` },
 					id: null,
 				},
-				500,
+				{ status: 500 },
 			);
 		}
-	}
+	},
+};
 
-	// GET and DELETE: stateless servers don't support SSE resumption or session termination
-	return c.json(
-		{
-			jsonrpc: "2.0",
-			error: {
-				code: -32000,
-				message: "This server operates in stateless mode. Only POST is supported.",
-			},
-			id: null,
-		},
-		405,
-	);
+export default new OAuthProvider({
+	apiRoute: "/mcp",
+	apiHandler: mcpHandler as HandlerWithFetch,
+	defaultHandler: AuthHandler as unknown as HandlerWithFetch,
+	authorizeEndpoint: "/authorize",
+	tokenEndpoint: "/token",
+	clientRegistrationEndpoint: "/register",
+	async resolveExternalToken({ token }) {
+		if (token.startsWith("jkt_")) {
+			return {
+				props: { accessToken: token, userId: "", email: "" },
+			};
+		}
+
+		const parts = token.split(".");
+		if (parts.length === 3) {
+			try {
+				const payload = JSON.parse(atob(parts[1]));
+				if (payload.sub || payload.email) {
+					return {
+						props: {
+							accessToken: token,
+							userId: payload.sub || "",
+							email: payload.email || "",
+						},
+					};
+				}
+			} catch {
+				// Not a valid JWT
+			}
+		}
+
+		return null;
+	},
 });
-
-export default app;
