@@ -23,7 +23,26 @@ interface ManifestData {
 	bindings: Record<string, unknown>;
 }
 
-function createManifest(compatibilityFlags?: string[]): ManifestData {
+async function createManifest(
+	client: ControlPlaneClient,
+	projectId: string | undefined,
+	compatibilityFlags?: string[],
+): Promise<ManifestData> {
+	const bindings: Record<string, unknown> = {};
+
+	if (projectId) {
+		try {
+			const { resources } = await client.getProjectResources(projectId);
+			for (const r of resources) {
+				if (r.resource_type === "d1" && r.binding_name) {
+					bindings.d1 = { binding: r.binding_name };
+				}
+			}
+		} catch {
+			// Project may not exist yet (new deploy) — skip
+		}
+	}
+
 	return {
 		version: 1,
 		entrypoint: "worker.js",
@@ -31,7 +50,7 @@ function createManifest(compatibilityFlags?: string[]): ManifestData {
 		compatibility_flags: compatibilityFlags || ["nodejs_compat"],
 		module_format: "esm",
 		built_at: new Date().toISOString(),
-		bindings: {},
+		bindings,
 	};
 }
 
@@ -167,7 +186,6 @@ export async function deploy(
 			),
 		);
 
-		const manifest = createManifest(compatibility_flags);
 		const bundleZip = createBundleZip(bundleResult.code);
 
 		let targetProjectId = project_id;
@@ -179,6 +197,8 @@ export async function deploy(
 			targetProjectId = createResult.project.id;
 			projectUrl = createResult.url;
 		}
+
+		const manifest = await createManifest(client, targetProjectId, compatibility_flags);
 
 		const fileCount = Object.keys(resolvedFiles).length;
 		const deployment = await client.uploadDeployment(
