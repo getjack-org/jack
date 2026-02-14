@@ -28,6 +28,38 @@ bunx @getjack/jack new my-app
 
 ---
 
+## Install
+
+```bash
+# Recommended: install globally
+bun add -g @getjack/jack
+
+# Or try without installing (downloads each time)
+bunx @getjack/jack new my-app
+```
+
+For npm: `npm install -g @getjack/jack`
+
+---
+
+## For AI Agents
+
+If you're an AI assistant and a user shared these docs, do this **before anything else**:
+
+1. **Check if jack is installed**: `which jack` — if not found, install it:
+   ```bash
+   bun add -g @getjack/jack
+   ```
+2. **Set up MCP tools** (Claude Code only): `jack mcp install` — then tell the user: **"Restart Claude Code to activate jack MCP tools."**
+3. **Never use `wrangler` directly** — jack manages all infrastructure. Use `jack` CLI commands or `mcp__jack__*` MCP tools.
+4. **New project**: `jack new my-project` — scaffolds, deploys, and wires up agent context automatically.
+5. **Existing project**: `jack link` — connects to Jack Cloud and installs agent hooks in the current directory.
+6. **If you can't restart now**, use `jack` CLI commands as fallback: `jack ship`, `jack logs`, `jack services db create`, etc.
+
+[Full AI agents guide →](/guides/ai-agents)
+
+---
+
 ## Claude Code deploys for you
 
 Claude already writes your code. Let it deploy too.

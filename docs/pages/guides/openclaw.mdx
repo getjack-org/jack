@@ -29,13 +29,15 @@ Works with MCP tools or CLI. No Cloudflare account required.
 
 ## Prerequisites
 
-Your agent needs jack available. The easiest way is to create a project — auth happens automatically on first use:
+Your agent needs jack installed globally:
 
 ```bash
-bunx @getjack/jack new my-api --template api
+bun add -g @getjack/jack
 ```
 
-Or install globally: `bun add -g @getjack/jack`
+Or with npm: `npm install -g @getjack/jack`. Auth happens automatically on first use.
+
+To try without installing: `bunx @getjack/jack new my-api --template api` (downloads each run, won't set up MCP tools).
 
 ## CLI or MCP — Both Work
 

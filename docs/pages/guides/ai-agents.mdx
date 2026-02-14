@@ -2,14 +2,67 @@
 
 jack is the deployment platform for Claude Code. Here's how to get the most out of it.
 
+## Bootstrap (Read This First)
+
+If you're an AI agent helping a user with jack, or a user setting up jack for their AI agent:
+
+### 1. Install jack
+
+```bash
+bun add -g @getjack/jack
+```
+
+Or: `npm install -g @getjack/jack`. A global install is required for MCP tools and agent hooks. `bunx` works for one-off project creation but won't set up MCP.
+
+### 2. Set up MCP tools
+
+```bash
+jack mcp install
+```
+
+This configures jack as an MCP server for Claude Code and Claude Desktop. **You must restart your AI agent / IDE after this step** — MCP servers are loaded at startup.
+
+### 3. Use jack, not wrangler
+
+Jack manages all infrastructure. **Never run `wrangler` commands directly.** Use `jack` CLI commands or `mcp__jack__*` MCP tools instead.
+
+### 4. Create or link a project
+
+```bash
+jack new my-project           # new project (scaffolds + deploys + installs agent hooks)
+jack link                     # existing directory (connects to Jack Cloud + installs hooks)
+```
+
+### If you can't restart your session
+
+MCP tools won't be available until the next session. Use `jack` CLI commands as a fallback.
+
+First, get project context into the current conversation:
+
+```bash
+jack mcp context
+```
+
+This outputs the project's URL, deploy mode, services (databases, storage, etc.), and usage instructions. Then use CLI commands:
+
+```bash
+jack ship                     # deploy
+jack logs                     # production logs
+jack services db create       # add a database
+jack services db query "..."  # query database
+jack info                     # project status
+```
+
+---
+
 ## Claude Code
 
-Claude Code is the primary agent for jack. Every project includes context files (`AGENTS.md`, `CLAUDE.md`) and there's a built-in MCP server for direct deployment and service management.
+Claude Code is the primary agent for jack. Every project includes context files (`AGENTS.md`, `CLAUDE.md`) and a built-in MCP server for direct deployment and service management.
 
 ### Quick Start
 
 ```bash
-bunx @getjack/jack new my-app
+jack new my-app
 ```
 
 Claude Code can then use the MCP tools or CLI to deploy, add databases, and manage your project.
@@ -20,10 +73,12 @@ jack includes a built-in [Model Context Protocol](https://modelcontextprotocol.i
 
 ### Setup
 
-The MCP server is configured automatically when you run `jack new`. It adds configuration to:
+The MCP server is configured automatically when you run `jack new` or `jack mcp install`. It adds configuration to:
 
 - Claude Code (`~/.claude/mcp.json`)
 - Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`)
+
+**Restart your IDE / agent after setup.** MCP servers are loaded at startup — changes won't take effect until the next session.
 
 To manually start the MCP server:
 
