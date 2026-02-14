@@ -20,11 +20,11 @@ export function createMcpServer(token: string, env: Bindings): McpServer {
 	server.tool(
 		"deploy",
 		`Deploy to Jack Cloud. Three modes (pass exactly one):
-- files: Full file set for initial deploy or full redeploy. Pass all source files as { "path": "content" }.
+- files: Full file set for a brand-new project. Pass all source files as { "path": "content" }. Only use this for the FIRST deploy of a new custom project.
 - template: Deploy a prebuilt template (hello, api, miniapp, nextjs, saas). Always creates a new project.
-- changes: Partial update to an existing project. Pass only changed files as { "path": "new content" } or { "path": null } to delete. Requires project_id.
+- changes: Partial update to an existing project. Pass only changed/added files as { "path": "new content" } or { "path": null } to delete. Requires project_id.
 
-Use files for new custom projects, changes for iterating on existing ones, template for starting from a prebuilt app.`,
+IMPORTANT: To update an existing project, ALWAYS use changes mode with project_id. Do NOT use files mode for existing projects — it replaces all files and may create a duplicate project. If the user mentions an existing app, call list_projects first to find its project_id, then use changes.`,
 		{
 			files: z
 				.record(z.string(), z.string())
@@ -62,7 +62,7 @@ Use files for new custom projects, changes for iterating on existing ones, templ
 
 	server.tool(
 		"list_projects",
-		"List all projects deployed to Jack Cloud for the authenticated user.",
+		"List all projects deployed to Jack Cloud for the authenticated user. Call this FIRST when the user refers to an existing app or project to find its project_id before using other tools.",
 		{},
 		async () => {
 			return listProjects(client);
@@ -116,7 +116,7 @@ Use files for new custom projects, changes for iterating on existing ones, templ
 
 	server.tool(
 		"create_database",
-		"Create a D1 SQL database for a project. Accessible in Worker code via env.DB (or custom binding_name). Requires a redeploy after creation for the binding to activate. Use list_databases first to check if one already exists.",
+		"Create a D1 SQL database for a project. Accessible in Worker code via env.DB (or custom binding_name). After creation, redeploy the project with deploy(changes) for the binding to activate. Use list_databases first to check if one already exists.",
 		{
 			project_id: z.string().describe("The project ID"),
 			name: z.string().optional().describe("Database name (auto-generated if omitted)"),
