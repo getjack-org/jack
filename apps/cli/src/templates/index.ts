@@ -23,6 +23,8 @@ export const BUILTIN_TEMPLATES = [
 	"nextjs-shadcn",
 	"nextjs-clerk",
 	"nextjs-auth",
+	"telegram-bot",
+	"tanstack-ai",
 ];
 
 /**
@@ -89,6 +91,7 @@ async function loadTemplate(name: string): Promise<Template> {
 		envVars?: Template["envVars"];
 		capabilities?: Template["capabilities"];
 		requires?: Template["requires"];
+		crons?: Template["crons"];
 		hooks?: Template["hooks"];
 		agentContext?: Template["agentContext"];
 		intent?: Template["intent"];
@@ -107,6 +110,7 @@ async function loadTemplate(name: string): Promise<Template> {
 		envVars: metadata.envVars,
 		capabilities: metadata.capabilities,
 		requires: metadata.requires,
+		crons: metadata.crons,
 		hooks: metadata.hooks,
 		agentContext: metadata.agentContext,
 		intent: metadata.intent,
@@ -246,6 +250,7 @@ async function fetchRemoteTemplate(identifier: string): Promise<Template | null>
 		envVars: metadata.envVars as Template["envVars"],
 		capabilities: metadata.capabilities as Template["capabilities"],
 		requires: metadata.requires as Template["requires"],
+		crons: metadata.crons as Template["crons"],
 		hooks: metadata.hooks as Template["hooks"],
 		agentContext: metadata.agentContext as Template["agentContext"],
 		intent: metadata.intent as Template["intent"],

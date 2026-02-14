@@ -35,6 +35,9 @@ export type HookAction =
 			onMissing?: "fail" | "prompt" | "generate";
 			promptMessage?: string;
 			generateCommand?: string;
+			perProject?: boolean; // Skip global secrets store — always prompt or generate fresh
+			validateCommand?: string; // Shell command to validate prompted value ({{value}} is substituted)
+			validateError?: string; // Error message shown when validation fails
 	  }
 	| {
 			action: "stripe-setup";
@@ -92,6 +95,7 @@ export interface Template {
 	envVars?: EnvVar[]; // environment variables (non-secret config)
 	capabilities?: Capability[]; // infrastructure requirements (deprecated, use requires)
 	requires?: ServiceTypeKey[]; // service requirements (DB, KV, CRON, QUEUE, STORAGE)
+	crons?: string[]; // cron expressions to auto-create (managed mode only)
 	description?: string; // for help text
 	hooks?: TemplateHooks;
 	agentContext?: AgentContext;

@@ -466,17 +466,19 @@ const actionHandlers: {
 		const onMissing = action.onMissing ?? "fail";
 
 		if (action.source === "secret") {
-			const result = await checkSecretExists(action.key, context.projectDir);
-			if (result.exists) {
-				// Found existing secret - show feedback for prompt/generate modes
-				if (onMissing === "prompt" || onMissing === "generate") {
-					ui.success(`Using saved ${action.key}`);
+			// perProject secrets skip the global store — always prompt or generate fresh
+			if (!action.perProject) {
+				const result = await checkSecretExists(action.key, context.projectDir);
+				if (result.exists) {
+					if (onMissing === "prompt" || onMissing === "generate") {
+						ui.success(`Using saved ${action.key}`);
+					}
+					return true;
 				}
-				return true;
 			}
 
-			// Secret doesn't exist - handle based on onMissing mode
-			if (!result.exists) {
+			// Secret missing (or perProject) — handle based on onMissing mode
+			{
 				// Handle onMissing: "generate" - run command and save output
 				if (onMissing === "generate" && action.generateCommand) {
 					const message = action.message ?? `Generating ${action.key}...`;
@@ -535,6 +537,25 @@ const actionHandlers: {
 
 					if (isCancel(value) || !value || !value.trim()) {
 						return false;
+					}
+
+					// Validate the value if a validateCommand is provided
+					if (action.validateCommand) {
+						const cmd = action.validateCommand.replace(/\{\{value\}\}/g, value.trim());
+						try {
+							const proc = Bun.spawn(["sh", "-c", cmd], {
+								stdout: "pipe",
+								stderr: "pipe",
+							});
+							await proc.exited;
+							if (proc.exitCode !== 0) {
+								ui.error(action.validateError ?? `Invalid value for ${action.key}`);
+								return false;
+							}
+						} catch {
+							ui.error(action.validateError ?? `Could not validate ${action.key}`);
+							return false;
+						}
 					}
 
 					await saveSecrets([{ key: action.key, value: value.trim(), source: "prompted" }]);

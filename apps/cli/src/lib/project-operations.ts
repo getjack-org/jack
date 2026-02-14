@@ -1414,6 +1414,20 @@ export async function createProject(
 				workerUrl = remoteResult.runjackUrl;
 				reporter.success(`Created: ${workerUrl}`);
 			}
+
+			// Auto-provision cron schedules from template
+			if (template.crons?.length && remoteResult) {
+				for (const expression of template.crons) {
+					try {
+						const { createCronSchedule } = await import("./control-plane.ts");
+						await createCronSchedule(remoteResult.projectId, expression);
+						reporter.success(`Cron schedule created: ${expression}`);
+					} catch (err) {
+						reporter.warn(`Failed to create cron schedule: ${expression}`);
+						debug("Cron provisioning failed:", err);
+					}
+				}
+			}
 		} else {
 			// BYO mode: deploy via wrangler
 
