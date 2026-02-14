@@ -191,8 +191,8 @@ export async function deploy(
 
 		if (!projectUrl) {
 			try {
-				const { project } = await client.getProject(targetProjectId);
-				projectUrl = `https://${project.slug}.runjack.xyz`;
+				const { url } = await client.getProject(targetProjectId);
+				projectUrl = url;
 			} catch {
 				projectUrl = undefined;
 			}
