@@ -1,6 +1,6 @@
 import { MeteringService } from "../metering";
 import { QuotaManager } from "../quota";
-import type { Env, VectorizeProxyRequest, VectorizeUsageDataPoint } from "../types";
+import type { Env, ProxyIdentity, VectorizeProxyRequest, VectorizeUsageDataPoint } from "../types";
 
 /**
  * Vectorize Proxy Handler - receives fetch requests from user workers and forwards to real Vectorize.
@@ -11,7 +11,7 @@ import type { Env, VectorizeProxyRequest, VectorizeUsageDataPoint } from "../typ
  * 3. Proxy checks quota, forwards to real Vectorize, meters usage
  * 4. Response returned to user worker
  *
- * Context (project_id, org_id) is passed via X-Jack-* headers.
+ * Identity is resolved by ProxyEntrypoint (ctx.props preferred, headers as fallback).
  */
 export class VectorizeHandler {
 	private quotaManager: QuotaManager;
@@ -41,19 +41,12 @@ export class VectorizeHandler {
 	/**
 	 * Handle Vectorize proxy request
 	 */
-	async handleRequest(request: Request, ctx: ExecutionContext): Promise<Response> {
-		// Extract context from headers (same as AI handler)
-		const projectId = request.headers.get("X-Jack-Project-ID");
-		const orgId = request.headers.get("X-Jack-Org-ID");
-
-		if (!projectId || !orgId) {
-			return Response.json(
-				{
-					error: "Missing project context headers. This proxy is for jack cloud deployments only.",
-				},
-				{ status: 400 },
-			);
-		}
+	async handleRequest(
+		request: Request,
+		ctx: ExecutionContext,
+		identity: ProxyIdentity,
+	): Promise<Response> {
+		const { projectId, orgId } = identity;
 
 		// Rate limit check (burst protection - 100 req/10s per project)
 		const { success: rateLimitOk } = await this.rateLimiter.limit({ key: projectId });
@@ -88,15 +81,15 @@ export class VectorizeHandler {
 		// Route to appropriate handler based on operation
 		switch (operation) {
 			case "query":
-				return this.handleQuery(projectId, orgId, index_name, params, ctx);
+				return this.handleQuery(projectId, orgId, index_name, params, ctx, identity.source);
 			case "upsert":
-				return this.handleUpsert(projectId, orgId, index_name, params, ctx);
+				return this.handleUpsert(projectId, orgId, index_name, params, ctx, identity.source);
 			case "deleteByIds":
-				return this.handleDeleteByIds(projectId, orgId, index_name, params, ctx);
+				return this.handleDeleteByIds(projectId, orgId, index_name, params, ctx, identity.source);
 			case "getByIds":
-				return this.handleGetByIds(projectId, orgId, index_name, params, ctx);
+				return this.handleGetByIds(projectId, orgId, index_name, params, ctx, identity.source);
 			case "describe":
-				return this.handleDescribe(projectId, orgId, index_name, ctx);
+				return this.handleDescribe(projectId, orgId, index_name, ctx, identity.source);
 			default:
 				return Response.json({ error: "Unknown operation" }, { status: 400 });
 		}
@@ -111,6 +104,7 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
+		identitySource: string,
 	): Promise<Response> {
 		// Check query quota
 		const quota = await this.quotaManager.checkVectorizeQueryQuota(projectId);
@@ -150,6 +144,7 @@ export class VectorizeHandler {
 						index_name: indexName,
 						operation: "query",
 						duration_ms: duration,
+						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeQueries(projectId);
 				})(),
@@ -179,6 +174,7 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
+		identitySource: string,
 	): Promise<Response> {
 		// Check mutation quota
 		const quota = await this.quotaManager.checkVectorizeMutationQuota(projectId);
@@ -213,6 +209,7 @@ export class VectorizeHandler {
 						operation: "upsert",
 						duration_ms: duration,
 						vector_count: upsertParams.vectors.length,
+						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeMutations(projectId);
 				})(),
@@ -243,6 +240,7 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
+		identitySource: string,
 	): Promise<Response> {
 		// Check mutation quota
 		const quota = await this.quotaManager.checkVectorizeMutationQuota(projectId);
@@ -277,6 +275,7 @@ export class VectorizeHandler {
 						operation: "deleteByIds",
 						duration_ms: duration,
 						vector_count: deleteParams.ids.length,
+						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeMutations(projectId);
 				})(),
@@ -307,6 +306,7 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
+		identitySource: string,
 	): Promise<Response> {
 		// getByIds is a read operation, uses query quota
 		const quota = await this.quotaManager.checkVectorizeQueryQuota(projectId);
@@ -341,6 +341,7 @@ export class VectorizeHandler {
 						operation: "getByIds",
 						duration_ms: duration,
 						vector_count: getParams.ids.length,
+						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeQueries(projectId);
 				})(),
@@ -370,6 +371,7 @@ export class VectorizeHandler {
 		orgId: string,
 		indexName: string,
 		ctx: ExecutionContext,
+		identitySource: string,
 	): Promise<Response> {
 		// describe is free, no quota check needed
 		const startTime = Date.now();
@@ -385,6 +387,7 @@ export class VectorizeHandler {
 						index_name: indexName,
 						operation: "describe",
 						duration_ms: duration,
+						identity_source: identitySource,
 					}),
 				),
 			);

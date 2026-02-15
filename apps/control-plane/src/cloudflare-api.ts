@@ -326,11 +326,19 @@ export type DispatchBindingType =
 	| "ai"
 	| "secret_text"
 	| "kv_namespace"
-	| "service";
+	| "service"
+	| "durable_object_namespace"
+	| "analytics_engine";
 
 export interface DispatchScriptBinding {
 	type: DispatchBindingType | string; // Allow known types plus custom strings for extensibility
 	name: string;
+	/** Service binding target (for type: "service") */
+	service?: string;
+	/** Named entrypoint on the target worker (for type: "service" with WorkerEntrypoint) */
+	entrypoint?: string;
+	/** Deploy-time props injected into ctx.props — unforgeable by user code */
+	props?: Record<string, unknown>;
 	[key: string]: unknown; // Additional binding-specific properties
 }
 
@@ -616,6 +624,11 @@ export class CloudflareClient {
 			compatibilityFlags?: string[];
 			mainModule?: string;
 			additionalModules?: WorkerModule[];
+			migrations?: {
+				old_tag: string;
+				new_tag: string;
+				steps: Array<Record<string, unknown>>;
+			};
 		},
 	): Promise<void> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}`;
@@ -634,6 +647,9 @@ export class CloudflareClient {
 		}
 		if (options?.compatibilityFlags?.length) {
 			metadata.compatibility_flags = options.compatibilityFlags;
+		}
+		if (options?.migrations) {
+			metadata.migrations = options.migrations;
 		}
 		formData.append("metadata", JSON.stringify(metadata));
 
@@ -658,6 +674,19 @@ export class CloudflareClient {
 		};
 
 		const response = await fetch(url, fetchOptions);
+
+		if (response.status === 412) {
+			const data = (await response.json()) as CloudflareResponse<unknown>;
+			const errorMsg =
+				data.errors?.map((e) => e.message).join(", ") || "Migration tag precondition failed";
+			const error: Error & { status?: number; cfErrors?: unknown } = new Error(
+				`Cloudflare API error (412): ${errorMsg}`,
+			);
+			error.status = 412;
+			error.cfErrors = data.errors;
+			throw error;
+		}
+
 		const data = (await response.json()) as CloudflareResponse<unknown>;
 
 		if (!data.success) {
@@ -727,6 +756,35 @@ export class CloudflareClient {
 					: "Unknown Cloudflare API error";
 			throw new Error(`Cloudflare API error: ${errorMsg}`);
 		}
+	}
+
+	/**
+	 * Gets the current settings (including bindings) for a dispatch namespace script.
+	 */
+	async getDispatchScriptSettings(
+		namespace: string,
+		scriptName: string,
+	): Promise<{ bindings: DispatchScriptBinding[] }> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/settings`;
+
+		const response = await fetch(url, {
+			method: "GET",
+			headers: { Authorization: `Bearer ${this.apiToken}` },
+		});
+
+		const data = (await response.json()) as CloudflareResponse<{
+			bindings?: DispatchScriptBinding[];
+		}>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Failed to get dispatch script settings: ${errorMsg}`);
+		}
+
+		return { bindings: data.result?.bindings ?? [] };
 	}
 
 	/**
@@ -1519,6 +1577,11 @@ export class CloudflareClient {
 			mainModule?: string;
 			assetConfig?: AssetConfig;
 			additionalModules?: WorkerModule[];
+			migrations?: {
+				old_tag: string;
+				new_tag: string;
+				steps: Array<Record<string, unknown>>;
+			};
 		},
 	): Promise<void> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}`;
@@ -1557,6 +1620,9 @@ export class CloudflareClient {
 		if (options?.compatibilityFlags?.length) {
 			metadata.compatibility_flags = options.compatibilityFlags;
 		}
+		if (options?.migrations) {
+			metadata.migrations = options.migrations;
+		}
 
 		formData.append("metadata", JSON.stringify(metadata));
 
@@ -1581,6 +1647,19 @@ export class CloudflareClient {
 		};
 
 		const response = await fetch(url, fetchOptions);
+
+		if (response.status === 412) {
+			const data = (await response.json()) as CloudflareResponse<unknown>;
+			const errorMsg =
+				data.errors?.map((e) => e.message).join(", ") || "Migration tag precondition failed";
+			const error: Error & { status?: number; cfErrors?: unknown } = new Error(
+				`Cloudflare API error (412): ${errorMsg}`,
+			);
+			error.status = 412;
+			error.cfErrors = data.errors;
+			throw error;
+		}
+
 		const data = (await response.json()) as CloudflareResponse<unknown>;
 
 		if (!data.success) {
@@ -1590,6 +1669,39 @@ export class CloudflareClient {
 					: "Unknown Cloudflare API error";
 			throw new Error(`Failed to upload dispatch script with assets: ${errorMsg}`);
 		}
+	}
+
+	// =====================================================
+	// GraphQL Analytics API
+	// =====================================================
+
+	/**
+	 * Query Cloudflare GraphQL Analytics API.
+	 * Docs: https://developers.cloudflare.com/analytics/graphql-api/
+	 */
+	async queryGraphQL(query: string, variables: Record<string, unknown>): Promise<GraphQLResponse> {
+		const url = "https://api.cloudflare.com/client/v4/graphql";
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ query, variables }),
+		});
+
+		if (!response.ok) {
+			const text = await response.text();
+			throw new Error(`GraphQL query failed: ${response.status} ${text}`);
+		}
+
+		const result = (await response.json()) as GraphQLResponse;
+		if (result.errors?.length) {
+			throw new Error(`GraphQL errors: ${result.errors.map((e) => e.message).join(", ")}`);
+		}
+
+		return result;
 	}
 
 	// =====================================================
@@ -2048,6 +2160,12 @@ export class CloudflareClient {
 			.replace("Z", "")
 			.replace(/\.\d{3}$/, "");
 	}
+}
+
+// GraphQL types
+export interface GraphQLResponse {
+	data: Record<string, unknown>;
+	errors?: Array<{ message: string; path?: string[] }>;
 }
 
 // Analytics Engine types

@@ -11,6 +11,19 @@ export interface Env {
 	VECTORIZE_MUTATION_QUOTA_LIMIT?: string; // Default: 10000
 }
 
+/** Props injected at deploy time via service binding ctx.props — unforgeable by user code */
+export interface ProxyProps {
+	projectId: string;
+	orgId: string;
+}
+
+/** Resolved identity with source tracking for monitoring */
+export interface ProxyIdentity {
+	projectId: string;
+	orgId: string;
+	source: "props" | "headers";
+}
+
 export interface AIProxyContext {
 	project_id: string;
 	org_id: string;
@@ -29,6 +42,7 @@ export interface AIUsageDataPoint {
 	duration_ms: number;
 	tokens_in?: number;
 	tokens_out?: number;
+	identity_source?: string;
 }
 
 export interface VectorizeUsageDataPoint {
