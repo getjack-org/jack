@@ -285,8 +285,24 @@ app.all("/*", async (c) => {
 			}),
 		);
 
-		console.error("Worker fetch failed:", error);
-		return c.json({ error: "Service temporarily unavailable" }, 503);
+		const errMsg = error instanceof Error ? error.message : String(error);
+		console.error("Worker fetch failed:", errMsg);
+
+		// Detect binding-related errors (e.g. DO enforcement removed bindings)
+		const isBindingError =
+			errMsg.includes("is not a function") ||
+			errMsg.includes("Cannot read properties of undefined") ||
+			errMsg.includes("is not defined");
+
+		return c.json(
+			{
+				error: "Service temporarily unavailable",
+				...(isBindingError && {
+					hint: "A required binding may have been removed due to resource limits. Re-deploy to restore.",
+				}),
+			},
+			503,
+		);
 	}
 });
 

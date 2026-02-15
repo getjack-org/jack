@@ -2992,6 +2992,11 @@ api.delete("/projects/:projectId", async (c) => {
 		deletionResults.push({ resource: "kv_cache", success: false, error: String(error) });
 	}
 
+	// Clean up DO enforcement state (if any)
+	await c.env.DB.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
+		.bind(projectId)
+		.run();
+
 	// Soft-delete in DB
 	const now = new Date().toISOString();
 	await c.env.DB.prepare(

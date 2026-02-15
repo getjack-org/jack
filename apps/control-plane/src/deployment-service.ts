@@ -650,6 +650,12 @@ export class DeploymentService {
 
 			// Refresh cache after successful deployment
 			await this.refreshProjectCache(projectId);
+
+			// Clear DO enforcement state — rollback restores all bindings
+			await this.db
+				.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
+				.bind(projectId)
+				.run();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Rollback failed";
 			await this.db
