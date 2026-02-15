@@ -738,6 +738,11 @@ export class DeploymentService {
 		});
 		bindings.push({
 			type: "plain_text",
+			name: "__JACK_PROJECT_ID",
+			text: projectId,
+		});
+		bindings.push({
+			type: "plain_text",
 			name: "__JACK_ORG_ID",
 			text: orgId,
 		});
@@ -1037,6 +1042,12 @@ export class DeploymentService {
 
 			// Refresh cache after successful deployment
 			await this.refreshProjectCache(input.projectId);
+
+			// Clear DO enforcement state — a fresh deploy restores all bindings
+			await this.db
+				.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
+				.bind(input.projectId)
+				.run();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
 			await this.db

@@ -200,7 +200,17 @@ app.all("/*", async (c) => {
 
 	// Forward to tenant worker
 	try {
-		const worker = env.TENANT_DISPATCH.get(config.worker_name);
+		const isPaid = config.tier === "pro" || config.tier === "team";
+		const worker = env.TENANT_DISPATCH.get(
+			config.worker_name,
+			{},
+			{
+				limits: {
+					cpuMs: isPaid ? 50 : 10,
+					subRequests: isPaid ? 200 : 50,
+				},
+			},
+		);
 
 		// Strip sensitive headers before forwarding to tenant workers
 		const sanitizedHeaders = new Headers(c.req.raw.headers);
@@ -241,7 +251,13 @@ app.all("/*", async (c) => {
 			}),
 		);
 
-		// Clone response to add rate limit headers
+		// WebSocket upgrade: return original response to preserve the webSocket property.
+		// Wrapping in new Response() drops it, breaking Durable Object WebSocket connections.
+		if (response.status === 101) {
+			return response;
+		}
+
+		// Normal response: wrap to add rate limit headers
 		const headers = new Headers(response.headers);
 		headers.set("X-RateLimit-Limit", limit.toString());
 		headers.set("X-RateLimit-Remaining", rateLimit.remaining.toString());

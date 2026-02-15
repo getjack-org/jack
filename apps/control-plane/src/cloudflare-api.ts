@@ -2131,6 +2131,89 @@ export class CloudflareClient {
 		return { metrics, by_model };
 	}
 
+	/**
+	 * Get DO usage metrics for a project from Analytics Engine (jack_do_usage dataset).
+	 * Returns per-class, per-method breakdown.
+	 */
+	async getProjectDoUsageFromAE(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<{
+		by_class: Array<{
+			class_name: string;
+			methods: Record<string, { requests: number; wall_time_ms: number }>;
+			totals: { requests: number; wall_time_ms: number };
+		}>;
+		totals: { requests: number; wall_time_ms: number };
+	}> {
+		const escapedProjectId = this.escapeSQL(projectId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+
+		const sql = `
+			SELECT
+				blob2 AS class_name,
+				blob3 AS method,
+				SUM(double1 * _sample_interval) AS wall_time_ms,
+				SUM(_sample_interval) AS requests
+			FROM jack_do_usage
+			WHERE index1 = '${escapedProjectId}'
+				AND timestamp >= toDateTime('${formattedFrom}')
+				AND timestamp <= toDateTime('${formattedTo}')
+			GROUP BY blob2, blob3
+			ORDER BY wall_time_ms DESC
+		`;
+
+		const result = await this.queryAnalyticsEngine(sql);
+
+		// Group by class
+		const classMap = new Map<
+			string,
+			{
+				methods: Record<string, { requests: number; wall_time_ms: number }>;
+				totals: { requests: number; wall_time_ms: number };
+			}
+		>();
+
+		let totalRequests = 0;
+		let totalWallTime = 0;
+
+		for (const row of result.data) {
+			const className = String(row.class_name || "unknown");
+			const method = String(row.method || "unknown");
+			const requests = Math.round(Number(row.requests) || 0);
+			const wallTimeMs = Math.round(Number(row.wall_time_ms) || 0);
+
+			totalRequests += requests;
+			totalWallTime += wallTimeMs;
+
+			if (!classMap.has(className)) {
+				classMap.set(className, {
+					methods: {},
+					totals: { requests: 0, wall_time_ms: 0 },
+				});
+			}
+
+			const entry = classMap.get(className);
+			if (entry) {
+				entry.methods[method] = { requests, wall_time_ms: wallTimeMs };
+				entry.totals.requests += requests;
+				entry.totals.wall_time_ms += wallTimeMs;
+			}
+		}
+
+		const by_class = Array.from(classMap.entries()).map(([class_name, data]) => ({
+			class_name,
+			...data,
+		}));
+
+		return {
+			by_class,
+			totals: { requests: totalRequests, wall_time_ms: totalWallTime },
+		};
+	}
+
 	private parseDimensionBreakdown(
 		result: AnalyticsEngineQueryResult,
 		dimensionKey: string,

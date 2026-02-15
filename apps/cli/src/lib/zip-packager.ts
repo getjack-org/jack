@@ -51,7 +51,17 @@ export interface ManifestData {
 			dimensions?: number;
 			metric?: string;
 		}>;
+		durable_objects?: Array<{
+			binding: string;
+			class_name: string;
+		}>;
 	};
+	migrations?: Array<{
+		tag: string;
+		new_sqlite_classes?: string[];
+		deleted_classes?: string[];
+		renamed_classes?: Array<{ from: string; to: string }>;
+	}>;
 }
 
 export type ZipProgressCallback = (current: number, total: number) => void;
@@ -238,6 +248,14 @@ function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindi
 		}));
 	}
 
+	// Extract Durable Object bindings
+	if (config?.durable_objects?.bindings && config.durable_objects.bindings.length > 0) {
+		bindings.durable_objects = config.durable_objects.bindings.map((dob) => ({
+			binding: dob.name,
+			class_name: dob.class_name,
+		}));
+	}
+
 	// Return undefined if no bindings were extracted
 	return Object.keys(bindings).length > 0 ? bindings : undefined;
 }
@@ -304,6 +322,16 @@ export async function packageForDeploy(
 		built_at: new Date().toISOString(),
 		bindings: extractBindingsFromConfig(config),
 	};
+
+	// Extract migrations (top-level, for DO support)
+	if (config?.migrations?.length) {
+		manifest.migrations = config.migrations.map((m) => ({
+			tag: m.tag,
+			new_sqlite_classes: m.new_sqlite_classes,
+			deleted_classes: m.deleted_classes,
+			renamed_classes: m.renamed_classes,
+		}));
+	}
 
 	await Bun.write(manifestPath, JSON.stringify(manifest, null, 2));
 
