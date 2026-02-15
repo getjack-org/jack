@@ -1279,11 +1279,13 @@ export class DeploymentService {
 			);
 		} else {
 			// Standard deployment without assets
+			// When DO wrapper is the main module, include the original mainModule as
+			// an additional module (so the wrapper can import from it) but don't include
+			// the wrapper itself (it's already sent as the main script content).
 			const allModules = doWrapperModule
 				? [
 						...additionalModules,
 						{ name: mainModule.name, content: mainModule.content, mimeType: mainModule.mimeType },
-						doWrapperModule,
 					]
 				: additionalModules;
 
@@ -1412,13 +1414,13 @@ export class DeploymentService {
 		let finalWorkerCode = workerCode;
 
 		if (doWrapperModule) {
-			// Add original main module as additional module
+			// Add original main module as additional module (so wrapper can import it).
+			// Don't add the wrapper itself — it's sent as the main script content.
 			allModules.push({
 				name: mainModuleName ?? "worker.js",
 				content: new TextEncoder().encode(workerCode),
 				mimeType: "application/javascript+module",
 			});
-			allModules.push(doWrapperModule);
 			finalMainModule = "__jack_do_meter.mjs";
 			finalWorkerCode = new TextDecoder().decode(doWrapperModule.content);
 		}
@@ -1502,9 +1504,14 @@ export class DeploymentService {
 		};
 
 		const additionalModules: WorkerModule[] = [];
+		const moduleExtensions = new Set(["js", "mjs", "cjs", "wasm", "json"]);
 		for (const [filename, content] of Object.entries(files)) {
 			if (filename === entrypointName || content.length === 0) {
 				continue;
+			}
+			const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+			if (!moduleExtensions.has(ext)) {
+				continue; // Skip README.md, .map files, etc.
 			}
 			additionalModules.push({
 				name: filename,
