@@ -110,9 +110,12 @@ export async function getValidAccessToken(): Promise<string | null> {
 }
 
 export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
-	const token = await getValidAccessToken();
+	let token = await getValidAccessToken();
 	if (!token) {
-		throw new Error("Not authenticated. Run 'jack login' or set JACK_API_TOKEN.");
+		// Auto-trigger login flow (works in both CLI and MCP contexts —
+		// all output goes to stderr, interactive prompts auto-skip when not TTY)
+		const { requireAuthOrLogin } = await import("./guard.ts");
+		token = await requireAuthOrLogin();
 	}
 
 	return fetch(url, {
