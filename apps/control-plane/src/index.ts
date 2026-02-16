@@ -1419,6 +1419,68 @@ api.get("/orgs/:orgId/ai-usage", async (c) => {
 	}
 });
 
+// Project-level Vectorize usage (operations, indexes)
+api.get("/projects/:projectId/vectorize-usage", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const rangeResult = resolveAnalyticsRange(c);
+
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
+
+	const { range } = rangeResult;
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const cacheKey = `ae:vec:project:${projectId}:${range.from}:${range.to}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const { metrics, by_index, by_operation } = await cfClient.getProjectVectorizeUsage(
+			projectId,
+			range.from,
+			range.to,
+		);
+
+		const response = {
+			project_id: projectId,
+			range,
+			vectorize_metrics: metrics,
+			by_index,
+			by_operation,
+		};
+
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+			expirationTtl: 300,
+		});
+
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Analytics query failed";
+		console.error("Vectorize Analytics Engine query error:", error);
+		return c.json({ error: "upstream_error", message }, 502);
+	}
+});
+
 // ==================== BILLING ROUTES ====================
 
 // GET /v1/orgs/:orgId/billing - Get billing status with entitlements

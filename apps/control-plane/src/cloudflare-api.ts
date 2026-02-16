@@ -2214,6 +2214,108 @@ export class CloudflareClient {
 		};
 	}
 
+	/**
+	 * Get Vectorize usage metrics for a project from Analytics Engine.
+	 * Queries metering wrapper logs where blob3 = 'vectorize'.
+	 *
+	 * Schema (from __jack_meter.mjs):
+	 * - index1: project_id
+	 * - blob1: org_id
+	 * - blob2: "free" (tier)
+	 * - blob3: "vectorize"
+	 * - blob4: index_name
+	 * - blob5: operation (query, insert, upsert, deleteByIds, getByIds, describe)
+	 * - double1: 1 (call count)
+	 * - double2: duration_ms
+	 * - double3: vector count (mutations only)
+	 */
+	async getProjectVectorizeUsage(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<{
+		metrics: VectorizeUsageMetrics;
+		by_index: VectorizeUsageByIndex[];
+		by_operation: VectorizeUsageByOperation[];
+	}> {
+		const escapedProjectId = this.escapeSQL(projectId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+		const whereClause = `index1 = '${escapedProjectId}' AND blob3 = 'vectorize' AND timestamp >= toDateTime('${formattedFrom}') AND timestamp <= toDateTime('${formattedTo}')`;
+
+		const metricsQuery = `
+			SELECT
+				SUM(_sample_interval) as total_requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as total_vectors
+			FROM jack_usage
+			WHERE ${whereClause}
+		`;
+
+		const byIndexQuery = `
+			SELECT
+				blob4 as index_name,
+				SUM(_sample_interval) as requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as vectors
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob4
+			ORDER BY requests DESC
+		`;
+
+		const byOpQuery = `
+			SELECT
+				blob5 as operation,
+				SUM(_sample_interval) as requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as vectors
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob5
+			ORDER BY requests DESC
+		`;
+
+		const [metricsResult, byIndexResult, byOpResult] = await Promise.all([
+			this.queryAnalyticsEngine(metricsQuery),
+			this.queryAnalyticsEngine(byIndexQuery),
+			this.queryAnalyticsEngine(byOpQuery),
+		]);
+
+		const row = metricsResult.data[0] || {};
+		const totalRequests = Math.round(Number(row.total_requests) || 0);
+
+		const metrics: VectorizeUsageMetrics = {
+			total_requests: totalRequests,
+			avg_latency_ms: Math.round((Number(row.avg_latency_ms) || 0) * 100) / 100,
+			total_vectors: Math.round(Number(row.total_vectors) || 0),
+		};
+
+		const by_index: VectorizeUsageByIndex[] = byIndexResult.data.map((r) => {
+			const requests = Math.round(Number(r.requests) || 0);
+			return {
+				index_name: String(r.index_name || "unknown"),
+				requests,
+				avg_latency_ms: Math.round((Number(r.avg_latency_ms) || 0) * 100) / 100,
+				vectors: Math.round(Number(r.vectors) || 0),
+				percentage: totalRequests > 0 ? Math.round((requests / totalRequests) * 10000) / 100 : 0,
+			};
+		});
+
+		const by_operation: VectorizeUsageByOperation[] = byOpResult.data.map((r) => {
+			const requests = Math.round(Number(r.requests) || 0);
+			return {
+				operation: String(r.operation || "unknown"),
+				requests,
+				avg_latency_ms: Math.round((Number(r.avg_latency_ms) || 0) * 100) / 100,
+				vectors: Math.round(Number(r.vectors) || 0),
+				percentage: totalRequests > 0 ? Math.round((requests / totalRequests) * 10000) / 100 : 0,
+			};
+		});
+
+		return { metrics, by_index, by_operation };
+	}
+
 	private parseDimensionBreakdown(
 		result: AnalyticsEngineQueryResult,
 		dimensionKey: string,
@@ -2289,5 +2391,27 @@ export interface AIUsageByModel {
 	tokens_in: number;
 	tokens_out: number;
 	total_tokens: number;
+	percentage: number;
+}
+
+export interface VectorizeUsageMetrics {
+	total_requests: number;
+	avg_latency_ms: number;
+	total_vectors: number;
+}
+
+export interface VectorizeUsageByIndex {
+	index_name: string;
+	requests: number;
+	avg_latency_ms: number;
+	vectors: number;
+	percentage: number;
+}
+
+export interface VectorizeUsageByOperation {
+	operation: string;
+	requests: number;
+	avg_latency_ms: number;
+	vectors: number;
 	percentage: number;
 }
