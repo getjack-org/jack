@@ -7,7 +7,7 @@ import {
 	createAssetManifest,
 	getMimeType,
 } from "./cloudflare-api";
-import { generateDoWrapper } from "./do-wrapper";
+import { generateMeteringWrapper } from "./metering-wrapper";
 import { ProvisioningService } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
 import type { Bindings, Deployment, Project, ProjectConfig, Resource } from "./types";
@@ -733,8 +733,12 @@ export class DeploymentService {
 		projectId: string,
 		orgId: string,
 		intent: ManifestData["bindings"],
-	): Promise<DispatchScriptBinding[]> {
+	): Promise<{
+		bindings: DispatchScriptBinding[];
+		vectorizeBindingMap: Array<{ bindingName: string; indexName: string }>;
+	}> {
 		const bindings: DispatchScriptBinding[] = [];
+		const vectorizeBindingMap: Array<{ bindingName: string; indexName: string }> = [];
 
 		// Always add PROJECT_ID as plain_text binding (for user code)
 		bindings.push({
@@ -744,7 +748,7 @@ export class DeploymentService {
 		});
 
 		if (!intent) {
-			return bindings;
+			return { bindings, vectorizeBindingMap };
 		}
 
 		// Resolve D1 binding
@@ -919,16 +923,18 @@ export class DeploymentService {
 					name: vecIntent.binding,
 					index_name: indexName,
 				});
+
+				vectorizeBindingMap.push({ bindingName: vecIntent.binding, indexName });
 			}
 
-			// Service binding to proxy with ctx.props identity injection for Vectorize metering
-			bindings.push({
-				type: "service",
-				name: "__VECTORIZE_PROXY",
-				service: "jack-binding-proxy",
-				entrypoint: "ProxyEntrypoint",
-				props: { projectId, orgId },
-			});
+			// Inject AE binding for vectorize metering
+			if (vectorizeBindingMap.length > 0) {
+				bindings.push({
+					type: "analytics_engine",
+					name: "__JACK_VECTORIZE_USAGE",
+					dataset: "jack_usage",
+				});
+			}
 		}
 
 		// Resolve Durable Object bindings
@@ -964,7 +970,7 @@ export class DeploymentService {
 			}
 		}
 
-		return bindings;
+		return { bindings, vectorizeBindingMap };
 	}
 
 	/**
@@ -1179,7 +1185,7 @@ export class DeploymentService {
 		if (!project) throw new Error(`Project ${projectId} not found`);
 
 		// Resolve bindings from manifest intent (uses manifest bindings, not legacy getBindingsForProject)
-		const bindings = await this.resolveBindingsFromManifest(
+		const { bindings, vectorizeBindingMap } = await this.resolveBindingsFromManifest(
 			projectId,
 			project.org_id,
 			manifest.bindings,
@@ -1192,29 +1198,34 @@ export class DeploymentService {
 		);
 		const workerCode = new TextDecoder().decode(mainModule.content);
 
-		// Generate DO wrapper if manifest has DO bindings
-		let doWrapperModule: WorkerModule | null = null;
+		// Generate metering wrapper if DO or vectorize bindings present
+		let wrapperModule: WorkerModule | null = null;
 		let doMigrations:
 			| { old_tag: string; new_tag: string; steps: Array<Record<string, unknown>> }
 			| undefined;
 
-		if (manifest.bindings?.durable_objects?.length) {
-			// Generate the DO metering wrapper
-			const classNames = manifest.bindings.durable_objects.map((dob) => dob.class_name);
+		const doClassNames = manifest.bindings?.durable_objects?.map((dob) => dob.class_name);
+		const hasDOs = doClassNames && doClassNames.length > 0;
+		// vectorizeBindingMap was collected during binding resolution
+		const hasVectorize = vectorizeBindingMap.length > 0;
 
-			const wrapperSource = generateDoWrapper({
-				classNames,
+		if (hasDOs || hasVectorize) {
+			const wrapperSource = generateMeteringWrapper({
 				originalModule: mainModule.name,
 				projectId,
 				orgId: project.org_id,
+				doClassNames: hasDOs ? doClassNames : undefined,
+				vectorizeBindings: hasVectorize ? vectorizeBindingMap : undefined,
 			});
 
-			doWrapperModule = {
-				name: "__jack_do_meter.mjs",
+			wrapperModule = {
+				name: "__jack_meter.mjs",
 				content: new TextEncoder().encode(wrapperSource),
 				mimeType: "application/javascript+module",
 			};
+		}
 
+		if (hasDOs) {
 			// Compute migration metadata (skip on rollback — classes already exist)
 			if (!options?.skipMigrations) {
 				const manifestMigrations = manifest.migrations;
@@ -1270,24 +1281,24 @@ export class DeploymentService {
 				precomputedAssetManifest,
 				mainModule.name,
 				additionalModules,
-				doWrapperModule,
+				wrapperModule,
 				doMigrations,
 			);
 		} else {
 			// Standard deployment without assets
-			// When DO wrapper is the main module, include the original mainModule as
+			// When metering wrapper is the main module, include the original mainModule as
 			// an additional module (so the wrapper can import from it) but don't include
 			// the wrapper itself (it's already sent as the main script content).
-			const allModules = doWrapperModule
+			const allModules = wrapperModule
 				? [
 						...additionalModules,
 						{ name: mainModule.name, content: mainModule.content, mimeType: mainModule.mimeType },
 					]
 				: additionalModules;
 
-			const uploadMainModule = doWrapperModule ? "__jack_do_meter.mjs" : mainModule.name;
-			const uploadCode = doWrapperModule
-				? new TextDecoder().decode(doWrapperModule.content)
+			const uploadMainModule = wrapperModule ? "__jack_meter.mjs" : mainModule.name;
+			const uploadCode = wrapperModule
+				? new TextDecoder().decode(wrapperModule.content)
 				: workerCode;
 
 			await this.cfClient.uploadDispatchScript(
@@ -1331,7 +1342,7 @@ export class DeploymentService {
 		precomputedManifest?: AssetManifest,
 		mainModuleName?: string,
 		additionalModules?: WorkerModule[],
-		doWrapperModule?: WorkerModule | null,
+		wrapperModule?: WorkerModule | null,
 		doMigrations?: { old_tag: string; new_tag: string; steps: Array<Record<string, unknown>> },
 	): Promise<void> {
 		// 1. Unzip assets
@@ -1404,12 +1415,12 @@ export class DeploymentService {
 		// 5. Upload script with assets binding
 		const assetsBinding = manifest.bindings?.assets?.binding || "ASSETS";
 
-		// Handle DO wrapper: wrapper becomes main_module, original main becomes additional
+		// Handle metering wrapper: wrapper becomes main_module, original main becomes additional
 		const allModules = additionalModules ? [...additionalModules] : [];
 		let finalMainModule = mainModuleName;
 		let finalWorkerCode = workerCode;
 
-		if (doWrapperModule) {
+		if (wrapperModule) {
 			// Add original main module as additional module (so wrapper can import it).
 			// Don't add the wrapper itself — it's sent as the main script content.
 			allModules.push({
@@ -1417,8 +1428,8 @@ export class DeploymentService {
 				content: new TextEncoder().encode(workerCode),
 				mimeType: "application/javascript+module",
 			});
-			finalMainModule = "__jack_do_meter.mjs";
-			finalWorkerCode = new TextDecoder().decode(doWrapperModule.content);
+			finalMainModule = "__jack_meter.mjs";
+			finalWorkerCode = new TextDecoder().decode(wrapperModule.content);
 		}
 
 		await this.cfClient.uploadDispatchScriptWithAssets(

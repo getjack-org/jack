@@ -2,7 +2,7 @@ name = "jack-binding-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
-# This worker proxies AI and Vectorize calls from user workers
+# This worker proxies AI calls from user workers
 # It meters usage and enforces quotas
 
 # Rate limiting for burst protection (100 requests per 10 seconds per project)
@@ -11,19 +11,10 @@ name = "AI_RATE_LIMITER"
 namespace_id = "1001"
 simple = { limit = 100, period = 10 }
 
-[[ratelimits]]
-name = "VECTORIZE_RATE_LIMITER"
-namespace_id = "1002"
-simple = { limit = 100, period = 10 }
-
 # Environment variables
 [vars]
 # AI quota per project per day (default: 1000)
 AI_QUOTA_LIMIT = "1000"
-
-# Vectorize quotas per project per day
-VECTORIZE_QUERY_QUOTA_LIMIT = "33000"
-VECTORIZE_MUTATION_QUOTA_LIMIT = "10000"
 
 # KV namespace for quota tracking
 [[kv_namespaces]]
@@ -38,9 +29,3 @@ dataset = "jack_usage"
 # Real AI binding - this worker forwards calls to the actual AI service
 [ai]
 binding = "AI"
-
-# Vectorize binding - this worker forwards calls to the actual Vectorize service
-# Note: The actual index binding is configured per-tenant via service binding
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "jack-shared-index"

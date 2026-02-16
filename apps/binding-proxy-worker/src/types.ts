@@ -5,10 +5,6 @@ export interface Env {
 	AI_RATE_LIMITER: RateLimit;
 	// Configurable quota limits (for testing and tier support)
 	AI_QUOTA_LIMIT?: string; // Default: 1000
-	VECTORIZE: VectorizeIndex;
-	VECTORIZE_RATE_LIMITER: RateLimit;
-	VECTORIZE_QUERY_QUOTA_LIMIT?: string; // Default: 33000
-	VECTORIZE_MUTATION_QUOTA_LIMIT?: string; // Default: 10000
 }
 
 /** Props injected at deploy time via service binding ctx.props — unforgeable by user code */
@@ -41,19 +37,4 @@ export interface AIUsageDataPoint {
 	duration_ms: number;
 	tokens_in?: number;
 	tokens_out?: number;
-}
-
-export interface VectorizeUsageDataPoint {
-	project_id: string;
-	org_id: string;
-	index_name: string;
-	operation: "query" | "upsert" | "deleteByIds" | "getByIds" | "describe";
-	duration_ms: number;
-	vector_count?: number;
-}
-
-export interface VectorizeProxyRequest {
-	operation: "query" | "upsert" | "deleteByIds" | "getByIds" | "describe";
-	index_name: string;
-	params: unknown; // operation-specific parameters
 }
