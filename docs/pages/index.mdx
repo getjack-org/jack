@@ -15,8 +15,10 @@
 One command. Claude creates the project, provisions the database, and ships it to a live URL.
 
 ```bash
-bunx @getjack/jack new my-app
+curl -fsSL docs.getjack.org/install.sh | bash
 ```
+
+Installs the CLI, configures MCP for your AI editor. Auth happens on first deploy.
 
 <div style={{ display: 'flex', gap: '1.5rem', margin: '1.5rem 0', fontSize: '1.1rem' }}>
   <a href="https://www.npmjs.com/package/@getjack/jack">npm</a>
@@ -93,7 +95,7 @@ Manage everything without a browser.
 
 ## Claude deploys autonomously via MCP
 
-jack installs as an MCP server. Claude Code can create projects, ship updates, and query databases without you typing a command.
+The install script configures jack as a local MCP server with 27 tools. Claude Code can create projects, ship updates, query databases, and manage infrastructure.
 
 ```
 create_project    name: "my-api", template: "api"
@@ -102,12 +104,12 @@ execute_sql       sql: "SELECT * FROM users", allow_write: false
 tail_logs         duration_ms: 5000
 ```
 
-The MCP server is configured automatically on first run. [AI agents guide →](/guides/ai-agents)
+[AI agents guide →](/guides/ai-agents)
 
-Want to teach your agent the full workflow upfront? Install the [OpenClaw skill](https://clawhub.ai/hellno/jack-cloud):
+**No terminal?** Use the remote MCP server from Claude Desktop or Claude.ai:
 
-```bash
-npx clawhub@latest install jack-cloud
+```
+https://mcp.getjack.org/mcp
 ```
 
 ---
