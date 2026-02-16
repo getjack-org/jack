@@ -4,16 +4,26 @@ Deploy your first project in under 2 minutes.
 
 ---
 
+## 0. Install
+
+```bash
+curl -fsSL docs.getjack.org/install.sh | bash
+```
+
+Installs the CLI and configures MCP for your AI editor. Or try without installing: `npx -y @getjack/jack new my-app`
+
+---
+
 ## 1. Create and Deploy
 
-Pick a template and run a single command. No install needed.
+Pick a template and deploy.
 
 ### Option A: API
 
 Build a REST API, webhook handler, or backend service.
 
 ```bash
-bunx @getjack/jack new my-api -t api
+jack new my-api -t api
 ```
 
 **Includes**: Hono router, TypeScript, CORS, health endpoint
@@ -25,7 +35,7 @@ bunx @getjack/jack new my-api -t api
 Build a chatbot with streaming responses using free Cloudflare AI.
 
 ```bash
-bunx @getjack/jack new my-chat -t ai-chat
+jack new my-chat -t ai-chat
 ```
 
 **Includes**: Llama 3 (free), streaming UI, chat history
@@ -37,7 +47,7 @@ bunx @getjack/jack new my-chat -t ai-chat
 Build a Farcaster Frame mini-app with React and database.
 
 ```bash
-bunx @getjack/jack new my-miniapp -t miniapp
+jack new my-miniapp -t miniapp
 ```
 
 **Includes**: React + Vite, D1 database, Neynar API, Tailwind CSS
@@ -51,7 +61,7 @@ bunx @getjack/jack new my-miniapp -t miniapp
 Build a RAG app with AI embeddings and vector search.
 
 ```bash
-bunx @getjack/jack new my-search -t semantic-search
+jack new my-search -t semantic-search
 ```
 
 **Includes**: BGE embeddings (free), Vectorize database, D1 storage, search UI
@@ -63,7 +73,7 @@ bunx @getjack/jack new my-search -t semantic-search
 Not sure? Let jack help you choose:
 
 ```bash
-bunx @getjack/jack new my-app
+jack new my-app
 ```
 
 Jack will prompt you to select a template interactively.
@@ -132,12 +142,12 @@ jack --help
 
 | Template | Command | What You Get |
 |----------|---------|--------------|
-| [api](/templates/api) | `bunx @getjack/jack new my-api -t api` | Hono API with TypeScript |
-| [ai-chat](/templates/ai-chat) | `bunx @getjack/jack new my-chat -t ai-chat` | AI chatbot with streaming |
-| [miniapp](/templates/miniapp) | `bunx @getjack/jack new my-app -t miniapp` | Farcaster Frame mini-app |
-| [semantic-search](/templates/semantic-search) | `bunx @getjack/jack new my-search -t semantic-search` | RAG with vector search |
-| hello | `bunx @getjack/jack new my-app -t hello` | Minimal worker starter |
-| nextjs | `bunx @getjack/jack new my-app -t nextjs` | Next.js on Cloudflare |
+| [api](/templates/api) | `jack new my-api -t api` | Hono API with TypeScript |
+| [ai-chat](/templates/ai-chat) | `jack new my-chat -t ai-chat` | AI chatbot with streaming |
+| [miniapp](/templates/miniapp) | `jack new my-app -t miniapp` | Farcaster Frame mini-app |
+| [semantic-search](/templates/semantic-search) | `jack new my-search -t semantic-search` | RAG with vector search |
+| hello | `jack new my-app -t hello` | Minimal worker starter |
+| nextjs | `jack new my-app -t nextjs` | Next.js on Cloudflare |
 
 ---
 
@@ -152,16 +162,6 @@ jack new my-fork -t username/project-name
 This creates your own copy that you fully control.
 
 ---
-
-## Alternative: Global Install
-
-If you prefer having jack available globally:
-
-```bash
-bun add -g @getjack/jack
-```
-
-Then use `jack new my-app` directly without `bunx`.
 
 ---
 

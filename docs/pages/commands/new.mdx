@@ -10,13 +10,16 @@ jack new [name] [options]
 
 ### First-Time Usage
 
-No install needed — run directly with `bunx`:
+Install jack, then create a project:
 
 ```bash
-bunx @getjack/jack new my-app
+curl -fsSL docs.getjack.org/install.sh | bash
+jack new my-app
 ```
 
-Jack auto-initializes on first run. Auth is handled interactively.
+Or try without installing: `npx -y @getjack/jack new my-app`
+
+Auth is handled automatically on first deploy.
 
 ## Arguments
 

@@ -2,14 +2,20 @@
 
 Get your first project deployed in under 2 minutes.
 
-## Prerequisites
+## Install
 
-- [Bun](https://bun.sh) installed
+```bash
+curl -fsSL docs.getjack.org/install.sh | bash
+```
+
+Installs the CLI, configures MCP for your AI editor. Auth happens on first deploy.
+
+Want to read the script first? `curl -fsSL docs.getjack.org/install.sh | less`
 
 ## Create Your First Project
 
 ```bash
-bunx @getjack/jack new my-app
+jack new my-app
 ```
 
 This will:
@@ -18,7 +24,13 @@ This will:
 3. Install dependencies
 4. Deploy it immediately
 
-Or install globally: `bun add -g @getjack/jack`
+### Try without installing
+
+```bash
+npx -y @getjack/jack new my-app
+```
+
+One-shot, no global install. You won't get MCP integration or a persistent `jack` command.
 
 ## Project Templates
 
