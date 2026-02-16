@@ -86,27 +86,12 @@ export function validateBindings(
 			);
 		}
 
-		// Require nodejs_compat flag
-		const flags = config.compatibility_flags ?? [];
-		if (!flags.includes("nodejs_compat")) {
-			errors.push(
-				`✗ Durable Objects require nodejs_compat flag.\n  Fix: Add "nodejs_compat" to compatibility_flags in wrangler.jsonc.`,
-			);
-		}
-
-		// Require migrations
-		if (!config.migrations?.length) {
-			errors.push(
-				`✗ Durable Object classes require migrations.\n  Fix: Add a migrations section to wrangler.jsonc with new_sqlite_classes.`,
-			);
-		}
-
 		// Only allow new_sqlite_classes (not legacy new_classes)
 		if (config.migrations?.length) {
 			for (const migration of config.migrations) {
-				if ((migration as any).new_classes?.length) {
+				if ((migration as Record<string, unknown>).new_classes) {
 					errors.push(
-						`✗ Only new_sqlite_classes migrations are supported.\n  Fix: Replace new_classes with new_sqlite_classes in wrangler.jsonc.`,
+						"✗ Only new_sqlite_classes migrations are supported.\n  Fix: Replace new_classes with new_sqlite_classes in wrangler.jsonc.",
 					);
 				}
 			}
