@@ -200,7 +200,17 @@ app.all("/*", async (c) => {
 
 	// Forward to tenant worker
 	try {
-		const worker = env.TENANT_DISPATCH.get(config.worker_name);
+		const isPaid = config.tier === "pro" || config.tier === "team";
+		const worker = env.TENANT_DISPATCH.get(
+			config.worker_name,
+			{},
+			{
+				limits: {
+					cpuMs: isPaid ? 50 : 10,
+					subRequests: isPaid ? 200 : 50,
+				},
+			},
+		);
 
 		// Strip sensitive headers before forwarding to tenant workers
 		const sanitizedHeaders = new Headers(c.req.raw.headers);
@@ -241,7 +251,13 @@ app.all("/*", async (c) => {
 			}),
 		);
 
-		// Clone response to add rate limit headers
+		// WebSocket upgrade: return original response to preserve the webSocket property.
+		// Wrapping in new Response() drops it, breaking Durable Object WebSocket connections.
+		if (response.status === 101) {
+			return response;
+		}
+
+		// Normal response: wrap to add rate limit headers
 		const headers = new Headers(response.headers);
 		headers.set("X-RateLimit-Limit", limit.toString());
 		headers.set("X-RateLimit-Remaining", rateLimit.remaining.toString());
@@ -269,8 +285,24 @@ app.all("/*", async (c) => {
 			}),
 		);
 
-		console.error("Worker fetch failed:", error);
-		return c.json({ error: "Service temporarily unavailable" }, 503);
+		const errMsg = error instanceof Error ? error.message : String(error);
+		console.error("Worker fetch failed:", errMsg);
+
+		// Detect binding-related errors (e.g. DO enforcement removed bindings)
+		const isBindingError =
+			errMsg.includes("is not a function") ||
+			errMsg.includes("Cannot read properties of undefined") ||
+			errMsg.includes("is not defined");
+
+		return c.json(
+			{
+				error: "Service temporarily unavailable",
+				...(isBindingError && {
+					hint: "A required binding may have been removed due to resource limits. Re-deploy to restore.",
+				}),
+			},
+			503,
+		);
 	}
 });
 

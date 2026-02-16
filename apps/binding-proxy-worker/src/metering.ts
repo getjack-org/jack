@@ -2,7 +2,7 @@ import { estimateTokenCount } from "tokenx";
 import type { AIUsageDataPoint } from "./types";
 
 /**
- * Metering service for AI and Vectorize usage tracking.
+ * Metering service for AI usage tracking.
  *
  * Writes to the same Analytics Engine dataset (jack_usage) as dispatch-worker,
  * with different blob values to distinguish binding types from HTTP requests.
@@ -12,9 +12,9 @@ import type { AIUsageDataPoint } from "./types";
  * - blobs:
  *   1. org_id
  *   2. tier (always "free" for now)
- *   3. binding_type ("ai" | "vectorize")
- *   4. model (for AI) or index_name (for Vectorize)
- *   5. operation ("run" for AI, "query"/"upsert"/"delete" for Vectorize)
+ *   3. binding_type ("ai")
+ *   4. model
+ *   5. operation ("run" for AI)
  *   6-10. reserved for future use
  * - doubles:
  *   1. count (always 1)
@@ -104,44 +104,6 @@ export class MeteringService {
 		} catch (error) {
 			// Non-fatal: metering failed but request succeeded
 			console.error("Failed to log AI usage:", error);
-		}
-	}
-
-	/**
-	 * Log Vectorize binding call to Analytics Engine
-	 */
-	logVectorizeCall(data: {
-		project_id: string;
-		org_id: string;
-		index_name: string;
-		operation: "query" | "upsert" | "deleteByIds" | "getByIds" | "describe";
-		duration_ms: number;
-		vector_count?: number;
-	}): void {
-		try {
-			this.ae.writeDataPoint({
-				indexes: [data.project_id],
-				blobs: [
-					data.org_id, // blob1
-					"free", // blob2
-					"vectorize", // blob3
-					data.index_name, // blob4
-					data.operation, // blob5
-					"", // blob6-10: reserved
-					"",
-					"",
-					"",
-					"",
-				],
-				doubles: [
-					1, // double1: request count
-					data.duration_ms, // double2: latency
-					data.vector_count || 0, // double3: vector count
-					0, // double4: reserved
-				],
-			});
-		} catch (error) {
-			console.error("Failed to log Vectorize usage:", error);
 		}
 	}
 }

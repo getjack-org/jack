@@ -326,11 +326,19 @@ export type DispatchBindingType =
 	| "ai"
 	| "secret_text"
 	| "kv_namespace"
-	| "service";
+	| "service"
+	| "durable_object_namespace"
+	| "analytics_engine";
 
 export interface DispatchScriptBinding {
 	type: DispatchBindingType | string; // Allow known types plus custom strings for extensibility
 	name: string;
+	/** Service binding target (for type: "service") */
+	service?: string;
+	/** Named entrypoint on the target worker (for type: "service" with WorkerEntrypoint) */
+	entrypoint?: string;
+	/** Deploy-time props injected into ctx.props — unforgeable by user code */
+	props?: Record<string, unknown>;
 	[key: string]: unknown; // Additional binding-specific properties
 }
 
@@ -616,6 +624,11 @@ export class CloudflareClient {
 			compatibilityFlags?: string[];
 			mainModule?: string;
 			additionalModules?: WorkerModule[];
+			migrations?: {
+				old_tag: string;
+				new_tag: string;
+				steps: Array<Record<string, unknown>>;
+			};
 		},
 	): Promise<void> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}`;
@@ -634,6 +647,9 @@ export class CloudflareClient {
 		}
 		if (options?.compatibilityFlags?.length) {
 			metadata.compatibility_flags = options.compatibilityFlags;
+		}
+		if (options?.migrations) {
+			metadata.migrations = options.migrations;
 		}
 		formData.append("metadata", JSON.stringify(metadata));
 
@@ -658,6 +674,19 @@ export class CloudflareClient {
 		};
 
 		const response = await fetch(url, fetchOptions);
+
+		if (response.status === 412) {
+			const data = (await response.json()) as CloudflareResponse<unknown>;
+			const errorMsg =
+				data.errors?.map((e) => e.message).join(", ") || "Migration tag precondition failed";
+			const error: Error & { status?: number; cfErrors?: unknown } = new Error(
+				`Cloudflare API error (412): ${errorMsg}`,
+			);
+			error.status = 412;
+			error.cfErrors = data.errors;
+			throw error;
+		}
+
 		const data = (await response.json()) as CloudflareResponse<unknown>;
 
 		if (!data.success) {
@@ -727,6 +756,35 @@ export class CloudflareClient {
 					: "Unknown Cloudflare API error";
 			throw new Error(`Cloudflare API error: ${errorMsg}`);
 		}
+	}
+
+	/**
+	 * Gets the current settings (including bindings) for a dispatch namespace script.
+	 */
+	async getDispatchScriptSettings(
+		namespace: string,
+		scriptName: string,
+	): Promise<{ bindings: DispatchScriptBinding[] }> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}/settings`;
+
+		const response = await fetch(url, {
+			method: "GET",
+			headers: { Authorization: `Bearer ${this.apiToken}` },
+		});
+
+		const data = (await response.json()) as CloudflareResponse<{
+			bindings?: DispatchScriptBinding[];
+		}>;
+
+		if (!data.success) {
+			const errorMsg =
+				data.errors?.length > 0
+					? data.errors.map((e) => e.message).join(", ")
+					: "Unknown Cloudflare API error";
+			throw new Error(`Failed to get dispatch script settings: ${errorMsg}`);
+		}
+
+		return { bindings: data.result?.bindings ?? [] };
 	}
 
 	/**
@@ -1519,6 +1577,11 @@ export class CloudflareClient {
 			mainModule?: string;
 			assetConfig?: AssetConfig;
 			additionalModules?: WorkerModule[];
+			migrations?: {
+				old_tag: string;
+				new_tag: string;
+				steps: Array<Record<string, unknown>>;
+			};
 		},
 	): Promise<void> {
 		const url = `${this.baseUrl}/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts/${scriptName}`;
@@ -1557,6 +1620,9 @@ export class CloudflareClient {
 		if (options?.compatibilityFlags?.length) {
 			metadata.compatibility_flags = options.compatibilityFlags;
 		}
+		if (options?.migrations) {
+			metadata.migrations = options.migrations;
+		}
 
 		formData.append("metadata", JSON.stringify(metadata));
 
@@ -1581,6 +1647,19 @@ export class CloudflareClient {
 		};
 
 		const response = await fetch(url, fetchOptions);
+
+		if (response.status === 412) {
+			const data = (await response.json()) as CloudflareResponse<unknown>;
+			const errorMsg =
+				data.errors?.map((e) => e.message).join(", ") || "Migration tag precondition failed";
+			const error: Error & { status?: number; cfErrors?: unknown } = new Error(
+				`Cloudflare API error (412): ${errorMsg}`,
+			);
+			error.status = 412;
+			error.cfErrors = data.errors;
+			throw error;
+		}
+
 		const data = (await response.json()) as CloudflareResponse<unknown>;
 
 		if (!data.success) {
@@ -1590,6 +1669,39 @@ export class CloudflareClient {
 					: "Unknown Cloudflare API error";
 			throw new Error(`Failed to upload dispatch script with assets: ${errorMsg}`);
 		}
+	}
+
+	// =====================================================
+	// GraphQL Analytics API
+	// =====================================================
+
+	/**
+	 * Query Cloudflare GraphQL Analytics API.
+	 * Docs: https://developers.cloudflare.com/analytics/graphql-api/
+	 */
+	async queryGraphQL(query: string, variables: Record<string, unknown>): Promise<GraphQLResponse> {
+		const url = "https://api.cloudflare.com/client/v4/graphql";
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.apiToken}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ query, variables }),
+		});
+
+		if (!response.ok) {
+			const text = await response.text();
+			throw new Error(`GraphQL query failed: ${response.status} ${text}`);
+		}
+
+		const result = (await response.json()) as GraphQLResponse;
+		if (result.errors?.length) {
+			throw new Error(`GraphQL errors: ${result.errors.map((e) => e.message).join(", ")}`);
+		}
+
+		return result;
 	}
 
 	// =====================================================
@@ -2019,6 +2131,191 @@ export class CloudflareClient {
 		return { metrics, by_model };
 	}
 
+	/**
+	 * Get DO usage metrics for a project from Analytics Engine (jack_do_usage dataset).
+	 * Returns per-class, per-method breakdown.
+	 */
+	async getProjectDoUsageFromAE(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<{
+		by_class: Array<{
+			class_name: string;
+			methods: Record<string, { requests: number; wall_time_ms: number }>;
+			totals: { requests: number; wall_time_ms: number };
+		}>;
+		totals: { requests: number; wall_time_ms: number };
+	}> {
+		const escapedProjectId = this.escapeSQL(projectId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+
+		const sql = `
+			SELECT
+				blob2 AS class_name,
+				blob3 AS method,
+				SUM(double1 * _sample_interval) AS wall_time_ms,
+				SUM(_sample_interval) AS requests
+			FROM jack_do_usage
+			WHERE index1 = '${escapedProjectId}'
+				AND timestamp >= toDateTime('${formattedFrom}')
+				AND timestamp <= toDateTime('${formattedTo}')
+			GROUP BY blob2, blob3
+			ORDER BY wall_time_ms DESC
+		`;
+
+		const result = await this.queryAnalyticsEngine(sql);
+
+		// Group by class
+		const classMap = new Map<
+			string,
+			{
+				methods: Record<string, { requests: number; wall_time_ms: number }>;
+				totals: { requests: number; wall_time_ms: number };
+			}
+		>();
+
+		let totalRequests = 0;
+		let totalWallTime = 0;
+
+		for (const row of result.data) {
+			const className = String(row.class_name || "unknown");
+			const method = String(row.method || "unknown");
+			const requests = Math.round(Number(row.requests) || 0);
+			const wallTimeMs = Math.round(Number(row.wall_time_ms) || 0);
+
+			totalRequests += requests;
+			totalWallTime += wallTimeMs;
+
+			if (!classMap.has(className)) {
+				classMap.set(className, {
+					methods: {},
+					totals: { requests: 0, wall_time_ms: 0 },
+				});
+			}
+
+			const entry = classMap.get(className);
+			if (entry) {
+				entry.methods[method] = { requests, wall_time_ms: wallTimeMs };
+				entry.totals.requests += requests;
+				entry.totals.wall_time_ms += wallTimeMs;
+			}
+		}
+
+		const by_class = Array.from(classMap.entries()).map(([class_name, data]) => ({
+			class_name,
+			...data,
+		}));
+
+		return {
+			by_class,
+			totals: { requests: totalRequests, wall_time_ms: totalWallTime },
+		};
+	}
+
+	/**
+	 * Get Vectorize usage metrics for a project from Analytics Engine.
+	 * Queries metering wrapper logs where blob3 = 'vectorize'.
+	 *
+	 * Schema (from __jack_meter.mjs):
+	 * - index1: project_id
+	 * - blob1: org_id
+	 * - blob2: "free" (tier)
+	 * - blob3: "vectorize"
+	 * - blob4: index_name
+	 * - blob5: operation (query, insert, upsert, deleteByIds, getByIds, describe)
+	 * - double1: 1 (call count)
+	 * - double2: duration_ms
+	 * - double3: vector count (mutations only)
+	 */
+	async getProjectVectorizeUsage(
+		projectId: string,
+		from: string,
+		to: string,
+	): Promise<{
+		metrics: VectorizeUsageMetrics;
+		by_index: VectorizeUsageByIndex[];
+		by_operation: VectorizeUsageByOperation[];
+	}> {
+		const escapedProjectId = this.escapeSQL(projectId);
+		const formattedFrom = this.formatTimestamp(from);
+		const formattedTo = this.formatTimestamp(to);
+		const whereClause = `index1 = '${escapedProjectId}' AND blob3 = 'vectorize' AND timestamp >= toDateTime('${formattedFrom}') AND timestamp <= toDateTime('${formattedTo}')`;
+
+		const metricsQuery = `
+			SELECT
+				SUM(_sample_interval) as total_requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as total_vectors
+			FROM jack_usage
+			WHERE ${whereClause}
+		`;
+
+		const byIndexQuery = `
+			SELECT
+				blob4 as index_name,
+				SUM(_sample_interval) as requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as vectors
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob4
+			ORDER BY requests DESC
+		`;
+
+		const byOpQuery = `
+			SELECT
+				blob5 as operation,
+				SUM(_sample_interval) as requests,
+				AVG(double2) as avg_latency_ms,
+				SUM(double3 * _sample_interval) as vectors
+			FROM jack_usage
+			WHERE ${whereClause}
+			GROUP BY blob5
+			ORDER BY requests DESC
+		`;
+
+		const [metricsResult, byIndexResult, byOpResult] = await Promise.all([
+			this.queryAnalyticsEngine(metricsQuery),
+			this.queryAnalyticsEngine(byIndexQuery),
+			this.queryAnalyticsEngine(byOpQuery),
+		]);
+
+		const row = metricsResult.data[0] || {};
+		const totalRequests = Math.round(Number(row.total_requests) || 0);
+
+		const metrics: VectorizeUsageMetrics = {
+			total_requests: totalRequests,
+			avg_latency_ms: Math.round((Number(row.avg_latency_ms) || 0) * 100) / 100,
+			total_vectors: Math.round(Number(row.total_vectors) || 0),
+		};
+
+		const by_index: VectorizeUsageByIndex[] = byIndexResult.data.map((r) => {
+			const requests = Math.round(Number(r.requests) || 0);
+			return {
+				index_name: String(r.index_name || "unknown"),
+				requests,
+				avg_latency_ms: Math.round((Number(r.avg_latency_ms) || 0) * 100) / 100,
+				vectors: Math.round(Number(r.vectors) || 0),
+				percentage: totalRequests > 0 ? Math.round((requests / totalRequests) * 10000) / 100 : 0,
+			};
+		});
+
+		const by_operation: VectorizeUsageByOperation[] = byOpResult.data.map((r) => {
+			const requests = Math.round(Number(r.requests) || 0);
+			return {
+				operation: String(r.operation || "unknown"),
+				requests,
+				avg_latency_ms: Math.round((Number(r.avg_latency_ms) || 0) * 100) / 100,
+				vectors: Math.round(Number(r.vectors) || 0),
+				percentage: totalRequests > 0 ? Math.round((requests / totalRequests) * 10000) / 100 : 0,
+			};
+		});
+
+		return { metrics, by_index, by_operation };
+	}
+
 	private parseDimensionBreakdown(
 		result: AnalyticsEngineQueryResult,
 		dimensionKey: string,
@@ -2048,6 +2345,12 @@ export class CloudflareClient {
 			.replace("Z", "")
 			.replace(/\.\d{3}$/, "");
 	}
+}
+
+// GraphQL types
+export interface GraphQLResponse {
+	data: Record<string, unknown>;
+	errors?: Array<{ message: string; path?: string[] }>;
 }
 
 // Analytics Engine types
@@ -2088,5 +2391,27 @@ export interface AIUsageByModel {
 	tokens_in: number;
 	tokens_out: number;
 	total_tokens: number;
+	percentage: number;
+}
+
+export interface VectorizeUsageMetrics {
+	total_requests: number;
+	avg_latency_ms: number;
+	total_vectors: number;
+}
+
+export interface VectorizeUsageByIndex {
+	index_name: string;
+	requests: number;
+	avg_latency_ms: number;
+	vectors: number;
+	percentage: number;
+}
+
+export interface VectorizeUsageByOperation {
+	operation: string;
+	requests: number;
+	avg_latency_ms: number;
+	vectors: number;
 	percentage: number;
 }

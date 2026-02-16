@@ -1,22 +1,12 @@
 import { type JackAI, createJackAI } from "./jack-ai";
-import { type JackVectorize, createJackVectorize } from "./jack-vectorize";
 
 interface Env {
-	// Direct bindings (for local dev with wrangler)
 	AI?: Ai;
-	VECTORS?: VectorizeIndex;
-	// Jack proxy bindings (injected in jack cloud)
+	VECTORS: VectorizeIndex;
 	__AI_PROXY?: Fetcher;
-	__VECTORIZE_PROXY?: Fetcher;
-	__JACK_PROJECT_ID?: string;
-	__JACK_ORG_ID?: string;
-	// Other bindings
 	DB: D1Database;
 	ASSETS: Fetcher;
 }
-
-// Index name must match wrangler.jsonc vectorize config
-const VECTORIZE_INDEX_NAME = "jack-template-vectors";
 
 // Minimal AI interface for embedding generation
 type AIClient = {
@@ -25,42 +15,14 @@ type AIClient = {
 
 function getAI(env: Env): AIClient {
 	// Prefer jack cloud proxy if available (for metering)
-	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
-		return createJackAI(
-			env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
-		) as AIClient;
+	if (env.__AI_PROXY) {
+		return createJackAI(env as Pick<Env, "__AI_PROXY"> & { __AI_PROXY: Fetcher }) as AIClient;
 	}
 	// Fallback to direct binding for local dev
 	if (env.AI) {
 		return env.AI as unknown as AIClient;
 	}
 	throw new Error("No AI binding available");
-}
-
-// Minimal Vectorize interface
-type VectorizeClient = {
-	insert: (
-		vectors: { id: string; values: number[]; metadata?: Record<string, unknown> }[],
-	) => Promise<unknown>;
-	query: (
-		vector: number[],
-		options?: { topK?: number; returnMetadata?: "none" | "indexed" | "all" },
-	) => Promise<{ matches: { id: string; score: number; metadata?: Record<string, unknown> }[] }>;
-};
-
-function getVectorize(env: Env): VectorizeClient {
-	// Prefer jack cloud proxy if available (for metering)
-	if (env.__VECTORIZE_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
-		return createJackVectorize(
-			env as Required<Pick<Env, "__VECTORIZE_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
-			VECTORIZE_INDEX_NAME,
-		) as VectorizeClient;
-	}
-	// Fallback to direct binding for local dev
-	if (env.VECTORS) {
-		return env.VECTORS as unknown as VectorizeClient;
-	}
-	throw new Error("No Vectorize binding available");
 }
 
 // Rate limiting: 10 requests per minute per IP
@@ -142,7 +104,7 @@ export default {
 				}
 
 				// Store in Vectorize
-				const vectors = getVectorize(env);
+				const vectors = env.VECTORS;
 				await vectors.insert([
 					{
 						id,
@@ -188,7 +150,7 @@ export default {
 				}
 
 				// Search Vectorize
-				const vectors = getVectorize(env);
+				const vectors = env.VECTORS;
 				const results = await vectors.query(embeddingVector, {
 					topK: limit,
 					returnMetadata: "all",

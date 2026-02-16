@@ -16,6 +16,7 @@ import { unregisterPath } from "../lib/paths-index.ts";
 import { type LocalProjectLink, readProjectLink, unlinkProject } from "../lib/project-link.ts";
 import { resolveProject } from "../lib/project-resolver.ts";
 import { parseWranglerResources } from "../lib/resources.ts";
+import { deleteProject } from "../lib/services/project-delete.ts";
 import { deleteCloudProject, getProjectNameFromDir } from "../lib/storage/index.ts";
 
 /**
@@ -124,10 +125,33 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 				process.exit(1);
 			}
 
-			// Route to managed deletion flow
-			const deleteSuccess = await managedDown({ projectId, runjackUrl, localPath }, name, flags);
-			if (!deleteSuccess) {
-				process.exit(0); // User cancelled
+			if (flags.force) {
+				// Force mode: full teardown via shared service
+				const projectDir = resolved?.localPath ?? process.cwd();
+				console.error("");
+				info(`Undeploying '${name}'`);
+				console.error("");
+
+				output.start("Undeploying from jack cloud...");
+				const result = await deleteProject(projectDir, { exportDatabase: false });
+				output.stop();
+
+				for (const w of result.warnings) {
+					warn(w);
+				}
+
+				console.error("");
+				success(`'${name}' undeployed`);
+				if (result.databaseDeleted) {
+					info("Database and all resources were deleted");
+				}
+				console.error("");
+			} else {
+				// Interactive mode: use managedDown with prompts
+				const deleteSuccess = await managedDown({ projectId, runjackUrl, localPath }, name, flags);
+				if (!deleteSuccess) {
+					process.exit(0); // User cancelled
+				}
 			}
 
 			// Clean up local tracking state (only if project has local path)
@@ -162,19 +186,27 @@ export default async function down(projectName?: string, flags: DownFlags = {}):
 			return;
 		}
 
-		// Force mode - quick deletion without prompts
+		// Force mode - full teardown (worker + database) without prompts
 		if (flags.force) {
 			console.error("");
 			info(`Undeploying '${name}'`);
 			console.error("");
 
 			output.start("Undeploying...");
-			await deleteWorker(name);
+			const forceResult = await deleteProject(resolved?.localPath ?? process.cwd(), {
+				exportDatabase: false,
+			});
 			output.stop();
+
+			for (const w of forceResult.warnings) {
+				warn(w);
+			}
 
 			console.error("");
 			success(`'${name}' undeployed`);
-			info("Databases and backups were not affected");
+			if (forceResult.databaseDeleted && forceResult.databaseName) {
+				info(`Database '${forceResult.databaseName}' was also deleted`);
+			}
 			console.error("");
 			return;
 		}

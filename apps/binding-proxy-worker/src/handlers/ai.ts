@@ -1,6 +1,6 @@
 import { MeteringService } from "../metering";
 import { QuotaManager } from "../quota";
-import type { AIUsageDataPoint, Env } from "../types";
+import type { AIUsageDataPoint, Env, ProxyIdentity } from "../types";
 
 /**
  * AI Proxy Handler - receives fetch requests from user workers and forwards to real AI.
@@ -11,7 +11,7 @@ import type { AIUsageDataPoint, Env } from "../types";
  * 3. Proxy checks quota, forwards to real AI, meters usage
  * 4. Response streamed back to user worker
  *
- * Context (project_id, org_id) is passed via X-Jack-* headers.
+ * Identity is resolved by ProxyEntrypoint from ctx.props (set at deploy time).
  */
 export class AIHandler {
 	private quotaManager: QuotaManager;
@@ -31,19 +31,12 @@ export class AIHandler {
 	/**
 	 * Handle AI proxy request
 	 */
-	async handleRequest(request: Request, ctx: ExecutionContext): Promise<Response> {
-		// Extract context from headers
-		const projectId = request.headers.get("X-Jack-Project-ID");
-		const orgId = request.headers.get("X-Jack-Org-ID");
-
-		if (!projectId || !orgId) {
-			return Response.json(
-				{
-					error: "Missing project context headers. This proxy is for jack cloud deployments only.",
-				},
-				{ status: 400 },
-			);
-		}
+	async handleRequest(
+		request: Request,
+		ctx: ExecutionContext,
+		identity: ProxyIdentity,
+	): Promise<Response> {
+		const { projectId, orgId } = identity;
 
 		// 1. Rate limit check (burst protection - 100 req/10s per project)
 		const { success: rateLimitOk } = await this.rateLimiter.limit({ key: projectId });

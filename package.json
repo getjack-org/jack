@@ -9,6 +9,7 @@
 		"dev:dispatch": "bun run --cwd apps/dispatch-worker dev",
 		"dev:telemetry": "bun run --cwd apps/telemetry-worker dev",
 		"dev:binding-proxy": "bun run --cwd apps/binding-proxy-worker dev",
+		"dev:mcp": "bun run --cwd apps/mcp-worker dev",
 		"build": "bun run --filter '*' build",
 		"lint": "biome check .",
 		"format": "biome format --write .",
@@ -17,6 +18,7 @@
 		"deploy:dispatch": "bun run --cwd apps/dispatch-worker deploy",
 		"deploy:telemetry": "bun run --cwd apps/telemetry-worker deploy",
 		"deploy:binding-proxy": "bun run --cwd apps/binding-proxy-worker deploy",
+		"deploy:mcp": "bun run --cwd apps/mcp-worker deploy",
 		"docs:dev": "vocs dev",
 		"docs:build": "vocs build",
 		"docs:preview": "vocs preview"

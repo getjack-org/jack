@@ -20,6 +20,7 @@ export const SUPPORTED_BINDINGS = [
 	"r2_buckets",
 	"kv_namespaces",
 	"vectorize",
+	"durable_objects",
 ] as const;
 
 /**
@@ -27,7 +28,6 @@ export const SUPPORTED_BINDINGS = [
  * These will cause validation errors if present in wrangler config.
  */
 export const UNSUPPORTED_BINDINGS = [
-	"durable_objects",
 	"queues",
 	"services",
 	"hyperdrive",
@@ -39,7 +39,6 @@ export const UNSUPPORTED_BINDINGS = [
  * Human-readable names for unsupported bindings.
  */
 const BINDING_DISPLAY_NAMES: Record<string, string> = {
-	durable_objects: "Durable Objects",
 	queues: "Queues",
 	services: "Service Bindings",
 	hyperdrive: "Hyperdrive",
@@ -71,8 +70,45 @@ export function validateBindings(
 		if (value !== undefined && value !== null) {
 			const displayName = BINDING_DISPLAY_NAMES[binding] || binding;
 			errors.push(
-				`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, R2, KV, Vectorize, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
+				`✗ ${displayName} not supported in managed deploy.\n  Managed deploy supports: D1, AI, Assets, R2, KV, Vectorize, Durable Objects, vars.\n  Fix: Remove ${binding} from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
 			);
+		}
+	}
+
+	// Validate Durable Object constraints
+	if (config.durable_objects?.bindings?.length) {
+		const doBindings = config.durable_objects.bindings;
+
+		// Max 3 DO classes per project (free tier)
+		if (doBindings.length > 3) {
+			errors.push(
+				`✗ Too many Durable Object classes (${doBindings.length}).\n  Free tier allows max 3 DO classes per project.\n  Fix: Remove unused DO classes from wrangler.jsonc.`,
+			);
+		}
+
+		// Only allow new_sqlite_classes (not legacy new_classes)
+		if (config.migrations?.length) {
+			for (const migration of config.migrations) {
+				if ((migration as Record<string, unknown>).new_classes) {
+					errors.push(
+						"✗ Only new_sqlite_classes migrations are supported.\n  Fix: Replace new_classes with new_sqlite_classes in wrangler.jsonc.",
+					);
+				}
+			}
+		}
+
+		// Reject __JACK_ prefixed binding or class names
+		for (const dob of doBindings) {
+			if (dob.name.startsWith("__JACK_")) {
+				errors.push(
+					`✗ Binding name "${dob.name}" uses reserved __JACK_ prefix.\n  Fix: Use a different binding name.`,
+				);
+			}
+			if (dob.class_name.startsWith("__JACK_")) {
+				errors.push(
+					`✗ Class name "${dob.class_name}" uses reserved __JACK_ prefix.\n  Fix: Use a different class name.`,
+				);
+			}
 		}
 	}
 

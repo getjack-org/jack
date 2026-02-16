@@ -26,7 +26,7 @@ const result = await env.AI.run(model, inputs);
 import { createJackAI } from "./jack-ai";
 
 function getAI(env: Env) {
-  if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+  if (env.__AI_PROXY) {
     return createJackAI(env);
   }
   return env.AI;
@@ -116,7 +116,6 @@ Before shipping a new template:
 - [ ] `.gitignore` includes `.env`, `.dev.vars`, `.secrets.json`
 - [ ] Prebuilt builds without env vars: `bun run build` succeeds with zero secrets set
 - [ ] If template has `schema.sql`, verify it's included in prebuild output
-- [ ] If template handles `POST /__scheduled`, add `"crons"` to `.jack.json`
 
 ## Prebuild Compatibility (IMPORTANT)
 

@@ -5,11 +5,14 @@
  */
 
 import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { validateBindings } from "./binding-validator.ts";
 import { buildProject, parseWranglerConfig } from "./build-helper.ts";
 import { createManagedProject, syncProjectTags } from "./control-plane.ts";
 import { debug } from "./debug.ts";
 import { uploadDeployment } from "./deploy-upload.ts";
+import { ensureMigrations, ensureNodejsCompat } from "./do-config.ts";
+import { validateDoExports } from "./do-export-validator.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { formatSize } from "./format.ts";
 import { createFileCountProgress, createUploadProgress } from "./progress.ts";
@@ -101,11 +104,42 @@ export async function deployCodeToManagedProject(
 	let pkg: Awaited<ReturnType<typeof packageForDeploy>> | null = null;
 
 	try {
-		const config = await parseWranglerConfig(projectPath);
+		let config = await parseWranglerConfig(projectPath);
 
 		// Step 1: Build the project (must happen before validation, as build creates dist/)
 		reporter?.start("Building project...");
 		const buildOutput = await buildProject({ projectPath, reporter });
+
+		// Step 1.5: Auto-fix DO prerequisites (after build so we have output to validate)
+		if (config.durable_objects?.bindings?.length) {
+			const configPath = join(projectPath, "wrangler.jsonc");
+			const fixes: string[] = [];
+
+			const addedCompat = await ensureNodejsCompat(configPath, config);
+			if (addedCompat) fixes.push("nodejs_compat");
+
+			const migratedClasses = await ensureMigrations(configPath, config);
+			if (migratedClasses.length > 0) fixes.push(`migrations for ${migratedClasses.join(", ")}`);
+
+			if (fixes.length > 0) {
+				config = await parseWranglerConfig(projectPath);
+				reporter?.success(`Auto-configured: ${fixes.join(", ")}`);
+			}
+
+			// Validate DO class exports
+			const missing = await validateDoExports(
+				buildOutput.outDir,
+				buildOutput.entrypoint,
+				config.durable_objects.bindings.map((b) => b.class_name),
+			);
+			if (missing.length > 0) {
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					`Durable Object class${missing.length > 1 ? "es" : ""} not exported: ${missing.join(", ")}`,
+					missing.map((c) => `Add "export" before "class ${c}" in your source code`).join("\n"),
+				);
+			}
+		}
 
 		// Step 2: Validate bindings are supported (after build, so assets dir exists)
 		const validation = validateBindings(config, projectPath);

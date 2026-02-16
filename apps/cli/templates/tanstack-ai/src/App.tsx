@@ -125,6 +125,13 @@ function ChatView({ chatId, initialMessages }: { chatId: string; initialMessages
 						{messages.map((msg) => (
 							<MessageBubble key={msg.id} message={msg} />
 						))}
+						{isLoading && messages[messages.length - 1]?.role === "user" && (
+							<div className="flex justify-start">
+								<div className="rounded-2xl rounded-bl-md border border-gray-200 bg-white px-4 py-3 shadow-sm">
+									<LoadingDots dark />
+								</div>
+							</div>
+						)}
 						{error && (
 							<div className="mx-auto max-w-2xl rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
 								{error.message}
@@ -342,39 +349,19 @@ function renderInline(text: string): ReactNode[] {
 function EmptyState() {
 	return (
 		<div className="flex h-full flex-col items-center justify-center px-4 text-center">
-			<div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 text-2xl text-white shadow-lg">
-				AI
-			</div>
-			<h2 className="text-xl font-semibold text-gray-800">AI Chat</h2>
-			<p className="mt-2 max-w-md text-sm text-gray-500">
-				Full-stack AI chat built with TanStack AI, streaming responses via Server-Sent Events, and
-				conversation history persisted in D1.
-			</p>
-			<div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2">
-				{[
-					"What can you help me with?",
-					"Explain how streaming works",
-					"Write a haiku about coding",
-					"What is TanStack AI?",
-				].map((q) => (
-					<div
-						key={q}
-						className="cursor-default rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-left text-sm text-gray-600 shadow-sm transition hover:border-gray-300 hover:shadow"
-					>
-						{q}
-					</div>
-				))}
-			</div>
+			<h2 className="text-lg font-medium text-gray-800">Start a conversation</h2>
+			<p className="mt-1 text-sm text-gray-400">Type a message below to get started.</p>
 		</div>
 	);
 }
 
-function LoadingDots() {
+function LoadingDots({ dark }: { dark?: boolean }) {
+	const bg = dark ? "bg-gray-400" : "bg-white/70";
 	return (
 		<span className="inline-flex gap-1">
-			<span className="h-1.5 w-1.5 rounded-full bg-white/70 animate-bounce [animation-delay:0ms]" />
-			<span className="h-1.5 w-1.5 rounded-full bg-white/70 animate-bounce [animation-delay:150ms]" />
-			<span className="h-1.5 w-1.5 rounded-full bg-white/70 animate-bounce [animation-delay:300ms]" />
+			<span className={`h-1.5 w-1.5 rounded-full ${bg} animate-bounce [animation-delay:0ms]`} />
+			<span className={`h-1.5 w-1.5 rounded-full ${bg} animate-bounce [animation-delay:150ms]`} />
+			<span className={`h-1.5 w-1.5 rounded-full ${bg} animate-bounce [animation-delay:300ms]`} />
 		</span>
 	);
 }

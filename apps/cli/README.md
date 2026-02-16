@@ -27,7 +27,8 @@ But first: config files, deployment setup, secret management, debugging infrastr
 jack removes the friction between your idea and a live URL.
 
 ```bash
-bunx @getjack/jack new my-app   # → deployed. live. done.
+curl -fsSL docs.getjack.org/install.sh | bash
+jack new my-app   # → deployed. live. done.
 ```
 
 That's it. Write code. Ship again with `jack ship`. Stay in flow.
@@ -51,15 +52,14 @@ That's it. Write code. Ship again with `jack ship`. Stay in flow.
 ## Quick Start
 
 ```bash
-# One command to create and deploy
-bunx @getjack/jack new my-app
+# Install (CLI + MCP for your AI editor)
+curl -fsSL docs.getjack.org/install.sh | bash
 
-# Or install globally
-bun add -g @getjack/jack
+# Create and deploy
 jack new my-app
 ```
 
-You'll need [Bun](https://bun.sh) and a Cloudflare account (free tier works).
+Or try without installing: `npx -y @getjack/jack new my-app`
 
 ---
 
