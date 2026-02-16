@@ -12,7 +12,7 @@ Jack cloud uses metered proxies for AI and Vectorize calls. Use the patterns bel
 import { createJackAI } from "./jack-ai";
 
 function getAI(env: Env) {
-  if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+  if (env.__AI_PROXY) {
     return createJackAI(env);
   }
   if (env.AI) {
@@ -34,7 +34,7 @@ import { createJackVectorize } from "./jack-vectorize";
 const INDEX_NAME = "my-vectors";
 
 function getVectorize(env: Env) {
-  if (env.__VECTORIZE_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+  if (env.__VECTORIZE_PROXY) {
     return createJackVectorize(env, INDEX_NAME);
   }
   if (env.VECTORS) {
@@ -69,8 +69,8 @@ The proxy:
 Control plane injects these bindings:
 - `__AI_PROXY` - Service binding to jack-binding-proxy for AI
 - `__VECTORIZE_PROXY` - Service binding to jack-binding-proxy for Vectorize
-- `__JACK_PROJECT_ID` - Project ID for metering
-- `__JACK_ORG_ID` - Organization ID for billing
+
+Identity (project ID, org ID) is provided via `ctx.props` at deploy time, so templates do not need to send identity headers.
 
 `env.AI` and `env.VECTORS` are **NOT available** in jack cloud. Direct calls will fail.
 
@@ -93,8 +93,6 @@ The helper functions automatically use the right binding based on environment.
 interface Env {
   AI?: Ai;                    // Local dev
   __AI_PROXY?: Fetcher;       // Jack cloud
-  __JACK_PROJECT_ID?: string; // Jack cloud
-  __JACK_ORG_ID?: string;     // Jack cloud
 }
 ```
 
@@ -116,8 +114,6 @@ interface Env {
 interface Env {
   VECTORS?: VectorizeIndex;      // Local dev
   __VECTORIZE_PROXY?: Fetcher;   // Jack cloud
-  __JACK_PROJECT_ID?: string;    // Jack cloud
-  __JACK_ORG_ID?: string;        // Jack cloud
 }
 ```
 

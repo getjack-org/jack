@@ -88,7 +88,7 @@ export class MeteringService {
 					"ai", // blob3: binding type
 					data.model, // blob4: model name
 					"run", // blob5: operation
-					data.identity_source || "", // blob6: identity source ("props" | "headers")
+					"", // blob6: reserved
 					"", // blob7: reserved
 					"", // blob8: reserved
 					"", // blob9: reserved
@@ -117,7 +117,6 @@ export class MeteringService {
 		operation: "query" | "upsert" | "deleteByIds" | "getByIds" | "describe";
 		duration_ms: number;
 		vector_count?: number;
-		identity_source?: string;
 	}): void {
 		try {
 			this.ae.writeDataPoint({
@@ -128,7 +127,7 @@ export class MeteringService {
 					"vectorize", // blob3
 					data.index_name, // blob4
 					data.operation, // blob5
-					data.identity_source || "", // blob6: identity source ("props" | "headers")
+					"", // blob6: reserved
 					"",
 					"",
 					"",

@@ -1,30 +1,25 @@
+import { type Message, convertToCoreMessages, streamText } from "ai";
 import { Hono } from "hono";
-import { streamText, convertToCoreMessages, type Message } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import { createJackAI } from "./jack-ai";
 
 interface Env {
 	AI?: Ai;
 	__AI_PROXY?: Fetcher;
-	__JACK_PROJECT_ID?: string;
-	__JACK_ORG_ID?: string;
 	ASSETS: Fetcher;
 	DB: D1Database;
 }
 
 function getAI(env: Env) {
-	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
-		return createJackAI(
-			env as Required<
-				Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">
-			>,
-		);
+	if (env.__AI_PROXY) {
+		return createJackAI(env as Pick<Env, "__AI_PROXY"> & { __AI_PROXY: Fetcher });
 	}
 	if (env.AI) return env.AI;
 	throw new Error("No AI binding available");
 }
 
-const SYSTEM_PROMPT = `You are a helpful AI assistant. Be concise, friendly, and helpful. Keep responses short unless detail is needed.`;
+const SYSTEM_PROMPT =
+	"You are a helpful AI assistant. Be concise, friendly, and helpful. Keep responses short unless detail is needed.";
 
 // Rate limiting
 const RATE_LIMIT = 10;
@@ -74,16 +69,14 @@ app.post("/api/chat", async (c) => {
 		messages: Message[];
 		chatId?: string;
 	}>();
-	if (!messages || !Array.isArray(messages)) {
+	if (!messages || !Array.isArray(messages) || messages.length === 0) {
 		return c.json({ error: "Invalid request." }, 400);
 	}
 
 	// Save user message to DB if we have a chatId
 	const lastUserMsg = messages.findLast((m: Message) => m.role === "user");
 	if (chatId && lastUserMsg) {
-		await c.env.DB.prepare(
-			"INSERT INTO messages (id, chat_id, role, content) VALUES (?, ?, ?, ?)",
-		)
+		await c.env.DB.prepare("INSERT INTO messages (id, chat_id, role, content) VALUES (?, ?, ?, ?)")
 			.bind(
 				crypto.randomUUID(),
 				chatId,

@@ -11,7 +11,7 @@ import type { Env, ProxyIdentity, VectorizeProxyRequest, VectorizeUsageDataPoint
  * 3. Proxy checks quota, forwards to real Vectorize, meters usage
  * 4. Response returned to user worker
  *
- * Identity is resolved by ProxyEntrypoint (ctx.props preferred, headers as fallback).
+ * Identity is resolved by ProxyEntrypoint from ctx.props (set at deploy time).
  */
 export class VectorizeHandler {
 	private quotaManager: QuotaManager;
@@ -81,15 +81,15 @@ export class VectorizeHandler {
 		// Route to appropriate handler based on operation
 		switch (operation) {
 			case "query":
-				return this.handleQuery(projectId, orgId, index_name, params, ctx, identity.source);
+				return this.handleQuery(projectId, orgId, index_name, params, ctx);
 			case "upsert":
-				return this.handleUpsert(projectId, orgId, index_name, params, ctx, identity.source);
+				return this.handleUpsert(projectId, orgId, index_name, params, ctx);
 			case "deleteByIds":
-				return this.handleDeleteByIds(projectId, orgId, index_name, params, ctx, identity.source);
+				return this.handleDeleteByIds(projectId, orgId, index_name, params, ctx);
 			case "getByIds":
-				return this.handleGetByIds(projectId, orgId, index_name, params, ctx, identity.source);
+				return this.handleGetByIds(projectId, orgId, index_name, params, ctx);
 			case "describe":
-				return this.handleDescribe(projectId, orgId, index_name, ctx, identity.source);
+				return this.handleDescribe(projectId, orgId, index_name, ctx);
 			default:
 				return Response.json({ error: "Unknown operation" }, { status: 400 });
 		}
@@ -104,7 +104,6 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
-		identitySource: string,
 	): Promise<Response> {
 		// Check query quota
 		const quota = await this.quotaManager.checkVectorizeQueryQuota(projectId);
@@ -144,7 +143,6 @@ export class VectorizeHandler {
 						index_name: indexName,
 						operation: "query",
 						duration_ms: duration,
-						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeQueries(projectId);
 				})(),
@@ -174,7 +172,6 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
-		identitySource: string,
 	): Promise<Response> {
 		// Check mutation quota
 		const quota = await this.quotaManager.checkVectorizeMutationQuota(projectId);
@@ -209,7 +206,6 @@ export class VectorizeHandler {
 						operation: "upsert",
 						duration_ms: duration,
 						vector_count: upsertParams.vectors.length,
-						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeMutations(projectId);
 				})(),
@@ -240,7 +236,6 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
-		identitySource: string,
 	): Promise<Response> {
 		// Check mutation quota
 		const quota = await this.quotaManager.checkVectorizeMutationQuota(projectId);
@@ -275,7 +270,6 @@ export class VectorizeHandler {
 						operation: "deleteByIds",
 						duration_ms: duration,
 						vector_count: deleteParams.ids.length,
-						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeMutations(projectId);
 				})(),
@@ -306,7 +300,6 @@ export class VectorizeHandler {
 		indexName: string,
 		params: unknown,
 		ctx: ExecutionContext,
-		identitySource: string,
 	): Promise<Response> {
 		// getByIds is a read operation, uses query quota
 		const quota = await this.quotaManager.checkVectorizeQueryQuota(projectId);
@@ -341,7 +334,6 @@ export class VectorizeHandler {
 						operation: "getByIds",
 						duration_ms: duration,
 						vector_count: getParams.ids.length,
-						identity_source: identitySource,
 					});
 					await this.quotaManager.incrementVectorizeQueries(projectId);
 				})(),
@@ -371,7 +363,6 @@ export class VectorizeHandler {
 		orgId: string,
 		indexName: string,
 		ctx: ExecutionContext,
-		identitySource: string,
 	): Promise<Response> {
 		// describe is free, no quota check needed
 		const startTime = Date.now();
@@ -387,7 +378,6 @@ export class VectorizeHandler {
 						index_name: indexName,
 						operation: "describe",
 						duration_ms: duration,
-						identity_source: identitySource,
 					}),
 				),
 			);

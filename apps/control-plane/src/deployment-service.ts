@@ -736,21 +736,11 @@ export class DeploymentService {
 	): Promise<DispatchScriptBinding[]> {
 		const bindings: DispatchScriptBinding[] = [];
 
-		// Always add PROJECT_ID and ORG_ID as plain_text bindings
+		// Always add PROJECT_ID as plain_text binding (for user code)
 		bindings.push({
 			type: "plain_text",
 			name: "PROJECT_ID",
 			text: projectId,
-		});
-		bindings.push({
-			type: "plain_text",
-			name: "__JACK_PROJECT_ID",
-			text: projectId,
-		});
-		bindings.push({
-			type: "plain_text",
-			name: "__JACK_ORG_ID",
-			text: orgId,
 		});
 
 		if (!intent) {

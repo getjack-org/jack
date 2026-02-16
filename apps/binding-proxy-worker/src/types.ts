@@ -17,11 +17,10 @@ export interface ProxyProps {
 	orgId: string;
 }
 
-/** Resolved identity with source tracking for monitoring */
+/** Resolved identity from ctx.props */
 export interface ProxyIdentity {
 	projectId: string;
 	orgId: string;
-	source: "props" | "headers";
 }
 
 export interface AIProxyContext {
@@ -42,7 +41,6 @@ export interface AIUsageDataPoint {
 	duration_ms: number;
 	tokens_in?: number;
 	tokens_out?: number;
-	identity_source?: string;
 }
 
 export interface VectorizeUsageDataPoint {

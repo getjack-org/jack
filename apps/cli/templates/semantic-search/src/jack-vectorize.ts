@@ -10,8 +10,6 @@
  *
  * interface Env {
  *   __VECTORIZE_PROXY: Fetcher;   // Service binding to binding-proxy worker
- *   __JACK_PROJECT_ID: string;    // Injected by control plane
- *   __JACK_ORG_ID: string;        // Injected by control plane
  * }
  *
  * export default {
@@ -29,8 +27,6 @@
 
 interface JackVectorizeEnv {
 	__VECTORIZE_PROXY: Fetcher;
-	__JACK_PROJECT_ID: string;
-	__JACK_ORG_ID: string;
 }
 
 interface VectorizeQueryOptions {
@@ -94,8 +90,6 @@ export function createJackVectorize(
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				"X-Jack-Project-ID": env.__JACK_PROJECT_ID,
-				"X-Jack-Org-ID": env.__JACK_ORG_ID,
 			},
 			body: JSON.stringify({
 				operation,
@@ -104,7 +98,7 @@ export function createJackVectorize(
 			}),
 		});
 
-		// Handle quota exceeded
+		// Handle quota exceeded or rate limited
 		if (response.status === 429) {
 			const error = (await response.json()) as {
 				message?: string;
@@ -115,12 +109,6 @@ export function createJackVectorize(
 			(quotaError as Error & { code: string }).code = error.code || "VECTORIZE_QUOTA_EXCEEDED";
 			(quotaError as Error & { resetIn?: number }).resetIn = error.resetIn;
 			throw quotaError;
-		}
-
-		// Handle rate limit
-		if (response.status === 429) {
-			const error = (await response.json()) as { message?: string };
-			throw new Error(error.message || "Rate limit exceeded");
 		}
 
 		// Handle other errors

@@ -40,12 +40,12 @@ export class ProxyEntrypoint extends WorkerEntrypoint<Env> {
 			});
 		}
 
-		// Resolve identity from ctx.props (preferred) or legacy headers (backward compat)
-		const identity = this.resolveIdentity(request);
+		// Resolve identity from ctx.props (set at deploy time)
+		const identity = this.resolveIdentity();
 		if (!identity) {
 			return Response.json(
 				{
-					error: "Missing project identity. This proxy requires ctx.props or X-Jack-* headers.",
+					error: "Missing project identity. This proxy requires ctx.props.",
 				},
 				{ status: 403 },
 			);
@@ -78,30 +78,25 @@ export class ProxyEntrypoint extends WorkerEntrypoint<Env> {
 	}
 
 	/**
-	 * Centralized identity resolution with priority:
-	 * 1. ctx.props (trusted, set at deploy time — unforgeable)
-	 * 2. Legacy X-Jack-* headers (backward compat for old deployments)
+	 * Resolve identity from ctx.props (trusted, set at deploy time — unforgeable).
 	 */
-	private resolveIdentity(request: Request): ProxyIdentity | null {
-		// Primary: ctx.props injected via service binding at deploy time
+	private resolveIdentity(): ProxyIdentity | null {
 		const props = (this.ctx as unknown as { props?: ProxyProps }).props;
-		if (props?.projectId && props?.orgId) {
+		if (
+			props &&
+			typeof props.projectId === "string" &&
+			props.projectId &&
+			typeof props.orgId === "string" &&
+			props.orgId
+		) {
 			return {
 				projectId: props.projectId,
 				orgId: props.orgId,
-				source: "props",
 			};
 		}
 
-		// Fallback: legacy header-based identity (for Workers deployed before this change)
-		const projectId = request.headers.get("X-Jack-Project-ID");
-		const orgId = request.headers.get("X-Jack-Org-ID");
-		if (projectId && orgId) {
-			return {
-				projectId,
-				orgId,
-				source: "headers",
-			};
+		if (props) {
+			console.error("Incomplete ctx.props — missing", !props.projectId ? "projectId" : "orgId");
 		}
 
 		return null;

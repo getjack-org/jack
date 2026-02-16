@@ -26,7 +26,7 @@ const result = await env.AI.run(model, inputs);
 import { createJackAI } from "./jack-ai";
 
 function getAI(env: Env) {
-  if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+  if (env.__AI_PROXY) {
     return createJackAI(env);
   }
   return env.AI;

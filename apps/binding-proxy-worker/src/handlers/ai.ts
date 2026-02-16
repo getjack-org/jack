@@ -11,7 +11,7 @@ import type { AIUsageDataPoint, Env, ProxyIdentity } from "../types";
  * 3. Proxy checks quota, forwards to real AI, meters usage
  * 4. Response streamed back to user worker
  *
- * Identity is resolved by ProxyEntrypoint (ctx.props preferred, headers as fallback).
+ * Identity is resolved by ProxyEntrypoint from ctx.props (set at deploy time).
  */
 export class AIHandler {
 	private quotaManager: QuotaManager;
@@ -122,7 +122,6 @@ export class AIHandler {
 									duration_ms: Date.now() - startTime,
 									tokens_in: tokensIn,
 									tokens_out: tokensOut,
-									identity_source: identity.source,
 								});
 								await this.quotaManager.incrementAIUsage(projectId);
 								await writer.close();
@@ -142,7 +141,6 @@ export class AIHandler {
 							duration_ms: Date.now() - startTime,
 							tokens_in: tokensIn,
 							tokens_out: tokensOut,
-							identity_source: identity.source,
 						});
 						await writer.abort(error);
 					}
@@ -184,7 +182,6 @@ export class AIHandler {
 						duration_ms: duration,
 						tokens_in: tokensIn,
 						tokens_out: tokensOut,
-						identity_source: identity.source,
 					});
 					await this.quotaManager.incrementAIUsage(projectId);
 				})(),
@@ -209,7 +206,6 @@ export class AIHandler {
 				duration_ms: duration,
 				tokens_in: tokensIn,
 				tokens_out: 0,
-				identity_source: identity.source,
 			});
 
 			return Response.json(

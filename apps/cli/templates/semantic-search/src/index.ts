@@ -8,8 +8,6 @@ interface Env {
 	// Jack proxy bindings (injected in jack cloud)
 	__AI_PROXY?: Fetcher;
 	__VECTORIZE_PROXY?: Fetcher;
-	__JACK_PROJECT_ID?: string;
-	__JACK_ORG_ID?: string;
 	// Other bindings
 	DB: D1Database;
 	ASSETS: Fetcher;
@@ -25,10 +23,8 @@ type AIClient = {
 
 function getAI(env: Env): AIClient {
 	// Prefer jack cloud proxy if available (for metering)
-	if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
-		return createJackAI(
-			env as Required<Pick<Env, "__AI_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
-		) as AIClient;
+	if (env.__AI_PROXY) {
+		return createJackAI(env as Pick<Env, "__AI_PROXY"> & { __AI_PROXY: Fetcher }) as AIClient;
 	}
 	// Fallback to direct binding for local dev
 	if (env.AI) {
@@ -50,9 +46,9 @@ type VectorizeClient = {
 
 function getVectorize(env: Env): VectorizeClient {
 	// Prefer jack cloud proxy if available (for metering)
-	if (env.__VECTORIZE_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+	if (env.__VECTORIZE_PROXY) {
 		return createJackVectorize(
-			env as Required<Pick<Env, "__VECTORIZE_PROXY" | "__JACK_PROJECT_ID" | "__JACK_ORG_ID">>,
+			env as Pick<Env, "__VECTORIZE_PROXY"> & { __VECTORIZE_PROXY: Fetcher },
 			VECTORIZE_INDEX_NAME,
 		) as VectorizeClient;
 	}
