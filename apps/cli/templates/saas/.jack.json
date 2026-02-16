@@ -34,8 +34,7 @@
 				"key": "BETTER_AUTH_SECRET",
 				"message": "Generating authentication secret...",
 				"onMissing": "generate",
-				"generateCommand": "openssl rand -base64 32",
-				"perProject": true
+				"generateCommand": "openssl rand -base64 32"
 			},
 			{
 				"action": "stripe-setup",

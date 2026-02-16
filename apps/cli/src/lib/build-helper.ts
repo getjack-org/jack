@@ -64,8 +64,19 @@ export interface WranglerConfig {
 		dimensions?: number;
 		metric?: "cosine" | "euclidean" | "dot-product";
 	}>;
+	durable_objects?: {
+		bindings: Array<{
+			name: string;
+			class_name: string;
+		}>;
+	};
+	migrations?: Array<{
+		tag: string;
+		new_sqlite_classes?: string[];
+		deleted_classes?: string[];
+		renamed_classes?: Array<{ from: string; to: string }>;
+	}>;
 	// Unsupported bindings (for validation)
-	durable_objects?: unknown;
 	queues?: unknown;
 	services?: unknown;
 	hyperdrive?: unknown;

@@ -10,8 +10,6 @@
  *
  * interface Env {
  *   __AI_PROXY: Fetcher;        // Service binding to binding-proxy worker
- *   __JACK_PROJECT_ID: string;  // Injected by control plane
- *   __JACK_ORG_ID: string;      // Injected by control plane
  * }
  *
  * export default {
@@ -29,8 +27,6 @@
 
 interface JackAIEnv {
 	__AI_PROXY: Fetcher;
-	__JACK_PROJECT_ID: string;
-	__JACK_ORG_ID: string;
 }
 
 /**
@@ -56,8 +52,6 @@ export function createJackAI(env: JackAIEnv): {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
-					"X-Jack-Project-ID": env.__JACK_PROJECT_ID,
-					"X-Jack-Org-ID": env.__JACK_ORG_ID,
 				},
 				body: JSON.stringify({ model, inputs, options }),
 			});

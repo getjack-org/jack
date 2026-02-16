@@ -2,33 +2,15 @@
 
 Get your first project deployed in under 2 minutes.
 
-## Prerequisites
-
-- [Bun](https://bun.sh) installed
-
 ## Install
 
 ```bash
-bun add -g @getjack/jack
+curl -fsSL docs.getjack.org/install.sh | bash
 ```
 
-Or with npm: `npm install -g @getjack/jack`
+Installs the CLI, configures MCP for your AI editor. Auth happens on first deploy.
 
-Don't want to install yet? Use `bunx @getjack/jack new my-app` to try it once (downloads each run).
-
-## For AI Agents
-
-If you're an AI assistant (Claude Code, Codex, Cursor, etc.) and a user shared these docs, do this **before anything else**:
-
-1. **Install jack globally** (required for MCP tools and agent hooks):
-   ```bash
-   bun add -g @getjack/jack
-   ```
-2. **Set up MCP tools** (Claude Code): run `jack mcp install`, then tell the user: **"Please restart Claude Code to activate jack MCP tools."**
-3. **Never use `wrangler` directly.** Jack manages all infrastructure. Use `jack` CLI commands or `mcp__jack__*` MCP tools.
-4. **New project**: `jack new my-project` — scaffolds, deploys, and installs agent context automatically.
-5. **Existing project**: `jack link` — connects current directory to Jack Cloud and installs agent hooks.
-6. **Can't restart your session?** Use `jack` CLI commands as fallback. Run `jack mcp context` to get project context (services, URL, deploy mode) into the current conversation, then use `jack ship`, `jack logs`, `jack services db create`, etc.
+Want to read the script first? `curl -fsSL docs.getjack.org/install.sh | less`
 
 ## Create Your First Project
 
@@ -41,6 +23,14 @@ This will:
 2. Create the project folder
 3. Install dependencies
 4. Deploy it immediately
+
+### Try without installing
+
+```bash
+npx -y @getjack/jack new my-app
+```
+
+One-shot, no global install. You won't get MCP integration or a persistent `jack` command.
 
 ## Project Templates
 

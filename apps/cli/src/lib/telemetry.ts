@@ -17,6 +17,7 @@ export const Events = {
 	COMMAND_COMPLETED: "command_completed",
 	COMMAND_FAILED: "command_failed",
 	PROJECT_CREATED: "project_created",
+	PROJECT_DELETED: "project_deleted",
 	DEPLOY_STARTED: "deploy_started",
 	CONFIG_CHANGED: "config_changed",
 	INTENT_MATCHED: "intent_matched",

@@ -19,6 +19,7 @@ import { CreditsService } from "./credits-service";
 import { decryptSecretValue, decryptSecrets, isEncryptedEnvelope } from "./crypto";
 import { DaimoBillingService } from "./daimo-billing-service";
 import { DeploymentService, validateManifest } from "./deployment-service";
+import { getDoEnforcementStatus, processDoMetering } from "./do-metering";
 import { REFERRAL_CAP, TIER_LIMITS, computeLimits } from "./entitlements-config";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
@@ -1172,6 +1173,88 @@ api.get("/projects/:projectId/usage", async (c) => {
 	}
 });
 
+// Durable Objects usage per project (queries AE directly, same pattern as /usage)
+api.get("/projects/:projectId/do-usage", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const rangeResult = resolveAnalyticsRange(c);
+
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
+
+	const { range } = rangeResult;
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Check KV cache (2 min TTL for DO usage)
+	const cacheKey = `ae:do:project:${projectId}:${range.from}:${range.to}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const doUsage = await cfClient.getProjectDoUsageFromAE(projectId, range.from, range.to);
+
+		// Get enforcement status (fail gracefully — don't break usage data)
+		let enforcementInfo: {
+			enforced: boolean;
+			enforced_at: string | null;
+			enforced_reason: string | null;
+		} = {
+			enforced: false,
+			enforced_at: null,
+			enforced_reason: null,
+		};
+		try {
+			const enforcement = await getDoEnforcementStatus(c.env.DB, projectId);
+			if (enforcement) {
+				enforcementInfo = {
+					enforced: enforcement.enforced,
+					enforced_at: enforcement.enforced_at,
+					enforced_reason: enforcement.enforced_reason,
+				};
+			}
+		} catch (e) {
+			console.error("Failed to fetch DO enforcement status:", e);
+		}
+
+		const response = {
+			project_id: projectId,
+			range,
+			...doUsage,
+			enforcement: enforcementInfo,
+		};
+
+		// Cache for 2 minutes
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+			expirationTtl: 120,
+		});
+
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "DO usage query failed";
+		console.error("DO usage query error:", error);
+		return c.json({ error: "upstream_error", message }, 502);
+	}
+});
+
 // Org-level Analytics Engine usage
 api.get("/orgs/:orgId/usage", async (c) => {
 	const auth = c.get("auth");
@@ -1332,6 +1415,68 @@ api.get("/orgs/:orgId/ai-usage", async (c) => {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Analytics query failed";
 		console.error("AI Analytics Engine query error:", error);
+		return c.json({ error: "upstream_error", message }, 502);
+	}
+});
+
+// Project-level Vectorize usage (operations, indexes)
+api.get("/projects/:projectId/vectorize-usage", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const rangeResult = resolveAnalyticsRange(c);
+
+	if (!rangeResult.ok) {
+		return c.json({ error: "invalid_request", message: rangeResult.message }, 400);
+	}
+
+	const { range } = rangeResult;
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const cacheKey = `ae:vec:project:${projectId}:${range.from}:${range.to}`;
+	const cached = await c.env.PROJECTS_CACHE.get(cacheKey);
+	if (cached) {
+		return c.json(JSON.parse(cached));
+	}
+
+	try {
+		const cfClient = new CloudflareClient(c.env);
+		const { metrics, by_index, by_operation } = await cfClient.getProjectVectorizeUsage(
+			projectId,
+			range.from,
+			range.to,
+		);
+
+		const response = {
+			project_id: projectId,
+			range,
+			vectorize_metrics: metrics,
+			by_index,
+			by_operation,
+		};
+
+		await c.env.PROJECTS_CACHE.put(cacheKey, JSON.stringify(response), {
+			expirationTtl: 300,
+		});
+
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Analytics query failed";
+		console.error("Vectorize Analytics Engine query error:", error);
 		return c.json({ error: "upstream_error", message }, 502);
 	}
 });
@@ -2490,6 +2635,7 @@ api.post("/projects/:projectId/rollback", async (c) => {
 	}
 });
 
+
 // GET /v1/projects/:projectId/crons - List cron schedules
 api.get("/projects/:projectId/crons", async (c) => {
 	const auth = c.get("auth");
@@ -2907,6 +3053,11 @@ api.delete("/projects/:projectId", async (c) => {
 	} catch (error) {
 		deletionResults.push({ resource: "kv_cache", success: false, error: String(error) });
 	}
+
+	// Clean up DO enforcement state (if any)
+	await c.env.DB.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
+		.bind(projectId)
+		.run();
 
 	// Soft-delete in DB
 	const now = new Date().toISOString();
@@ -5564,6 +5715,7 @@ const handler: ExportedHandler<Bindings> = {
 		ctx.waitUntil(sweepExpiredLogSessions(env));
 		ctx.waitUntil(pollPendingCustomDomains(env));
 		ctx.waitUntil(processDueCronSchedules(env, ctx));
+		ctx.waitUntil(processDoMetering(env));
 	},
 };
 

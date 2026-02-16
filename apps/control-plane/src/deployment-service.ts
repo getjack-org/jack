@@ -7,6 +7,7 @@ import {
 	createAssetManifest,
 	getMimeType,
 } from "./cloudflare-api";
+import { generateMeteringWrapper } from "./metering-wrapper";
 import { ProvisioningService } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
 import type { Bindings, Deployment, Project, ProjectConfig, Resource } from "./types";
@@ -43,11 +44,30 @@ interface ManifestData {
 				| "drop-trailing-slash"
 				| "none";
 		};
+		durable_objects?: Array<{
+			binding: string;
+			class_name: string;
+		}>;
 		vars?: Record<string, string>;
 	};
+	migrations?: Array<{
+		tag: string;
+		new_sqlite_classes?: string[];
+		deleted_classes?: string[];
+		renamed_classes?: Array<{ from: string; to: string }>;
+	}>;
 }
 
-const SUPPORTED_BINDING_KEYS = ["d1", "ai", "r2", "kv", "vectorize", "assets", "vars"] as const;
+const SUPPORTED_BINDING_KEYS = [
+	"d1",
+	"ai",
+	"r2",
+	"kv",
+	"vectorize",
+	"assets",
+	"vars",
+	"durable_objects",
+] as const;
 
 export interface ManifestValidationResult {
 	valid: boolean;
@@ -177,6 +197,38 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
 				}
 			}
 
+			// Validate Durable Object binding structure
+			if (bindings.durable_objects !== undefined) {
+				if (!Array.isArray(bindings.durable_objects)) {
+					errors.push("manifest.bindings.durable_objects must be an array");
+				} else {
+					for (let i = 0; i < bindings.durable_objects.length; i++) {
+						const dob = bindings.durable_objects[i] as Record<string, unknown>;
+						if (typeof dob !== "object" || dob === null) {
+							errors.push(`manifest.bindings.durable_objects[${i}] must be an object`);
+						} else {
+							if (typeof dob.binding !== "string") {
+								errors.push(`manifest.bindings.durable_objects[${i}].binding must be a string`);
+							}
+							if (typeof dob.class_name !== "string") {
+								errors.push(`manifest.bindings.durable_objects[${i}].class_name must be a string`);
+							}
+							// Reject __JACK_ prefixed binding or class names
+							if (typeof dob.binding === "string" && dob.binding.startsWith("__JACK_")) {
+								errors.push(
+									`manifest.bindings.durable_objects[${i}].binding uses reserved __JACK_ prefix`,
+								);
+							}
+							if (typeof dob.class_name === "string" && dob.class_name.startsWith("__JACK_")) {
+								errors.push(
+									`manifest.bindings.durable_objects[${i}].class_name uses reserved __JACK_ prefix`,
+								);
+							}
+						}
+					}
+				}
+			}
+
 			// Validate assets binding structure
 			if (bindings.assets !== undefined) {
 				const assets = bindings.assets as Record<string, unknown>;
@@ -203,6 +255,37 @@ export function validateManifest(manifest: unknown): ManifestValidationResult {
 							errors.push(`manifest.bindings.vars.${key} must be a string`);
 						}
 					}
+				}
+			}
+		}
+	}
+
+	// Require nodejs_compat when DO bindings are present
+	if (m.bindings && typeof m.bindings === "object") {
+		const bindings = m.bindings as Record<string, unknown>;
+		if (
+			bindings.durable_objects &&
+			Array.isArray(bindings.durable_objects) &&
+			bindings.durable_objects.length > 0
+		) {
+			const flags = m.compatibility_flags;
+			if (!Array.isArray(flags) || !flags.includes("nodejs_compat")) {
+				errors.push("Durable Objects require nodejs_compat in compatibility_flags");
+			}
+		}
+	}
+
+	// Validate migrations structure if present
+	if (m.migrations !== undefined) {
+		if (!Array.isArray(m.migrations)) {
+			errors.push("manifest.migrations must be an array if present");
+		} else {
+			for (let i = 0; i < m.migrations.length; i++) {
+				const mig = m.migrations[i] as Record<string, unknown>;
+				if (typeof mig !== "object" || mig === null) {
+					errors.push(`manifest.migrations[${i}] must be an object`);
+				} else if (typeof mig.tag !== "string") {
+					errors.push(`manifest.migrations[${i}].tag must be a string`);
 				}
 			}
 		}
@@ -440,10 +523,7 @@ export class DeploymentService {
 	 * If targetDeploymentId is provided, rolls back to that specific deployment.
 	 * Otherwise, rolls back to the deployment immediately before the current live one.
 	 */
-	async rollbackDeployment(
-		projectId: string,
-		targetDeploymentId?: string,
-	): Promise<Deployment> {
+	async rollbackDeployment(projectId: string, targetDeploymentId?: string): Promise<Deployment> {
 		let target: Deployment;
 
 		if (targetDeploymentId) {
@@ -496,7 +576,9 @@ export class DeploymentService {
 				.first<Deployment>();
 
 			if (!current) {
-				throw new Error("No live deployment found for this project. Deploy first before rolling back.");
+				throw new Error(
+					"No live deployment found for this project. Deploy first before rolling back.",
+				);
 			}
 
 			const previous = await this.db
@@ -507,9 +589,7 @@ export class DeploymentService {
 				.first<Deployment>();
 
 			if (!previous) {
-				throw new Error(
-					"No previous deployment found. This project has only been deployed once.",
-				);
+				throw new Error("No previous deployment found. This project has only been deployed once.");
 			}
 
 			target = previous;
@@ -557,7 +637,8 @@ export class DeploymentService {
 			// Deploy the code (reuse existing method)
 			// Do NOT re-execute schema.sql (forward-only, could be destructive)
 			// Do NOT re-apply secrets (persist on worker, re-applying could revert rotations)
-			await this.deployCodeToWorker(projectId, bundleZip, manifest, deploymentId, assetsZip);
+			// Do NOT re-apply DO migrations (classes already exist, would 412 on tag mismatch)
+			await this.deployCodeToWorker(projectId, bundleZip, manifest, deploymentId, assetsZip, undefined, { skipMigrations: true });
 
 			// Update deployment to 'live', reuse target's artifact prefix (don't copy artifacts)
 			await this.db
@@ -569,6 +650,12 @@ export class DeploymentService {
 
 			// Refresh cache after successful deployment
 			await this.refreshProjectCache(projectId);
+
+			// Clear DO enforcement state — rollback restores all bindings
+			await this.db
+				.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
+				.bind(projectId)
+				.run();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Rollback failed";
 			await this.db
@@ -646,23 +733,22 @@ export class DeploymentService {
 		projectId: string,
 		orgId: string,
 		intent: ManifestData["bindings"],
-	): Promise<DispatchScriptBinding[]> {
+	): Promise<{
+		bindings: DispatchScriptBinding[];
+		vectorizeBindingMap: Array<{ bindingName: string; indexName: string }>;
+	}> {
 		const bindings: DispatchScriptBinding[] = [];
+		const vectorizeBindingMap: Array<{ bindingName: string; indexName: string }> = [];
 
-		// Always add PROJECT_ID and ORG_ID as plain_text bindings
+		// Always add PROJECT_ID as plain_text binding (for user code)
 		bindings.push({
 			type: "plain_text",
 			name: "PROJECT_ID",
 			text: projectId,
 		});
-		bindings.push({
-			type: "plain_text",
-			name: "__JACK_ORG_ID",
-			text: orgId,
-		});
 
 		if (!intent) {
-			return bindings;
+			return { bindings, vectorizeBindingMap };
 		}
 
 		// Resolve D1 binding
@@ -697,10 +783,18 @@ export class DeploymentService {
 			});
 		}
 
-		// Resolve AI binding
-		// TODO: Re-enable service binding to proxy once authentication issue is resolved
-		// For now, use direct AI binding for deployment to work
+		// Resolve AI binding — route through metered proxy with unforgeable identity
 		if (intent.ai) {
+			// Service binding to proxy with ctx.props identity injection
+			bindings.push({
+				type: "service",
+				name: "__AI_PROXY",
+				service: "jack-binding-proxy",
+				entrypoint: "ProxyEntrypoint",
+				props: { projectId, orgId },
+			});
+
+			// Direct AI binding for the user's declared binding name
 			bindings.push({
 				type: "ai",
 				name: intent.ai.binding,
@@ -829,7 +923,54 @@ export class DeploymentService {
 					name: vecIntent.binding,
 					index_name: indexName,
 				});
+
+				vectorizeBindingMap.push({ bindingName: vecIntent.binding, indexName });
 			}
+
+			// Inject AE binding for vectorize metering
+			if (vectorizeBindingMap.length > 0) {
+				bindings.push({
+					type: "analytics_engine",
+					name: "__JACK_VECTORIZE_USAGE",
+					dataset: "jack_usage",
+				});
+			}
+		}
+
+		// Resolve Durable Object bindings
+		if (intent.durable_objects && Array.isArray(intent.durable_objects)) {
+			for (const dob of intent.durable_objects) {
+				bindings.push({
+					type: "durable_object_namespace",
+					name: dob.binding,
+					class_name: dob.class_name,
+				});
+
+				// Register DO as a resource if not already registered (for UI display)
+				const existingDO = await this.db
+					.prepare(
+						"SELECT id FROM resources WHERE project_id = ? AND resource_type = 'durable_object' AND binding_name = ? AND status != 'deleted'",
+					)
+					.bind(projectId, dob.binding)
+					.first();
+
+				if (!existingDO) {
+					await this.provisioningService.registerResourceWithBinding(
+						projectId,
+						"durable_object",
+						dob.binding,
+						dob.class_name,
+						dob.class_name,
+					);
+				}
+			}
+
+			// Inject __JACK_USAGE AE binding for DO metering wrapper
+			bindings.push({
+				type: "analytics_engine",
+				name: "__JACK_USAGE",
+				dataset: "jack_do_usage",
+			});
 		}
 
 		// Note: Assets are NOT resolved here as bindings.
@@ -847,7 +988,7 @@ export class DeploymentService {
 			}
 		}
 
-		return bindings;
+		return { bindings, vectorizeBindingMap };
 	}
 
 	/**
@@ -893,6 +1034,19 @@ export class DeploymentService {
 				input.assetManifest,
 			);
 
+			// Update DO migration tag after successful deployment
+			const manifestMigs = input.manifest.migrations;
+			const manifestDOs = input.manifest.bindings?.durable_objects;
+			if (manifestMigs && manifestMigs.length > 0 && manifestDOs && manifestDOs.length > 0) {
+				const lastTag = manifestMigs[manifestMigs.length - 1]?.tag;
+				if (lastTag) {
+					await this.db
+						.prepare("UPDATE projects SET do_migration_tag = ? WHERE id = ?")
+						.bind(lastTag, input.projectId)
+						.run();
+				}
+			}
+
 			// Set secrets (must be after worker upload)
 			if (input.secretsJson) {
 				await this.setSecrets(input.projectId, input.secretsJson);
@@ -908,6 +1062,12 @@ export class DeploymentService {
 
 			// Refresh cache after successful deployment
 			await this.refreshProjectCache(input.projectId);
+
+			// Clear DO enforcement state — a fresh deploy restores all bindings
+			await this.db
+				.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
+				.bind(input.projectId)
+				.run();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
 			await this.db
@@ -1003,6 +1163,7 @@ export class DeploymentService {
 		deploymentId: string,
 		assetsZip?: ArrayBuffer | null,
 		precomputedAssetManifest?: AssetManifest,
+		options?: { skipMigrations?: boolean },
 	): Promise<void> {
 		// Get worker name from resources
 		const workerResource = await this.db
@@ -1042,7 +1203,7 @@ export class DeploymentService {
 		if (!project) throw new Error(`Project ${projectId} not found`);
 
 		// Resolve bindings from manifest intent (uses manifest bindings, not legacy getBindingsForProject)
-		const bindings = await this.resolveBindingsFromManifest(
+		const { bindings, vectorizeBindingMap } = await this.resolveBindingsFromManifest(
 			projectId,
 			project.org_id,
 			manifest.bindings,
@@ -1054,6 +1215,77 @@ export class DeploymentService {
 			manifest.entrypoint,
 		);
 		const workerCode = new TextDecoder().decode(mainModule.content);
+
+		// Generate metering wrapper if DO or vectorize bindings present
+		let wrapperModule: WorkerModule | null = null;
+		let doMigrations:
+			| { old_tag: string; new_tag: string; steps: Array<Record<string, unknown>> }
+			| undefined;
+
+		const doClassNames = manifest.bindings?.durable_objects?.map((dob) => dob.class_name);
+		const hasDOs = doClassNames && doClassNames.length > 0;
+		// vectorizeBindingMap was collected during binding resolution
+		const hasVectorize = vectorizeBindingMap.length > 0;
+
+		if (hasDOs || hasVectorize) {
+			const wrapperSource = generateMeteringWrapper({
+				originalModule: mainModule.name,
+				projectId,
+				orgId: project.org_id,
+				doClassNames: hasDOs ? doClassNames : undefined,
+				vectorizeBindings: hasVectorize ? vectorizeBindingMap : undefined,
+			});
+
+			wrapperModule = {
+				name: "__jack_meter.mjs",
+				content: new TextEncoder().encode(wrapperSource),
+				mimeType: "application/javascript+module",
+			};
+		}
+
+		if (hasDOs) {
+			// Compute migration metadata (skip on rollback — classes already exist)
+			if (!options?.skipMigrations) {
+				const manifestMigrations = manifest.migrations;
+				if (manifestMigrations && manifestMigrations.length > 0) {
+					const currentTag = await this.db
+						.prepare("SELECT do_migration_tag FROM projects WHERE id = ?")
+						.bind(projectId)
+						.first<{ do_migration_tag: string | null }>();
+
+					const oldTag = currentTag?.do_migration_tag ?? "";
+					const lastMigration = manifestMigrations[manifestMigrations.length - 1];
+					const lastMigrationTag = lastMigration?.tag ?? "";
+
+					// Only include migrations if there are new ones to apply
+					if (oldTag !== lastMigrationTag) {
+						// Find migrations that need to be applied (after the old_tag)
+						let startIndex = 0;
+						if (oldTag) {
+							const oldTagIndex = manifestMigrations.findIndex((m) => m.tag === oldTag);
+							if (oldTagIndex >= 0) {
+								startIndex = oldTagIndex + 1;
+							}
+						}
+
+						const pendingMigrations = manifestMigrations.slice(startIndex);
+						if (pendingMigrations.length > 0) {
+							doMigrations = {
+								old_tag: oldTag,
+								new_tag: lastMigrationTag,
+								steps: pendingMigrations.map((m) => {
+									const step: Record<string, unknown> = {};
+									if (m.new_sqlite_classes) step.new_sqlite_classes = m.new_sqlite_classes;
+									if (m.deleted_classes) step.deleted_classes = m.deleted_classes;
+									if (m.renamed_classes) step.renamed_classes = m.renamed_classes;
+									return step;
+								}),
+							};
+						}
+					}
+				}
+			}
+		}
 
 		// Deploy with or without assets
 		if (hasAssetsZip && hasAssetsBinding) {
@@ -1067,19 +1299,37 @@ export class DeploymentService {
 				precomputedAssetManifest,
 				mainModule.name,
 				additionalModules,
+				wrapperModule,
+				doMigrations,
 			);
 		} else {
 			// Standard deployment without assets
+			// When metering wrapper is the main module, include the original mainModule as
+			// an additional module (so the wrapper can import from it) but don't include
+			// the wrapper itself (it's already sent as the main script content).
+			const allModules = wrapperModule
+				? [
+						...additionalModules,
+						{ name: mainModule.name, content: mainModule.content, mimeType: mainModule.mimeType },
+					]
+				: additionalModules;
+
+			const uploadMainModule = wrapperModule ? "__jack_meter.mjs" : mainModule.name;
+			const uploadCode = wrapperModule
+				? new TextDecoder().decode(wrapperModule.content)
+				: workerCode;
+
 			await this.cfClient.uploadDispatchScript(
 				DISPATCH_NAMESPACE,
 				workerResource.resource_name,
-				workerCode,
+				uploadCode,
 				bindings,
 				{
 					compatibilityDate: manifest.compatibility_date,
 					compatibilityFlags: manifest.compatibility_flags,
-					mainModule: mainModule.name,
-					additionalModules: additionalModules,
+					mainModule: uploadMainModule,
+					additionalModules: allModules,
+					migrations: doMigrations,
 				},
 			);
 
@@ -1110,6 +1360,8 @@ export class DeploymentService {
 		precomputedManifest?: AssetManifest,
 		mainModuleName?: string,
 		additionalModules?: WorkerModule[],
+		wrapperModule?: WorkerModule | null,
+		doMigrations?: { old_tag: string; new_tag: string; steps: Array<Record<string, unknown>> },
 	): Promise<void> {
 		// 1. Unzip assets
 		const files = unzipSync(new Uint8Array(assetsZip));
@@ -1181,23 +1433,41 @@ export class DeploymentService {
 		// 5. Upload script with assets binding
 		const assetsBinding = manifest.bindings?.assets?.binding || "ASSETS";
 
+		// Handle metering wrapper: wrapper becomes main_module, original main becomes additional
+		const allModules = additionalModules ? [...additionalModules] : [];
+		let finalMainModule = mainModuleName;
+		let finalWorkerCode = workerCode;
+
+		if (wrapperModule) {
+			// Add original main module as additional module (so wrapper can import it).
+			// Don't add the wrapper itself — it's sent as the main script content.
+			allModules.push({
+				name: mainModuleName ?? "worker.js",
+				content: new TextEncoder().encode(workerCode),
+				mimeType: "application/javascript+module",
+			});
+			finalMainModule = "__jack_meter.mjs";
+			finalWorkerCode = new TextDecoder().decode(wrapperModule.content);
+		}
+
 		await this.cfClient.uploadDispatchScriptWithAssets(
 			DISPATCH_NAMESPACE,
 			workerName,
-			workerCode,
+			finalWorkerCode,
 			bindings,
 			completionJwt,
 			assetsBinding,
 			{
 				compatibilityDate: manifest.compatibility_date,
 				compatibilityFlags: manifest.compatibility_flags,
-				mainModule: mainModuleName,
-				additionalModules: additionalModules,
+				mainModule: finalMainModule,
+				additionalModules: allModules,
 				assetConfig: {
 					html_handling: manifest.bindings?.assets?.html_handling || "auto-trailing-slash",
 					not_found_handling:
 						manifest.bindings?.assets?.not_found_handling || "single-page-application",
 				},
+				migrations: doMigrations,
 			},
 		);
 
@@ -1259,9 +1529,14 @@ export class DeploymentService {
 		};
 
 		const additionalModules: WorkerModule[] = [];
+		const moduleExtensions = new Set(["js", "mjs", "cjs", "wasm", "json"]);
 		for (const [filename, content] of Object.entries(files)) {
 			if (filename === entrypointName || content.length === 0) {
 				continue;
+			}
+			const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+			if (!moduleExtensions.has(ext)) {
+				continue; // Skip README.md, .map files, etc.
 			}
 			additionalModules.push({
 				name: filename,
@@ -1355,9 +1630,7 @@ export class DeploymentService {
 		let precomputedAssetManifest: AssetManifest | undefined;
 		if (assetManifestObj) {
 			try {
-				precomputedAssetManifest = JSON.parse(
-					await assetManifestObj.text(),
-				) as AssetManifest;
+				precomputedAssetManifest = JSON.parse(await assetManifestObj.text()) as AssetManifest;
 			} catch {
 				console.warn(
 					`Invalid asset-manifest.json for ${templateId}-v${cliVersion}, will compute hashes`,

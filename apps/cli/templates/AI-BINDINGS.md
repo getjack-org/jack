@@ -2,17 +2,15 @@
 
 ## Quick Reference for Coding Agents
 
-**DO NOT add `[ai]` or `[[vectorize]]` bindings directly for jack cloud projects.**
+### AI — Uses Proxy
 
-Jack cloud uses metered proxies for AI and Vectorize calls. Use the patterns below:
-
-### AI Pattern
+AI uses a metered proxy (`__AI_PROXY`). Templates need a `jack-ai.ts` wrapper:
 
 ```typescript
 import { createJackAI } from "./jack-ai";
 
 function getAI(env: Env) {
-  if (env.__AI_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
+  if (env.__AI_PROXY) {
     return createJackAI(env);
   }
   if (env.AI) {
@@ -26,81 +24,60 @@ const ai = getAI(env);
 const result = await ai.run("@cf/meta/llama-3.2-1b-instruct", { messages });
 ```
 
-### Vectorize Pattern
+### Vectorize — Direct Binding (Metered via Code Injection)
+
+Vectorize uses `env.VECTORS` directly. No wrapper needed. The control plane injects a metering
+layer at deploy time that wraps the binding before your code runs.
 
 ```typescript
-import { createJackVectorize } from "./jack-vectorize";
-
-const INDEX_NAME = "my-vectors";
-
-function getVectorize(env: Env) {
-  if (env.__VECTORIZE_PROXY && env.__JACK_PROJECT_ID && env.__JACK_ORG_ID) {
-    return createJackVectorize(env, INDEX_NAME);
-  }
-  if (env.VECTORS) {
-    return env.VECTORS;
-  }
-  throw new Error("No Vectorize binding available");
-}
-
-// Usage:
-const vectors = getVectorize(env);
-const results = await vectors.query(embedding, { topK: 10 });
-await vectors.insert([{ id: "doc1", values: embedding, metadata: {} }]);
+// Just use env.VECTORS — metering happens automatically
+const results = await env.VECTORS.query(embedding, { topK: 10 });
+await env.VECTORS.insert([{ id: "doc1", values: embedding, metadata: {} }]);
 ```
 
-## Why This Pattern?
+**Do NOT create a vectorize wrapper.** The old `jack-vectorize.ts` proxy pattern is deprecated.
 
-Jack cloud is multi-tenant. All users share Cloudflare's AI quota (10k neurons/day). Without metering:
-- One user could exhaust the daily quota for everyone
-- No visibility into per-project usage
-- No ability to bill for AI usage
+## Why Different Patterns?
 
-The proxy:
-1. Checks per-project quota
-2. Logs usage to Analytics Engine
-3. Forwards to real AI binding
-4. Returns response unchanged
+- **AI** is a global shared service. The proxy enforces per-project quota (sync check before forwarding).
+- **Vectorize** is per-tenant (each project gets its own index). The control plane wraps `env.VECTORS` via code injection (`__jack_meter.mjs`) for async metering. No proxy needed.
 
 ## Environment Bindings
 
 ### Jack Cloud (Managed Deploy)
 
-Control plane injects these bindings:
-- `__AI_PROXY` - Service binding to jack-binding-proxy for AI
-- `__VECTORIZE_PROXY` - Service binding to jack-binding-proxy for Vectorize
-- `__JACK_PROJECT_ID` - Project ID for metering
-- `__JACK_ORG_ID` - Organization ID for billing
+Control plane injects:
+- `__AI_PROXY` — Service binding to jack-binding-proxy for AI (metering + quota)
+- `VECTORS` — Direct Vectorize binding to the project's own index
+- `__JACK_VECTORIZE_USAGE` — Analytics Engine binding for vectorize metering (injected, not visible to user code)
 
-`env.AI` and `env.VECTORS` are **NOT available** in jack cloud. Direct calls will fail.
+`env.AI` is **NOT available** in jack cloud (use `getAI()` helper). `env.VECTORS` **IS available** directly.
 
 ### Local Development
 
 wrangler.jsonc provides:
-- `AI` - Direct Cloudflare AI binding for local testing
-- `VECTORS` - Direct Vectorize binding for local testing
+- `AI` — Direct Cloudflare AI binding for local testing
+- `VECTORS` — Direct Vectorize binding for local testing
 
-The helper functions automatically use the right binding based on environment.
+The `getAI()` helper automatically uses the right binding. For vectorize, `env.VECTORS` works in both environments.
 
 ## Template Pattern
 
 ### AI Templates
 
-1. **src/jack-ai.ts** - Client wrapper (copy from ai-chat or semantic-search template)
+1. **src/jack-ai.ts** — Client wrapper (copy from ai-chat or semantic-search template)
 
 2. **Env interface** with optional bindings:
 ```typescript
 interface Env {
   AI?: Ai;                    // Local dev
   __AI_PROXY?: Fetcher;       // Jack cloud
-  __JACK_PROJECT_ID?: string; // Jack cloud
-  __JACK_ORG_ID?: string;     // Jack cloud
 }
 ```
 
 3. **getAI() helper** that handles both environments
 
-4. **wrangler.jsonc** with AI binding for local dev only:
+4. **wrangler.jsonc** with AI binding:
 ```jsonc
 {
   "ai": { "binding": "AI" }
@@ -109,21 +86,16 @@ interface Env {
 
 ### Vectorize Templates
 
-1. **src/jack-vectorize.ts** - Client wrapper (copy from semantic-search template)
-
-2. **Env interface** with optional bindings:
+1. **Env interface** with direct binding:
 ```typescript
 interface Env {
-  VECTORS?: VectorizeIndex;      // Local dev
-  __VECTORIZE_PROXY?: Fetcher;   // Jack cloud
-  __JACK_PROJECT_ID?: string;    // Jack cloud
-  __JACK_ORG_ID?: string;        // Jack cloud
+  VECTORS: VectorizeIndex;
 }
 ```
 
-3. **getVectorize() helper** that handles both environments
+2. **Use `env.VECTORS` directly** — no wrapper, no helper needed
 
-4. **wrangler.jsonc** with Vectorize binding for local dev only:
+3. **wrangler.jsonc** with Vectorize binding:
 ```jsonc
 {
   "vectorize": [{
@@ -135,8 +107,6 @@ interface Env {
 ```
 
 ## Error Handling
-
-Quota exceeded returns 429:
 
 ### AI Quota
 ```typescript
@@ -150,21 +120,9 @@ try {
 }
 ```
 
-### Vectorize Quota
-```typescript
-try {
-  const results = await vectors.query(embedding, { topK: 10 });
-} catch (error) {
-  if (error.code === "VECTORIZE_QUERY_QUOTA_EXCEEDED") {
-    // Query limit (33,000/day) reached
-    console.log(`Retry in ${error.resetIn} seconds`);
-  }
-  if (error.code === "VECTORIZE_MUTATION_QUOTA_EXCEEDED") {
-    // Mutation limit (10,000/day) reached
-    console.log(`Retry in ${error.resetIn} seconds`);
-  }
-}
-```
+### Vectorize
+
+Vectorize calls go directly to the binding. There is no sync quota enforcement — metering is async via Analytics Engine. If Cloudflare's own rate limits are hit, the binding returns standard errors.
 
 ## BYOC Mode
 
@@ -176,6 +134,6 @@ For Bring Your Own Cloud deployments:
 
 ## See Also
 
-- `/docs/internal/specs/binding-proxy-worker.md` - Full architecture spec
-- `apps/binding-proxy-worker/` - Proxy implementation
-- `apps/control-plane/src/deployment-service.ts` - Binding injection logic
+- `apps/binding-proxy-worker/` — AI proxy implementation
+- `apps/control-plane/src/metering-wrapper.ts` — Vectorize metering code injection
+- `apps/control-plane/src/deployment-service.ts` — Binding injection logic

@@ -1,0 +1,183 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { ControlPlaneClient } from "./control-plane.ts";
+import { createDatabase, executeSql, listDatabases } from "./tools/database.ts";
+import { deploy } from "./tools/deploy-code.ts";
+import { getLogs } from "./tools/logs.ts";
+import { getProjectStatus, listProjects } from "./tools/projects.ts";
+import { rollbackProject } from "./tools/rollback.ts";
+import { listProjectFiles, readProjectFile } from "./tools/source.ts";
+import type { Bindings } from "./types.ts";
+
+export function createMcpServer(token: string, env: Bindings): McpServer {
+	const server = new McpServer({
+		name: "jack",
+		version: "1.0.0",
+	});
+
+	const client = new ControlPlaneClient(token, env.CONTROL_PLANE_URL || undefined);
+
+	server.tool(
+		"deploy",
+		`Deploy to Jack Cloud. Three modes (pass exactly one):
+- files: Full file set for a brand-new project. Pass all source files as { "path": "content" }. Only use this for the FIRST deploy of a new custom project.
+- template: Deploy a prebuilt template (hello, api, miniapp, nextjs, saas). Always creates a new project.
+- changes: Partial update to an existing project. Pass only changed/added files as { "path": "new content" } or { "path": null } to delete. Requires project_id.
+
+IMPORTANT: To update an existing project, ALWAYS use changes mode with project_id. Do NOT use files mode for existing projects — it replaces all files and may create a duplicate project. If the user mentions an existing app, call list_projects first to find its project_id, then use changes.`,
+		{
+			files: z
+				.record(z.string(), z.string())
+				.optional()
+				.describe(
+					'Full file set as { "path": "content" }. Example: { "src/index.ts": "import { Hono } from \\"hono\\";" }',
+				),
+			template: z
+				.string()
+				.optional()
+				.describe("Prebuilt template name (e.g. 'api', 'hello', 'miniapp', 'nextjs', 'saas')"),
+			changes: z
+				.record(z.string(), z.string().nullable())
+				.optional()
+				.describe(
+					'Partial file changes as { "path": "new content" } or { "path": null } to delete. Requires project_id.',
+				),
+			project_id: z
+				.string()
+				.optional()
+				.describe("Existing project ID (required for changes, optional for files)"),
+			project_name: z
+				.string()
+				.optional()
+				.describe("Project name for new projects (auto-generated if omitted)"),
+			compatibility_flags: z
+				.array(z.string())
+				.optional()
+				.describe('Worker compatibility flags (default: ["nodejs_compat"])'),
+		},
+		async (params) => {
+			return deploy(client, params);
+		},
+	);
+
+	server.tool(
+		"list_projects",
+		"List all projects deployed to Jack Cloud for the authenticated user. Call this FIRST when the user refers to an existing app or project to find its project_id before using other tools.",
+		{},
+		async () => {
+			return listProjects(client);
+		},
+	);
+
+	server.tool(
+		"get_project_status",
+		"Get deployment status, live URL, and resources for a project.",
+		{
+			project_id: z.string().describe("The project ID"),
+		},
+		async ({ project_id }) => {
+			return getProjectStatus(client, project_id);
+		},
+	);
+
+	server.tool(
+		"get_logs",
+		"Open a LIVE log stream for up to 5 seconds and return any log entries captured during that window. This is NOT historical — it only shows logs from requests that happen WHILE listening. To capture logs: call this tool, then immediately ask the user to visit the app URL (or make a request yourself). If no requests hit the worker during the 5-second window, the result will be empty. Use to debug runtime errors after deploying.",
+		{
+			project_id: z.string().describe("The project ID"),
+		},
+		async ({ project_id }) => {
+			return getLogs(client, project_id);
+		},
+	);
+
+	server.tool(
+		"list_project_files",
+		"List all source files in a deployed project. Use before read_project_file to see what files exist, or before deploying with changes to understand current project structure.",
+		{
+			project_id: z.string().describe("The project ID"),
+		},
+		async ({ project_id }) => {
+			return listProjectFiles(client, project_id);
+		},
+	);
+
+	server.tool(
+		"read_project_file",
+		"Read the contents of a single source file from a deployed project. Use after list_project_files to inspect specific files before making changes with deploy(changes).",
+		{
+			project_id: z.string().describe("The project ID"),
+			path: z.string().describe("File path from list_project_files (e.g. 'src/index.ts')"),
+		},
+		async ({ project_id, path }) => {
+			return readProjectFile(client, project_id, path);
+		},
+	);
+
+	server.tool(
+		"create_database",
+		"Create a D1 SQL database for a project. Accessible in Worker code via env.DB (or custom binding_name). After creation, redeploy the project with deploy(changes) for the binding to activate. Use list_databases first to check if one already exists.",
+		{
+			project_id: z.string().describe("The project ID"),
+			name: z.string().optional().describe("Database name (auto-generated if omitted)"),
+			binding_name: z
+				.string()
+				.optional()
+				.describe(
+					"Worker binding name, how your code accesses the DB (default: 'DB'). Use 'DB' unless your code uses a different name.",
+				),
+		},
+		async ({ project_id, name, binding_name }) => {
+			return createDatabase(client, project_id, name, binding_name);
+		},
+	);
+
+	server.tool(
+		"list_databases",
+		"List D1 databases attached to a project. Use to check if a database exists before creating one or executing SQL.",
+		{
+			project_id: z.string().describe("The project ID"),
+		},
+		async ({ project_id }) => {
+			return listDatabases(client, project_id);
+		},
+	);
+
+	server.tool(
+		"execute_sql",
+		"Execute SQL against a project's D1 database. Read-only by default (SELECT, PRAGMA). Set allow_write=true for INSERT, UPDATE, DELETE, CREATE TABLE. Destructive operations (DROP, TRUNCATE, ALTER) are always blocked — use the Jack CLI for those.",
+		{
+			project_id: z.string().describe("The project ID"),
+			sql: z.string().describe("SQL statement to execute"),
+			params: z.array(z.unknown()).optional().describe("Bind parameters for parameterized queries"),
+			allow_write: z
+				.boolean()
+				.optional()
+				.describe(
+					"Allow write operations (INSERT, UPDATE, DELETE, CREATE TABLE). Default: false (read-only).",
+				),
+		},
+		async ({ project_id, sql, params, allow_write }) => {
+			return executeSql(client, project_id, sql, params, allow_write);
+		},
+	);
+
+	server.tool(
+		"rollback_project",
+		"Roll back to a previous deployment. Only rolls back code — database state and secrets are unchanged. Use when a deploy broke something and you need to quickly revert.",
+		{
+			project_id: z.string().describe("The project ID"),
+			deployment_id: z
+				.string()
+				.optional()
+				.describe(
+					"Specific deployment ID to roll back to (defaults to previous successful deployment)",
+				),
+		},
+		async ({ project_id, deployment_id }) => {
+			return rollbackProject(client, project_id, deployment_id);
+		},
+	);
+
+	return server;
+}

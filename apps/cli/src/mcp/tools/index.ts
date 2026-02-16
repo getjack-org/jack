@@ -26,6 +26,7 @@ import {
 	listDomains,
 	unassignDomain,
 } from "../../lib/services/domain-operations.ts";
+import { deleteProject } from "../../lib/services/project-delete.ts";
 import { createStorageBucket } from "../../lib/services/storage-create.ts";
 import { deleteStorageBucket } from "../../lib/services/storage-delete.ts";
 import { getStorageBucketInfo } from "../../lib/services/storage-info.ts";
@@ -224,6 +225,18 @@ const RollbackProjectSchema = z.object({
 		.describe("Path to project directory (defaults to current directory)"),
 });
 
+const DeleteProjectSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+	export_database: z
+		.boolean()
+		.optional()
+		.default(false)
+		.describe("Export database to a SQL file before deletion"),
+});
+
 const ListDomainsSchema = z.object({});
 
 const ConnectDomainSchema = z.object({
@@ -419,6 +432,25 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							project_path: {
 								type: "string",
 								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "delete_project",
+					description:
+						"Permanently delete a project and all its resources (worker, database). This is irreversible. Optionally export the database to a SQL file before deletion.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+							export_database: {
+								type: "boolean",
+								default: false,
+								description: "Export database to a SQL file before deletion",
 							},
 						},
 					},
@@ -1151,6 +1183,48 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 									null,
 									2,
 								),
+							},
+						],
+					};
+				}
+
+				case "delete_project": {
+					const args = DeleteProjectSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedDeleteProject = withTelemetry(
+						"delete_project",
+						async (projectDir: string, exportDatabase: boolean) => {
+							const result = await deleteProject(projectDir, { exportDatabase });
+
+							track(Events.PROJECT_DELETED, {
+								deploy_mode: result.deployMode,
+								database_deleted: result.databaseDeleted,
+								database_exported: result.databaseExportPath !== null,
+								platform: "mcp",
+							});
+
+							return {
+								project_name: result.projectName,
+								deploy_mode: result.deployMode,
+								worker_deleted: result.workerDeleted,
+								database_deleted: result.databaseDeleted,
+								database_name: result.databaseName,
+								database_export_path: result.databaseExportPath,
+								resource_results: result.resourceResults,
+								warnings: result.warnings,
+							};
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedDeleteProject(projectPath, args.export_database ?? false);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
 							},
 						],
 					};
