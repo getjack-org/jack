@@ -945,6 +945,24 @@ export class DeploymentService {
 					name: dob.binding,
 					class_name: dob.class_name,
 				});
+
+				// Register DO as a resource if not already registered (for UI display)
+				const existingDO = await this.db
+					.prepare(
+						"SELECT id FROM resources WHERE project_id = ? AND resource_type = 'durable_object' AND binding_name = ? AND status != 'deleted'",
+					)
+					.bind(projectId, dob.binding)
+					.first();
+
+				if (!existingDO) {
+					await this.provisioningService.registerResourceWithBinding(
+						projectId,
+						"durable_object",
+						dob.binding,
+						dob.class_name,
+						dob.class_name,
+					);
+				}
 			}
 
 			// Inject __JACK_USAGE AE binding for DO metering wrapper

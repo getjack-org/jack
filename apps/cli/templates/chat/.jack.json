@@ -1,0 +1,45 @@
+{
+	"name": "chat",
+	"description": "AI chat with real-time rooms — no database, no WebSocket server, just code",
+	"secrets": [],
+	"capabilities": ["ai"],
+	"intent": {
+		"keywords": [
+			"chat",
+			"realtime",
+			"room",
+			"websocket",
+			"multiplayer",
+			"ai chat",
+			"agent",
+			"durable object",
+			"collaborative"
+		],
+		"examples": [
+			"real-time AI chat",
+			"multi-user chatroom",
+			"collaborative AI assistant",
+			"shareable chat rooms",
+			"websocket chat app"
+		]
+	},
+	"agentContext": {
+		"summary": "Real-time AI chat with persistent, shareable rooms. No database or WebSocket infrastructure — just one class that handles persistence, real-time sync, and AI streaming out of the box.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` — Worker entry, routes agent requests and serves assets\n- `src/chat-agent.ts` — AIChatAgent subclass with AI streaming logic\n- `src/jack-ai.ts` — Jack AI proxy wrapper (do not modify)\n- `src/client/` — React app with chat UI (prompt-kit components)\n\n## What You Get For Free\n\n- **Real-time sync** — share a link, anyone who opens it joins the same conversation live\n- **Persistence** — close your browser, come back tomorrow, conversation is still there\n- **Automatic scaling** — 1 room or 100,000 rooms, same code, no config\n- **Zero infrastructure** — no database, no WebSocket server, no pub/sub, no load balancer\n\n## AI Integration\n\nUses AI SDK `streamText` with workers-ai-provider and `extractReasoningMiddleware` for chain-of-thought models.\n\n### Changing Models\n\nEdit the model in `src/chat-agent.ts`:\n```typescript\n// Fast general-purpose\nmodel: provider('@cf/meta/llama-3.3-70b-instruct-fp8-fast')\n\n// Reasoning (shows thinking process)\nmodel: provider('@cf/deepseek-ai/deepseek-r1-distill-qwen-32b')\n```\n\nThe reasoning middleware extracts `<think>` tags automatically — just swap the model.\n\n### Using OpenAI Instead\n\nInstall `@ai-sdk/openai`, set `OPENAI_API_KEY` secret, then change `chat-agent.ts` to use the OpenAI provider.\n\n## Multi-User Rooms\n\n- Every new chat creates a room with a unique link\n- Share the link — anyone who opens it joins the same conversation in real-time\n- Each room is fully isolated with its own message history\n\n## UI Components (prompt-kit)\n\n- `Message` — structured message layout with avatars\n- `Markdown` — GFM rendering with styled code blocks\n- `Reasoning` — collapsible chain-of-thought display\n- `ChatContainer` — smart auto-scroll\n- `PromptSuggestion` — clickable suggestion chips\n- `ScrollButton` — floating scroll-to-bottom\n\n## Resources\n\n- [Agents SDK Docs](https://developers.cloudflare.com/agents/)\n- [AI SDK Docs](https://sdk.vercel.ai/docs)\n- [Workers AI Models](https://developers.cloudflare.com/workers-ai/models)\n- [prompt-kit](https://prompt-kit.com)"
+	},
+	"hooks": {
+		"postDeploy": [
+			{ "action": "clipboard", "text": "{{url}}", "message": "URL copied to clipboard" },
+			{
+				"action": "box",
+				"title": "{{name}}",
+				"lines": [
+					"{{url}}",
+					"",
+					"Share the link — anyone who opens it joins your chat in real-time",
+					"jack open  to start chatting"
+				]
+			}
+		]
+	}
+}

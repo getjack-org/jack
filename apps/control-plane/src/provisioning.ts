@@ -456,7 +456,7 @@ export class ProvisioningService {
 	 */
 	async registerResourceWithBinding(
 		projectId: string,
-		type: "r2" | "kv" | "vectorize" | "ai",
+		type: "r2" | "kv" | "vectorize" | "ai" | "durable_object",
 		bindingName: string,
 		resourceName: string,
 		providerId: string,
