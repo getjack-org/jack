@@ -29,6 +29,16 @@ export interface AuthorizationPendingResponse {
 	error_description: string;
 }
 
+export interface MagicAuthResponse {
+	id: string;
+	user_id: string;
+	email: string;
+	expires_at: string;
+	code: string; // present in WorkOS response but we NEVER return this
+	created_at: string;
+	updated_at: string;
+}
+
 export interface WorkOSErrorResponse {
 	error: string;
 	error_description: string;

@@ -11,3 +11,9 @@ WORKOS_CLIENT_ID = "client_01KD3D0QAQF4YXP4ZS8DX00CW6"
 
 # Secrets (set via `wrangler secret put`):
 # - WORKOS_API_KEY
+
+[[unsafe.bindings]]
+name = "MAGIC_AUTH_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }

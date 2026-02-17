@@ -13,7 +13,14 @@ import { isCancel } from "../hooks.ts";
 import { promptSelect } from "../hooks.ts";
 import { celebrate, error, info, spinner, success, warn } from "../output.ts";
 import { identifyUser } from "../telemetry.ts";
-import { type DeviceAuthResponse, pollDeviceToken, startDeviceAuth } from "./client.ts";
+import {
+	type DeviceAuthResponse,
+	type MagicAuthStartResponse,
+	pollDeviceToken,
+	startDeviceAuth,
+	startMagicAuth,
+	verifyMagicAuth,
+} from "./client.ts";
 import { type AuthCredentials, saveCredentials } from "./store.ts";
 
 export interface LoginFlowOptions {
@@ -143,6 +150,163 @@ export async function runLoginFlow(options?: LoginFlowOptions): Promise<LoginFlo
 	pollSpin.stop();
 	error("Login timed out. Please try again.");
 	return { success: false };
+}
+
+// ============================================================================
+// Magic Auth Flow (headless / agent login)
+// ============================================================================
+
+export interface MagicAuthFlowOptions {
+	email: string;
+	/** 6-digit code from email. If omitted: sends code, then prompts (TTY) or exits (non-TTY). */
+	code?: string;
+	silent?: boolean;
+}
+
+export interface MagicAuthFlowResult {
+	success: boolean;
+	/** Set when code was sent but not yet verified (step 1 only) */
+	codeSent?: boolean;
+	token?: string; // jkt_* token
+	user?: { id: string; email: string; first_name: string | null; last_name: string | null };
+}
+
+/**
+ * Magic auth login flow. Two modes:
+ *
+ * 1. No code provided → sends verification email.
+ *    - TTY: prompts for code inline, then completes login.
+ *    - Non-TTY: prints instructions and exits (agent runs again with --code).
+ *
+ * 2. Code provided → skips send, verifies directly → register → create jkt_* token.
+ */
+export async function runMagicAuthFlow(
+	options: MagicAuthFlowOptions,
+): Promise<MagicAuthFlowResult> {
+	const { email } = options;
+	let code = options.code;
+
+	// If no code provided, send the magic auth email first
+	if (!code) {
+		if (!options.silent) {
+			info(`Sending verification code to ${email}...`);
+			console.error("");
+		}
+
+		const sendSpin = spinner("Sending code...");
+		try {
+			await startMagicAuth(email);
+			sendSpin.stop();
+		} catch (err) {
+			sendSpin.stop();
+			error(err instanceof Error ? err.message : "Failed to send verification code");
+			return { success: false };
+		}
+
+		info("Check your email for a 6-digit code.");
+
+		const isInteractive = process.stdout.isTTY && !process.env.CI;
+
+		// Interactive: prompt inline so human-supervised agents can paste the code
+		if (isInteractive) {
+			console.error("");
+			const codeInput = await text({
+				message: "Enter code:",
+				validate: (value) => {
+					if (!value || value.trim().length === 0) return "Code is required";
+					if (!/^\d{6}$/.test(value.trim())) return "Enter the 6-digit code from your email";
+				},
+			});
+
+			if (isCancel(codeInput)) {
+				warn("Login cancelled.");
+				return { success: false };
+			}
+			code = codeInput.trim();
+		} else {
+			// Non-TTY: exit so agent can re-run with --code
+			console.error("");
+			info("Then run:");
+			info(`  jack login --email ${email} --code <CODE>`);
+			return { success: true, codeSent: true };
+		}
+	}
+
+	// Verify code and complete login
+	const verifySpin = spinner("Verifying code...");
+
+	try {
+		const tokens = await verifyMagicAuth(email, code);
+		verifySpin.stop();
+
+		// Save credentials (needed for authFetch in subsequent calls)
+		const expiresIn = tokens.expires_in ?? 300;
+		const creds: AuthCredentials = {
+			access_token: tokens.access_token,
+			refresh_token: tokens.refresh_token,
+			expires_at: Math.floor(Date.now() / 1000) + expiresIn,
+			user: tokens.user,
+		};
+		await saveCredentials(creds);
+
+		// Register user in control plane
+		try {
+			await registerUser({
+				email: tokens.user.email,
+				first_name: tokens.user.first_name,
+				last_name: tokens.user.last_name,
+			});
+		} catch (_regError) {
+			error("Failed to complete login - could not reach jack cloud.");
+			error("Please check your internet connection and try again.");
+			return { success: false };
+		}
+
+		// Link user identity for analytics
+		await identifyUser(tokens.user.id, { email: tokens.user.email });
+
+		// Create API token for headless use
+		let apiToken: string | undefined;
+		try {
+			const { createApiToken } = await import("../services/token-operations.ts");
+			const tokenResult = await createApiToken("Magic Auth Token");
+			apiToken = tokenResult.token;
+		} catch (_err) {
+			warn("Could not create API token. You can create one later with 'jack tokens create'.");
+		}
+
+		// Prompt for username only when interactive
+		if (process.stdout.isTTY && !process.env.CI) {
+			await promptForUsername(tokens.user.email, tokens.user.first_name);
+		}
+
+		const isInteractive = process.stdout.isTTY && !process.env.CI;
+
+		console.error("");
+		success(`Logged in as ${tokens.user.email}`);
+
+		if (apiToken) {
+			if (isInteractive) {
+				success(`API token created: ${apiToken.slice(0, 12)}...`);
+				console.error("");
+				info("Your token has been saved. You can also set it as:");
+				info(`  export JACK_API_TOKEN=${apiToken}`);
+			} else {
+				info("jack CLI is now authenticated. Future commands will use this session.");
+				info(`API token for other tools: ${apiToken}`);
+			}
+		}
+
+		return {
+			success: true,
+			token: apiToken,
+			user: tokens.user,
+		};
+	} catch (err) {
+		verifySpin.stop();
+		error(err instanceof Error ? err.message : "Verification failed");
+		return { success: false };
+	}
 }
 
 function sleep(ms: number): Promise<void> {

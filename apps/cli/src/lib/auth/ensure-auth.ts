@@ -143,7 +143,7 @@ export async function ensureAuthForCreate(
 	if (!interactive) {
 		// Non-interactive and no auth available - this is an error condition
 		throw new Error(
-			"Not logged in and wrangler not authenticated. Run 'jack login' or 'wrangler login' first.",
+			"Not logged in. Run 'jack login --email <email>' or set JACK_API_TOKEN for headless use.",
 		);
 	}
 
