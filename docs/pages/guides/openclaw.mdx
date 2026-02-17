@@ -19,7 +19,7 @@ One skill. Full cloud deployment.
 - **Create projects** — `jack new my-api` scaffolds, configures, and deploys in one command
 - **Ship changes** — `jack ship` builds and pushes to production in seconds
 - **Add a database** — `jack services db create` provisions SQLite and wires the bindings
-- **Query data** — `jack db execute "SELECT * FROM users"` runs against production
+- **Query data** — `jack services db execute "SELECT * FROM users"` runs against production
 - **Stream logs** — `jack logs` for real-time debugging
 - **Manage secrets** — `jack secrets set API_KEY` without touching a dashboard
 
@@ -49,7 +49,7 @@ The skill teaches CLI-first commands, with MCP tool equivalents noted throughout
 |------|-----|----------|
 | Deploy | `jack ship` | `mcp__jack__deploy_project` |
 | Status | `jack info` | `mcp__jack__get_project_status` |
-| Query DB | `jack db execute "..."` | `mcp__jack__execute_sql` |
+| Query DB | `jack services db execute "..."` | `mcp__jack__execute_sql` |
 | Create DB | `jack services db create` | `mcp__jack__create_database` |
 | Logs | `jack logs` | `mcp__jack__tail_logs` |
 
@@ -61,7 +61,7 @@ Key commands support `--json` for machine-readable output:
 jack ship --json
 # {"success":true,"projectName":"my-api","url":"https://my-api.runjack.xyz","deployMode":"managed"}
 
-jack db execute --json "SELECT count(*) as n FROM users"
+jack services db execute --json "SELECT count(*) as n FROM users"
 # {"success":true,"results":[{"n":42}],"meta":{"duration_ms":12}}
 ```
 
@@ -74,7 +74,7 @@ Agent: I'll create a new API project with a database.
 
 > jack new my-api --template api
 > jack services db create
-> jack db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+> jack services db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
 
 Now I'll add a route to query items and deploy.
 

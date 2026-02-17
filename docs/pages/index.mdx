@@ -10,15 +10,27 @@
   .dark .hero-logo .logo-light { display: none; }
 `}</style>
 
-# The deployment platform for Claude Code.
+# Stop doing deployment setup for your AI.
 
-One command. Claude creates the project, provisions the database, and ships it to a live URL.
+Your agent writes the code. Jack ships it to production reliably.
+
+No deploy setup, no infra decisions, no pipeline wiring.
+
+### Install CLI + local MCP (recommended)
 
 ```bash
 curl -fsSL docs.getjack.org/install.sh | bash
 ```
 
-Installs the CLI, configures MCP for your AI editor. Auth happens on first deploy.
+Includes the full local MCP toolset and CLI workflow. Auth happens automatically on first use.
+
+### Or connect remote MCP (no install)
+
+```bash
+claude mcp add --transport http jack https://mcp.getjack.org/mcp
+```
+
+Fastest path for Claude Code with zero local setup.
 
 <div style={{ display: 'flex', gap: '1.5rem', margin: '1.5rem 0', fontSize: '1.1rem' }}>
   <a href="https://www.npmjs.com/package/@getjack/jack">npm</a>
@@ -30,16 +42,15 @@ Installs the CLI, configures MCP for your AI editor. Auth happens on first deplo
 
 ---
 
-## Claude Code deploys for you
+## Your Agent Deploys For You
 
-Claude already writes your code. Let it deploy too.
+Claude Code already writes your code. Let it ship too.
 
 ```
 Claude Code
-> "build me a REST API for todos with a database"
+> "build me a REST API for todos and deploy it"
 
 ✓ Created todo-api from api template
-✓ Provisioned D1 database
 ✓ Deployed to edge
 → https://todo-api.runjack.xyz
 ```
@@ -51,15 +62,15 @@ curl https://todo-api.runjack.xyz/todos
 
 ---
 
-## Zero to live URL in one command
+## From Prompt to Production URL
 
-`jack new` scaffolds from a template, provisions infrastructure, and deploys — all at once.
+`jack new` gets you a first deploy. Add services only when you need them.
 
 ```bash
-jack new my-api --template api        # Create and deploy
-jack services db create               # Add a database
-jack db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)"
-jack ship                             # Push changes live
+jack new my-api --template api                 # Create and deploy
+jack services db create                        # Optional: add a database
+jack services db execute --write "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)"
+jack ship                                      # Push changes live
 ```
 
 ---
@@ -71,9 +82,9 @@ D1 databases, R2 storage, KV, and vector search. Provisioned and wired automatic
 | Capability | How |
 |-----------|-----|
 | **Database** | `jack services db create` — SQLite, wired automatically |
-| **Query** | `jack db execute "SELECT * FROM users"` — runs against production |
+| **Query** | `jack services db execute "SELECT * FROM users"` — runs against production |
 | **Storage** | `jack services storage create` — file uploads |
-| **Vector search** | `jack services vectorize create` — embeddings index |
+| **Vector search** | `mcp__jack__create_vectorize_index` — embeddings index |
 
 ---
 
