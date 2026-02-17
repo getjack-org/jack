@@ -8,9 +8,9 @@
 	},
 	"dependencies": {
 		"@ai-sdk/react": "^3.0.88",
-		"@cloudflare/ai-chat": "^0.0.8",
+		"@cloudflare/ai-chat": "^0.1.0",
 		"@tailwindcss/typography": "^0.5.19",
-		"agents": "^0.4",
+		"agents": "^0.5",
 		"ai": "^6",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",

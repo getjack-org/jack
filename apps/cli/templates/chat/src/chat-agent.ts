@@ -29,6 +29,8 @@ function getAIProvider(env: Env) {
 }
 
 export class Chat extends AIChatAgent<Env> {
+	maxPersistedMessages = 500;
+
 	async onChatMessage(onFinish: StreamTextOnFinishCallback<ToolSet>) {
 		const provider = getAIProvider(this.env);
 
