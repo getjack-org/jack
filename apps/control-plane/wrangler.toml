@@ -22,6 +22,16 @@ id = "1745e7c2b059484c81d39c694201d061"
 binding = "CODE_BUCKET"
 bucket_name = "jack-code-internal"
 
+[[queues.producers]]
+binding = "ASK_INDEX_QUEUE"
+queue = "ask-index-jobs"
+
+[[queues.consumers]]
+queue = "ask-index-jobs"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 4
+
 [[dispatch_namespaces]]
 binding = "TENANT_DISPATCH"
 namespace = "jack-tenants"
@@ -53,6 +63,11 @@ simple = { limit = 30, period = 60 }
 binding = "USAGE"
 dataset = "jack_usage"
 
+# Analytics Engine dataset for control-plane feature usage
+[[analytics_engine_datasets]]
+binding = "CONTROL_USAGE"
+dataset = "jack_control_usage"
+
 # Note: Run `wrangler d1 create jack-control-db` first
 # Then add the database_id here
 # Secrets (set via wrangler secret put <NAME>):
@@ -65,3 +80,4 @@ dataset = "jack_usage"
 # - DAIMO_API_KEY          # Daimo API key (from Daimo team)
 # - DAIMO_WEBHOOK_SECRET   # Daimo webhook basic auth token
 # - DAIMO_RECEIVER_ADDRESS # Wallet address to receive USDC on Base
+# - POSTHOG_API_KEY        # Optional: server-side product analytics capture

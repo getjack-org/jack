@@ -5,6 +5,9 @@ export {
 	pollDeviceToken,
 	refreshToken,
 	startDeviceAuth,
+	startMagicAuth,
+	verifyMagicAuth,
+	type MagicAuthStartResponse,
 } from "./client.ts";
 export {
 	ensureAuthForCreate,
@@ -14,8 +17,11 @@ export {
 export { requireAuth, requireAuthOrLogin, getCurrentUser } from "./guard.ts";
 export {
 	runLoginFlow,
+	runMagicAuthFlow,
 	type LoginFlowOptions,
 	type LoginFlowResult,
+	type MagicAuthFlowOptions,
+	type MagicAuthFlowResult,
 } from "./login-flow.ts";
 export {
 	deleteCredentials,

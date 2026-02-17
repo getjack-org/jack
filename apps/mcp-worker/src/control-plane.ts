@@ -26,6 +26,27 @@ export interface LogSessionInfo {
 	status: string;
 }
 
+export interface AskProjectHintInput {
+	endpoint?: string;
+	method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+	deployment_id?: string;
+}
+
+export interface AskProjectEvidence {
+	id: string;
+	type: string;
+	source: string;
+	summary: string;
+	timestamp: string;
+	relation: "supports" | "conflicts" | "gap";
+	meta?: Record<string, unknown>;
+}
+
+export interface AskProjectResult {
+	answer: string;
+	evidence: AskProjectEvidence[];
+}
+
 export class ControlPlaneClient {
 	private baseUrl: string;
 	private token: string;
@@ -77,9 +98,7 @@ export class ControlPlaneClient {
 		}
 	}
 
-	async getProjectResources(
-		projectId: string,
-	): Promise<{
+	async getProjectResources(projectId: string): Promise<{
 		resources: Array<{
 			id: string;
 			resource_type: string;
@@ -303,10 +322,13 @@ export class ControlPlaneClient {
 		});
 	}
 
-	async listDatabases(
-		projectId: string,
-	): Promise<{
-		resources: Array<{ id: string; resource_type: string; resource_name: string; binding_name: string | null }>;
+	async listDatabases(projectId: string): Promise<{
+		resources: Array<{
+			id: string;
+			resource_type: string;
+			resource_name: string;
+			binding_name: string | null;
+		}>;
 	}> {
 		const { resources } = await this.getProjectResources(projectId);
 		return { resources: resources.filter((r) => r.resource_type === "d1") };
@@ -328,6 +350,24 @@ export class ControlPlaneClient {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(deploymentId ? { deployment_id: deploymentId } : {}),
+		});
+	}
+
+	async askProject(
+		projectId: string,
+		question: string,
+		hints?: AskProjectHintInput,
+	): Promise<AskProjectResult> {
+		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/ask`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Jack-Source": "mcp_remote",
+			},
+			body: JSON.stringify({
+				question,
+				hints,
+			}),
 		});
 	}
 }

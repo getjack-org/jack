@@ -242,7 +242,7 @@ describe("ensureAuthForCreate", () => {
 			mockHasWrangler.mockResolvedValue(false);
 
 			await expect(ensureAuthForCreate({ interactive: false })).rejects.toThrow(
-				"Not logged in and wrangler not authenticated",
+				"Not logged in. Run 'jack login --email <email>' or set JACK_API_TOKEN for headless use.",
 			);
 		});
 

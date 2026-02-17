@@ -14,7 +14,7 @@ Install jack and configure MCP in one command:
 curl -fsSL docs.getjack.org/install.sh | bash
 ```
 
-Start a new Claude Code session (or `/mcp reconnect jack`), then ask Claude to deploy something. Auth happens automatically on first use.
+Start a new Claude Code session (or `/mcp reconnect jack`), then ask Claude to deploy something.
 
 **No terminal?** Use the remote MCP server from Claude Desktop or Claude.ai:
 
@@ -23,6 +23,54 @@ https://mcp.getjack.org/mcp
 ```
 
 The remote server has 10 tools (deploy, projects, databases, logs, files). Install locally for the full 27-tool experience.
+
+## Authentication
+
+Agents need to authenticate before deploying. There are three ways, depending on your setup.
+
+### Pre-existing token (simplest)
+
+If you already have an API token, set it as an environment variable. No login needed.
+
+```bash
+export JACK_API_TOKEN=jkt_abc123...
+```
+
+Create tokens with `jack tokens create`.
+
+### Magic auth (headless, no browser)
+
+For agents that can send/receive email, or for human-supervised setups where a human can read the code from email.
+
+**Two-step flow (fully non-interactive):**
+
+```bash
+jack login --email agent@example.com
+```
+
+This sends a 6-digit verification code to the email and exits. Then:
+
+```bash
+jack login --email agent@example.com --code 847291
+```
+
+This verifies the code, registers the account, and creates a `jkt_*` API token. The CLI is authenticated for all future commands. The token is also printed to stdout for programmatic capture.
+
+**Interactive flow (human-supervised):**
+
+If running in a terminal, `jack login --email you@example.com` will prompt for the code inline — the human reads it from email and pastes it.
+
+**Environment variables:**
+
+| Variable | Purpose |
+|----------|---------|
+| `JACK_EMAIL` | Same as `--email` flag — triggers magic auth automatically |
+| `JACK_API_TOKEN` | Skip login entirely, use an existing token |
+| `CI=true` | Forces non-interactive mode (no prompts) |
+
+### Browser login (interactive humans)
+
+Running `jack login` without `--email` opens a browser for OAuth login. This is the default for interactive terminal sessions. If no browser is available, it fails fast with instructions to use `--email` instead.
 
 ## MCP Server
 

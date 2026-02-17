@@ -193,6 +193,12 @@ const cli = meow(
 			to: {
 				type: "string",
 			},
+			email: {
+				type: "string",
+			},
+			code: {
+				type: "string",
+			},
 		},
 	},
 );
@@ -485,7 +491,13 @@ try {
 		}
 		case "login": {
 			const { default: login } = await import("./commands/login.ts");
-			await withTelemetry("login", login)();
+			await withTelemetry(
+				"login",
+				login,
+			)({
+				email: cli.flags.email || process.env.JACK_EMAIL,
+				code: cli.flags.code,
+			});
 			break;
 		}
 		case "logout": {

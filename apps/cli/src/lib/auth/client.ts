@@ -58,6 +58,41 @@ export async function pollDeviceToken(deviceCode: string): Promise<TokenResponse
 	return response.json() as Promise<TokenResponse>;
 }
 
+export interface MagicAuthStartResponse {
+	id: string;
+	email: string;
+}
+
+export async function startMagicAuth(email: string): Promise<MagicAuthStartResponse> {
+	const response = await fetch(`${getAuthApiUrl()}/auth/magic`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ email }),
+	});
+
+	if (!response.ok) {
+		const errorBody = (await response.json().catch(() => ({}))) as { message?: string };
+		throw new Error(errorBody.message || "Failed to send verification code");
+	}
+
+	return response.json() as Promise<MagicAuthStartResponse>;
+}
+
+export async function verifyMagicAuth(email: string, code: string): Promise<TokenResponse> {
+	const response = await fetch(`${getAuthApiUrl()}/auth/magic/verify`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ email, code }),
+	});
+
+	if (!response.ok) {
+		const errorBody = (await response.json().catch(() => ({}))) as { message?: string };
+		throw new Error(errorBody.message || "Invalid or expired code");
+	}
+
+	return response.json() as Promise<TokenResponse>;
+}
+
 export async function refreshToken(refreshTokenValue: string): Promise<TokenResponse> {
 	const response = await fetch(`${getAuthApiUrl()}/auth/refresh`, {
 		method: "POST",
