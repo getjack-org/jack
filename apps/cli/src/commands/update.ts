@@ -65,7 +65,7 @@ export default async function update(): Promise<void> {
 			const installedApps = await installMcpConfigsToAllApps();
 			if (installedApps.length > 0) {
 				info(`MCP config updated for: ${installedApps.join(", ")}`);
-				info("Restart your Claude Code / Codex session to use the new version");
+				info("Restart your coding agent session to use the new version");
 			}
 		} catch {
 			// Non-critical - don't fail update if MCP repair fails
