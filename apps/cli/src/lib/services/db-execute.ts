@@ -9,11 +9,14 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { $ } from "bun";
 import { type ExecuteSqlResponse, executeManagedSql } from "../control-plane.ts";
 import { readProjectLink } from "../project-link.ts";
-import { type D1BindingConfig, getExistingD1Bindings } from "../wrangler-config.ts";
+import {
+	type D1BindingConfig,
+	findWranglerConfig,
+	getExistingD1Bindings,
+} from "../wrangler-config.ts";
 import {
 	type ClassifiedStatement,
 	type RiskLevel,
@@ -98,9 +101,9 @@ export class DestructiveOperationError extends Error {
  * Get the first D1 database configured for a project
  */
 export async function getDefaultDatabase(projectDir: string): Promise<D1BindingConfig | null> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
 
-	if (!existsSync(wranglerPath)) {
+	if (!wranglerPath) {
 		return null;
 	}
 
@@ -119,9 +122,9 @@ export async function getDatabaseByName(
 	projectDir: string,
 	databaseName: string,
 ): Promise<D1BindingConfig | null> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
 
-	if (!existsSync(wranglerPath)) {
+	if (!wranglerPath) {
 		return null;
 	}
 

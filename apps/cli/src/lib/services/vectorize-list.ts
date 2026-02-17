@@ -4,7 +4,7 @@
  * Lists Vectorize indexes configured in wrangler.jsonc with their metadata.
  */
 
-import { join } from "node:path";
+import { findWranglerConfig } from "../wrangler-config.ts";
 import { getExistingVectorizeBindings } from "./vectorize-config.ts";
 import { getVectorizeInfo } from "./vectorize-info.ts";
 
@@ -23,9 +23,12 @@ export interface VectorizeListEntry {
  * (dimensions, metric, vector count) via wrangler vectorize info for each index.
  */
 export async function listVectorizeIndexes(projectDir: string): Promise<VectorizeListEntry[]> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
+	if (!wranglerPath) {
+		return [];
+	}
 
-	// Get existing Vectorize bindings from wrangler.jsonc
+	// Get existing Vectorize bindings from wrangler config
 	const bindings = await getExistingVectorizeBindings(wranglerPath);
 
 	if (bindings.length === 0) {

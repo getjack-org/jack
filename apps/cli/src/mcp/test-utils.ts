@@ -156,3 +156,34 @@ export async function callMcpGetProjectStatus(
 
 	return parseMcpToolResult(response);
 }
+
+export async function callMcpGetProjectEnvironment(
+	client: Client,
+	args: { project_path?: string },
+): Promise<unknown> {
+	const response = await client.callTool({
+		name: "get_project_environment",
+		arguments: args,
+	});
+
+	return parseMcpToolResult(response);
+}
+
+export async function callMcpTestEndpoint(
+	client: Client,
+	args: {
+		project_path?: string;
+		path: string;
+		method?: string;
+		headers?: Record<string, string>;
+		body?: string;
+		include_logs?: boolean;
+	},
+): Promise<unknown> {
+	const response = await client.callTool({
+		name: "test_endpoint",
+		arguments: args,
+	});
+
+	return parseMcpToolResult(response);
+}

@@ -4,6 +4,8 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { parseJsonc } from "../jsonc.ts";
+import { findWranglerConfig } from "../wrangler-config.ts";
 
 // Re-export submodules
 export * from "./checksum.ts";
@@ -63,34 +65,30 @@ export interface CloudProject {
  * @throws Error if wrangler file not found or name not found
  */
 export async function getProjectNameFromDir(projectDir: string): Promise<string> {
-	// Try wrangler.toml first
-	const tomlPath = join(projectDir, "wrangler.toml");
-	try {
-		const content = await Bun.file(tomlPath).text();
-		const match = content.match(/^name\s*=\s*["']([^"']+)["']/m);
-		if (match?.[1]) {
-			return match[1];
-		}
-	} catch {
-		// File doesn't exist, try JSON
+	const configPath = findWranglerConfig(projectDir);
+	if (!configPath) {
+		throw new Error(
+			"Could not find project name. Please ensure wrangler.toml or wrangler.jsonc exists with a 'name' field",
+		);
 	}
 
-	// Try wrangler.jsonc
-	const jsoncPath = join(projectDir, "wrangler.jsonc");
 	try {
-		const content = await Bun.file(jsoncPath).text();
-		// Remove comments and parse JSON
-		// Note: Only remove line comments at the start of a line (with optional whitespace)
-		// to avoid breaking URLs like https://example.com
-		const jsonContent = content
-			.replace(/\/\*[\s\S]*?\*\//g, "") // block comments
-			.replace(/^\s*\/\/.*$/gm, ""); // line comments at start of line only
-		const config = JSON.parse(jsonContent);
-		if (config.name) {
-			return config.name;
+		const content = await Bun.file(configPath).text();
+
+		if (configPath.endsWith(".toml")) {
+			const match = content.match(/^name\s*=\s*["']([^"']+)["']/m);
+			if (match?.[1]) {
+				return match[1];
+			}
+		} else {
+			// .jsonc or .json
+			const config = parseJsonc<{ name?: string }>(content);
+			if (config.name) {
+				return config.name;
+			}
 		}
 	} catch {
-		// File doesn't exist or parse failed
+		// Parse failed
 	}
 
 	throw new Error(

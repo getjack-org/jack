@@ -80,10 +80,8 @@ export default async function logs(options: LogsOptions = {}): Promise<void> {
 	}
 
 	// BYOC requires a wrangler config in the working directory.
-	const hasWranglerJson = existsSync("wrangler.jsonc") || existsSync("wrangler.json");
-	const hasWranglerToml = existsSync("wrangler.toml");
-
-	if (!hasWranglerJson && !hasWranglerToml) {
+	const { hasWranglerConfig } = await import("../lib/wrangler-config.ts");
+	if (!hasWranglerConfig(process.cwd())) {
 		output.error("No wrangler config found");
 		output.info("Run this from a jack project directory");
 		process.exit(1);

@@ -87,6 +87,43 @@ export function generateByoProjectId(): string {
 }
 
 /**
+ * Build the managed project URL for a given slug.
+ *
+ * If the link has owner_username, uses it directly. Otherwise fetches it
+ * from the control plane and backfills the local link for future calls.
+ *
+ * @param slug - Project slug (e.g. "cozy-paws-relate")
+ * @param ownerUsername - Owner username if already known
+ * @param projectDir - Project directory (for backfilling the link). If omitted, no backfill.
+ */
+export async function buildManagedUrl(
+	slug: string,
+	ownerUsername?: string | null,
+	projectDir?: string,
+): Promise<string> {
+	if (ownerUsername) {
+		return `https://${ownerUsername}-${slug}.runjack.xyz`;
+	}
+
+	// Fetch from control plane to resolve owner_username
+	try {
+		const { findProjectBySlug } = await import("./control-plane.ts");
+		const project = await findProjectBySlug(slug);
+		if (project?.owner_username) {
+			// Backfill local link so subsequent calls are fast
+			if (projectDir) {
+				updateProjectLink(projectDir, { owner_username: project.owner_username }).catch(() => {});
+			}
+			return `https://${project.owner_username}-${slug}.runjack.xyz`;
+		}
+	} catch {
+		// Control plane unavailable, fall through
+	}
+
+	return `https://${slug}.runjack.xyz`;
+}
+
+/**
  * Link a local directory to a control plane project (managed)
  * or create a local-only link (BYO with provided/generated ID)
  */

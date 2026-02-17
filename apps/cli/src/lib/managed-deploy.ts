@@ -19,6 +19,7 @@ import { createFileCountProgress, createUploadProgress } from "./progress.ts";
 import type { OperationReporter } from "./project-operations.ts";
 import { getProjectTags } from "./tags.ts";
 import { Events, track, trackActivationIfFirst } from "./telemetry.ts";
+import { findWranglerConfig } from "./wrangler-config.ts";
 import { packageForDeploy } from "./zip-packager.ts";
 
 export interface ManagedCreateResult {
@@ -112,7 +113,7 @@ export async function deployCodeToManagedProject(
 
 		// Step 1.5: Auto-fix DO prerequisites (after build so we have output to validate)
 		if (config.durable_objects?.bindings?.length) {
-			const configPath = join(projectPath, "wrangler.jsonc");
+			const configPath = findWranglerConfig(projectPath) ?? join(projectPath, "wrangler.jsonc");
 			const fixes: string[] = [];
 
 			const addedCompat = await ensureNodejsCompat(configPath, config);

@@ -1,8 +1,12 @@
 /**
- * Utilities for modifying wrangler.jsonc while preserving comments
+ * Utilities for wrangler config detection and modification.
+ *
+ * All wrangler config path resolution should go through this module.
+ * Priority: .jsonc > .toml > .json (jsonc is jack's default)
  */
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
 	addSectionBeforeClosingBrace,
 	findLastObjectEndInArray,
@@ -11,6 +15,36 @@ import {
 	shouldAddCommaBefore,
 } from "./jsonc-edit.ts";
 import { parseJsonc } from "./jsonc.ts";
+
+// ============================================================================
+// Wrangler Config Path Resolution
+// ============================================================================
+
+/** Canonical priority order: jsonc (jack's default) > toml > json */
+const WRANGLER_CONFIG_NAMES = ["wrangler.jsonc", "wrangler.toml", "wrangler.json"] as const;
+
+/**
+ * Find the wrangler config file in a project directory.
+ * Returns the full absolute path, or null if none found.
+ */
+export function findWranglerConfig(projectDir: string): string | null {
+	for (const name of WRANGLER_CONFIG_NAMES) {
+		const fullPath = join(projectDir, name);
+		if (existsSync(fullPath)) return fullPath;
+	}
+	return null;
+}
+
+/**
+ * Check whether a project directory has any wrangler config file.
+ */
+export function hasWranglerConfig(projectDir: string): boolean {
+	return findWranglerConfig(projectDir) !== null;
+}
+
+// ============================================================================
+// D1 Binding Config
+// ============================================================================
 
 export interface D1BindingConfig {
 	binding: string; // e.g., "DB" or "ANALYTICS_DB"

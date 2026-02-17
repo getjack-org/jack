@@ -47,10 +47,8 @@ export default async function link(projectName?: string, flags: LinkFlags = {}):
 	}
 
 	// Check for wrangler config
-	const hasWranglerConfig =
-		existsSync("wrangler.jsonc") || existsSync("wrangler.json") || existsSync("wrangler.toml");
-
-	if (!hasWranglerConfig) {
+	const { hasWranglerConfig } = await import("../lib/wrangler-config.ts");
+	if (!hasWranglerConfig(process.cwd())) {
 		error("No wrangler config found");
 		console.error("");
 		info("Jack needs a wrangler.toml or wrangler.jsonc to deploy.");

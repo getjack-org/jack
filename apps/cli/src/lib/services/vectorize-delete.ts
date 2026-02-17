@@ -4,8 +4,8 @@
  * Uses wrangler CLI to delete Vectorize indexes.
  */
 
-import { join } from "node:path";
 import { $ } from "bun";
+import { findWranglerConfig } from "../wrangler-config.ts";
 import { removeVectorizeBinding } from "./vectorize-config.ts";
 
 export interface DeleteVectorizeResult {
@@ -42,9 +42,11 @@ export async function deleteVectorizeIndex(
 	// Delete via wrangler
 	await deleteIndexViaWrangler(indexName);
 
-	// Remove binding from wrangler.jsonc
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
-	const bindingRemoved = await removeVectorizeBinding(wranglerPath, indexName);
+	// Remove binding from wrangler config
+	const wranglerPath = findWranglerConfig(projectDir);
+	const bindingRemoved = wranglerPath
+		? await removeVectorizeBinding(wranglerPath, indexName)
+		: false;
 
 	return {
 		indexName,

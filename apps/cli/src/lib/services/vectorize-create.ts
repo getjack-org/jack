@@ -7,6 +7,7 @@
 import { join } from "node:path";
 import { $ } from "bun";
 import { getProjectNameFromDir } from "../storage/index.ts";
+import { findWranglerConfig } from "../wrangler-config.ts";
 import { addVectorizeBinding, getExistingVectorizeBindings } from "./vectorize-config.ts";
 
 export type VectorizeMetric = "cosine" | "euclidean" | "dot-product";
@@ -128,7 +129,7 @@ export async function createVectorizeIndex(
 	const projectName = await getProjectNameFromDir(projectDir);
 
 	// Get existing Vectorize bindings to determine naming
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir) ?? join(projectDir, "wrangler.jsonc");
 	const existingBindings = await getExistingVectorizeBindings(wranglerPath);
 	const existingCount = existingBindings.length;
 

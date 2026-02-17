@@ -517,8 +517,10 @@ async function dbDelete(options: ServiceOptions): Promise<void> {
 		// Remove binding from wrangler.jsonc (both modes)
 		// Note: We need to find the LOCAL database_name from wrangler.jsonc,
 		// which may differ from the control plane's resource_name
-		const { removeD1Binding, getExistingD1Bindings } = await import("../lib/wrangler-config.ts");
-		const configPath = join(projectDir, "wrangler.jsonc");
+		const { removeD1Binding, getExistingD1Bindings, findWranglerConfig } = await import(
+			"../lib/wrangler-config.ts"
+		);
+		const configPath = findWranglerConfig(projectDir) ?? join(projectDir, "wrangler.jsonc");
 
 		let bindingRemoved = false;
 		try {

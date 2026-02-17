@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { $ } from "bun";
 import { fetchProjectResources } from "../control-plane.ts";
 import { readProjectLink } from "../project-link.ts";
+import { findWranglerConfig } from "../wrangler-config.ts";
 import { getExistingR2Bindings } from "./storage-config.ts";
 
 export interface StorageBucketInfo {
@@ -46,7 +47,7 @@ export async function getStorageBucketInfo(
 	projectDir: string,
 	bucketName?: string,
 ): Promise<StorageBucketInfo | null> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir) ?? join(projectDir, "wrangler.jsonc");
 
 	// Read deploy mode from .jack/project.json
 	const link = await readProjectLink(projectDir);

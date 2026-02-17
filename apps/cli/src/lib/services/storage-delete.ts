@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { $ } from "bun";
 import { deleteProjectResource, fetchProjectResources } from "../control-plane.ts";
 import { readProjectLink } from "../project-link.ts";
+import { findWranglerConfig } from "../wrangler-config.ts";
 import { getExistingR2Bindings, removeR2Binding } from "./storage-config.ts";
 
 export interface DeleteStorageBucketResult {
@@ -49,9 +50,9 @@ export async function deleteStorageBucket(
 		throw new Error("Not in a jack project. Run 'jack new' to create a project.");
 	}
 
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir) ?? join(projectDir, "wrangler.jsonc");
 
-	// Verify bucket exists in wrangler.jsonc
+	// Verify bucket exists in wrangler config
 	const bindings = await getExistingR2Bindings(wranglerPath);
 	const binding = bindings.find((b) => b.bucket_name === bucketName);
 

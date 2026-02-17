@@ -4,6 +4,7 @@ import { $ } from "bun";
 import { debug } from "./debug.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { output } from "./output.ts";
+import { findWranglerConfig } from "./wrangler-config.ts";
 
 /**
  * Execute schema.sql on a D1 database after deploy
@@ -47,9 +48,9 @@ export async function applySchema(bindingOrDbName: string, projectDir: string): 
  * Check if project has D1 database configured (has d1_databases in wrangler config)
  */
 export async function hasD1Config(projectDir: string): Promise<boolean> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
 
-	if (!existsSync(wranglerPath)) {
+	if (!wranglerPath) {
 		return false;
 	}
 
@@ -71,9 +72,9 @@ export interface D1Binding {
  * Read D1 bindings from wrangler.jsonc
  */
 export async function getD1Bindings(projectDir: string): Promise<D1Binding[]> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
 
-	if (!existsSync(wranglerPath)) {
+	if (!wranglerPath) {
 		return [];
 	}
 
@@ -91,20 +92,15 @@ export async function getD1Bindings(projectDir: string): Promise<D1Binding[]> {
  * Returns the database_name field which is needed for wrangler d1 execute
  */
 export async function getD1DatabaseName(projectDir: string): Promise<string | null> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
 
-	if (!existsSync(wranglerPath)) {
+	if (!wranglerPath) {
 		return null;
 	}
 
 	try {
 		const content = await Bun.file(wranglerPath).text();
-		// Strip comments for parsing
-		// Note: Only remove line comments at the start of a line to avoid breaking URLs
-		const cleaned = content
-			.replace(/\/\*[\s\S]*?\*\//g, "") // block comments
-			.replace(/^\s*\/\/.*$/gm, ""); // line comments at start of line only
-		const config = JSON.parse(cleaned);
+		const config = parseJsonc<{ d1_databases?: { database_name?: string }[] }>(content);
 
 		return config.d1_databases?.[0]?.database_name || null;
 	} catch {

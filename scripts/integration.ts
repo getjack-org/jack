@@ -12,8 +12,10 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
+	callMcpGetProjectEnvironment,
 	callMcpGetProjectStatus,
 	callMcpListProjects,
+	callMcpTestEndpoint,
 	verifyMcpToolsAndResources,
 } from "../apps/cli/src/mcp/test-utils.ts";
 
@@ -325,7 +327,10 @@ async function connectMcp(expectedDeployed: boolean | null): Promise<void> {
 			throw new Error("MCP list_projects did not include the test project");
 		}
 
-		const statusData = (await callMcpGetProjectStatus(client, { name: projectName })) as {
+		const statusData = (await callMcpGetProjectStatus(client, {
+			name: projectName,
+			project_path: projectDir,
+		})) as {
 			deployed?: boolean;
 			local?: boolean;
 			name?: string;
@@ -354,6 +359,106 @@ async function connectMcp(expectedDeployed: boolean | null): Promise<void> {
 	}
 }
 
+async function testMcpEnvironmentAndEndpoint(): Promise<void> {
+	const transport = new StdioClientTransport({
+		command: jackCommand,
+		args: [...jackBaseArgs, "mcp", "serve", "--project", projectDir],
+		env: jackEnv,
+		cwd: repoRoot,
+		stderr: "pipe",
+	});
+
+	let stderrBuffer = "";
+	transport.stderr?.on("data", (chunk) => {
+		stderrBuffer += chunk.toString();
+	});
+
+	const client = new Client({ name: "jack-integration", version: "0.1.0" });
+
+	try {
+		await client.connect(transport);
+
+		// --- get_project_environment ---
+		console.log("  Testing get_project_environment...");
+		const env = (await callMcpGetProjectEnvironment(client, {
+			project_path: projectDir,
+		})) as {
+			project?: { name?: string; url?: string; deploy_mode?: string };
+			bindings?: Record<string, unknown>;
+			database?: { tables?: unknown[] } | null;
+			crons?: unknown[];
+			issues?: unknown[];
+		};
+
+		if (!env.project?.name) {
+			throw new Error("get_project_environment: missing project.name");
+		}
+		if (!env.project?.url) {
+			throw new Error("get_project_environment: missing project.url");
+		}
+		if (!env.project?.deploy_mode) {
+			throw new Error("get_project_environment: missing project.deploy_mode");
+		}
+		if (!env.bindings || typeof env.bindings !== "object") {
+			throw new Error("get_project_environment: missing bindings");
+		}
+		if (!Array.isArray(env.issues)) {
+			throw new Error("get_project_environment: issues should be an array");
+		}
+		console.log(
+			`  get_project_environment OK (name=${env.project.name}, url=${env.project.url}, ` +
+				`mode=${env.project.deploy_mode}, tables=${env.database?.tables?.length ?? 0})`,
+		);
+
+		// --- test_endpoint (GET /) ---
+		console.log("  Testing test_endpoint (GET /)...");
+		const testResult = (await callMcpTestEndpoint(client, {
+			project_path: projectDir,
+			path: "/",
+			method: "GET",
+			include_logs: false, // Skip logs to speed up the test
+		})) as {
+			request?: { method?: string; url?: string };
+			response?: { status?: number; body?: string; duration_ms?: number };
+			logs?: unknown[];
+		};
+
+		if (!testResult.request?.url) {
+			throw new Error("test_endpoint: missing request.url");
+		}
+		if (testResult.request?.method !== "GET") {
+			throw new Error("test_endpoint: expected method=GET");
+		}
+		if (typeof testResult.response?.status !== "number") {
+			throw new Error("test_endpoint: missing response.status");
+		}
+		if (testResult.response.status >= 500) {
+			throw new Error(`test_endpoint: server error ${testResult.response.status}`);
+		}
+		if (typeof testResult.response?.duration_ms !== "number") {
+			throw new Error("test_endpoint: missing response.duration_ms");
+		}
+		if (!Array.isArray(testResult.logs)) {
+			throw new Error("test_endpoint: logs should be an array");
+		}
+		console.log(
+			`  test_endpoint OK (status=${testResult.response.status}, ` +
+				`duration=${testResult.response.duration_ms}ms, logs=${testResult.logs.length})`,
+		);
+
+		console.log("MCP new tools OK");
+	} catch (error) {
+		if (stderrBuffer.trim()) {
+			console.error("\nMCP server stderr:");
+			console.error(stderrBuffer.trim());
+		}
+		throw error;
+	} finally {
+		await client.close();
+		await transport.close();
+	}
+}
+
 const steps: Step[] = [
 	{
 		name: `Create + deploy (${projectName}, template=${template})`,
@@ -370,6 +475,12 @@ const steps: Step[] = [
 		name: "Connect to MCP + list tools/resources",
 		run: async () => {
 			await connectMcp(true);
+		},
+	},
+	{
+		name: "Test get_project_environment + test_endpoint",
+		run: async () => {
+			await testMcpEnvironmentAndEndpoint();
 		},
 	},
 	{

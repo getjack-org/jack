@@ -5,9 +5,8 @@
  * or parsed from wrangler.jsonc (BYO).
  */
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { parseJsonc } from "./jsonc.ts";
+import { findWranglerConfig } from "./wrangler-config.ts";
 
 // Resource types matching control plane schema
 export type ResourceType =
@@ -88,10 +87,10 @@ export function convertControlPlaneResources(resources: ControlPlaneResource[]):
  * Returns a unified resource view.
  */
 export async function parseWranglerResources(projectPath: string): Promise<ResolvedResources> {
-	const wranglerPath = join(projectPath, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectPath);
 
-	if (!existsSync(wranglerPath)) {
-		return {};
+	if (!wranglerPath) {
+		return {} as ResolvedResources;
 	}
 
 	try {

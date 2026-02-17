@@ -5,7 +5,7 @@
  * For managed projects, fetches metadata via control plane instead of wrangler.
  */
 
-import { join } from "node:path";
+import { findWranglerConfig } from "../wrangler-config.ts";
 import { getExistingR2Bindings } from "./storage-config.ts";
 
 export interface StorageBucketListEntry {
@@ -23,9 +23,12 @@ export interface StorageBucketListEntry {
  * the configured bindings. For detailed info, use storage info.
  */
 export async function listStorageBuckets(projectDir: string): Promise<StorageBucketListEntry[]> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
+	if (!wranglerPath) {
+		return [];
+	}
 
-	// Get existing R2 bindings from wrangler.jsonc
+	// Get existing R2 bindings from wrangler config
 	const bindings = await getExistingR2Bindings(wranglerPath);
 
 	if (bindings.length === 0) {

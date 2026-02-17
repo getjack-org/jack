@@ -224,3 +224,17 @@ Rules:
 **Before implementing complex integrations with external systems, validate assumptions about their semantics.**
 
 We assumed Cloudflare's `active` status meant "domain is working" when it actually only means "SSL cert is ready". Always verify what external API statuses actually mean by checking official docs (use Exa MCP) before designing state machines around them. A design that trusts external signals without verification will break when those signals don't mean what you assumed.
+
+**Before writing new utility logic, search for existing implementations first.**
+
+The runjack.xyz URL construction (`https://{username}-{slug}.runjack.xyz`) was copy-pasted into 8+ files. When a field (`owner_username`) was added later, only new call sites got it — legacy projects hit the wrong URL. The fix was a single `buildManagedUrl()` function with fallback + backfill logic, but it required touching every call site.
+
+Rules:
+1. Before writing a helper, `grep` for similar patterns in the codebase — someone likely already solved it
+2. If logic appears in 2+ places, extract it into a shared function immediately
+3. Shared utilities belong in `apps/cli/src/lib/` (not inline in commands or MCP handlers)
+4. Key shared utilities that already exist — use them instead of reimplementing:
+   - `buildManagedUrl()` in `project-link.ts` — runjack.xyz URL construction
+   - `findWranglerConfig()` in `wrangler-config.ts` — wrangler config path resolution (supports .jsonc, .json, .toml)
+   - `parseJsonc()` in `jsonc.ts` — JSONC parsing (never use regex comment stripping)
+   - `readProjectLink()` + `getDeployMode()` in `project-link.ts` — project link and deploy mode

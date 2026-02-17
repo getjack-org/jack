@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -6,19 +6,7 @@ import { $ } from "bun";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { parseJsonc } from "./jsonc.ts";
 import type { OperationReporter } from "./project-operations.ts";
-
-/**
- * Get the wrangler config file path for a project
- */
-function getWranglerConfigPath(projectPath: string): string | null {
-	const configs = ["wrangler.jsonc", "wrangler.toml", "wrangler.json"];
-	for (const config of configs) {
-		if (existsSync(join(projectPath, config))) {
-			return config;
-		}
-	}
-	return null;
-}
+import { findWranglerConfig } from "./wrangler-config.ts";
 
 export interface BuildOutput {
 	outDir: string;
@@ -90,12 +78,12 @@ export interface WranglerConfig {
  * @returns Parsed wrangler configuration
  */
 export async function parseWranglerConfig(projectPath: string): Promise<WranglerConfig> {
-	const wranglerPath = join(projectPath, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectPath);
 
-	if (!existsSync(wranglerPath)) {
+	if (!wranglerPath) {
 		throw new JackError(
 			JackErrorCode.VALIDATION_ERROR,
-			"wrangler.jsonc not found",
+			"wrangler config not found",
 			"Ensure your project has a wrangler.jsonc configuration file",
 		);
 	}
@@ -225,7 +213,7 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 	// Run wrangler dry-run to build without deploying
 	reporter?.start("Bundling runtime...");
 
-	const configFile = getWranglerConfigPath(projectPath);
+	const configFile = findWranglerConfig(projectPath);
 	const configArg = configFile ? ["--config", configFile] : [];
 	const dryRunResult = await $`wrangler deploy ${configArg} --dry-run --outdir=${outDir}`
 		.cwd(projectPath)

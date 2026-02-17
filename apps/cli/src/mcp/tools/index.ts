@@ -26,7 +26,9 @@ import {
 	listDomains,
 	unassignDomain,
 } from "../../lib/services/domain-operations.ts";
+import { testEndpoint } from "../../lib/services/endpoint-test.ts";
 import { deleteProject } from "../../lib/services/project-delete.ts";
+import { getProjectEnvironment } from "../../lib/services/project-environment.ts";
 import { createStorageBucket } from "../../lib/services/storage-create.ts";
 import { deleteStorageBucket } from "../../lib/services/storage-delete.ts";
 import { getStorageBucketInfo } from "../../lib/services/storage-info.ts";
@@ -292,6 +294,33 @@ const TestCronSchema = z.object({
 		.optional()
 		.default(false)
 		.describe("Whether to trigger the cron handler on production (requires managed project)"),
+});
+
+const GetProjectEnvironmentSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+});
+
+const TestEndpointSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+	path: z.string().describe("URL path to test, e.g. /api/todos"),
+	method: z
+		.enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+		.optional()
+		.default("GET")
+		.describe("HTTP method"),
+	headers: z.record(z.string()).optional().describe("Request headers"),
+	body: z.string().optional().describe("Request body (JSON string for POST/PUT/PATCH)"),
+	include_logs: z
+		.boolean()
+		.optional()
+		.default(true)
+		.describe("Capture runtime logs during the request (managed mode only)"),
 });
 
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
@@ -810,6 +839,63 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							},
 						},
 						required: ["expression"],
+					},
+				},
+				{
+					name: "get_project_environment",
+					description:
+						"Get a consolidated snapshot of the project's runtime environment: deployed URL, bindings (D1, KV, R2, AI, Vectorize, Durable Objects), " +
+						"database schema with table definitions and row counts, cron schedules, environment variables, secret names, and configuration issues. " +
+						"Call this instead of making multiple separate calls to understand a project's full state.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+						},
+					},
+				},
+				{
+					name: "test_endpoint",
+					description:
+						"Test a deployed endpoint by making an HTTP request and capturing the response with optional runtime logs. " +
+						"Use after deploying to verify changes work, or to debug API behavior. " +
+						"Returns the full response (status, headers, body) and any console.log output from the worker.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+							path: {
+								type: "string",
+								description: "URL path to test, e.g. /api/todos",
+							},
+							method: {
+								type: "string",
+								enum: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+								default: "GET",
+								description: "HTTP method",
+							},
+							headers: {
+								type: "object",
+								additionalProperties: { type: "string" },
+								description: "Request headers",
+							},
+							body: {
+								type: "string",
+								description: "Request body (JSON string for POST/PUT/PATCH)",
+							},
+							include_logs: {
+								type: "boolean",
+								default: true,
+								description: "Capture runtime logs during the request (managed mode only)",
+							},
+						},
+						required: ["path"],
 					},
 				},
 			],
@@ -2030,6 +2116,117 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							{
 								type: "text",
 								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "get_project_environment": {
+					const args = GetProjectEnvironmentSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedGetProjectEnvironment = withTelemetry(
+						"get_project_environment",
+						async (projectDir: string) => {
+							const env = await getProjectEnvironment(projectDir);
+
+							track(Events.COMMAND_COMPLETED, {
+								command: "get_project_environment",
+								has_database: !!env.database,
+								binding_count:
+									(env.bindings.d1 ? 1 : 0) +
+									(env.bindings.r2?.length ?? 0) +
+									(env.bindings.kv?.length ?? 0) +
+									(env.bindings.ai ? 1 : 0) +
+									(env.bindings.vectorize?.length ?? 0) +
+									(env.bindings.durable_objects?.length ?? 0),
+								issue_count: env.issues.length,
+								platform: "mcp",
+							});
+
+							return env;
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedGetProjectEnvironment(projectPath);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+							},
+						],
+					};
+				}
+
+				case "test_endpoint": {
+					const args = TestEndpointSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedTestEndpoint = withTelemetry(
+						"test_endpoint",
+						async (
+							projectDir: string,
+							path: string,
+							method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+							headers?: Record<string, string>,
+							body?: string,
+							includeLogs?: boolean,
+						) => {
+							const result = await testEndpoint({
+								projectDir,
+								path,
+								method,
+								headers,
+								body,
+								includeLogs,
+							});
+
+							track(Events.COMMAND_COMPLETED, {
+								command: "test_endpoint",
+								method,
+								status: result.response.status,
+								duration_ms: result.response.duration_ms,
+								log_count: result.logs.length,
+								platform: "mcp",
+							});
+
+							return result;
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedTestEndpoint(
+						projectPath,
+						args.path,
+						args.method,
+						args.headers,
+						args.body,
+						args.include_logs,
+					);
+
+					// Add notes for agents about log availability
+					const notes: string[] = [];
+					if (args.include_logs && result.logs.length === 0) {
+						const deployMode = await getDeployMode(projectPath);
+						if (deployMode !== "managed") {
+							notes.push(
+								"Runtime logs are only available for managed (Jack Cloud) projects. Use tail_logs with a managed project.",
+							);
+						}
+					}
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(
+									formatSuccessResponse(result, startTime, notes.length ? notes : undefined),
+									null,
+									2,
+								),
 							},
 						],
 					};

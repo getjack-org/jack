@@ -60,6 +60,7 @@ import { detectProjectType, validateProject } from "./project-detection.ts";
 import {
 	type DeployMode,
 	type TemplateMetadata as TemplateOrigin,
+	buildManagedUrl,
 	generateByoProjectId,
 	linkProject,
 	readProjectLink,
@@ -71,6 +72,7 @@ import { applySchema, getD1Bindings, getD1DatabaseName, hasD1Config } from "./sc
 import { getSavedSecrets, saveSecrets } from "./secrets.ts";
 import { getProjectNameFromDir, getRemoteManifest } from "./storage/index.ts";
 import { Events, track, trackActivationIfFirst } from "./telemetry.ts";
+import { findWranglerConfig, hasWranglerConfig } from "./wrangler-config.ts";
 
 // ============================================================================
 // Type Definitions
@@ -305,27 +307,13 @@ async function promptEnvVars(
 }
 
 /**
- * Get the wrangler config file path for a project
- * Returns the first found: wrangler.jsonc, wrangler.toml, wrangler.json
- */
-function getWranglerConfigPath(projectPath: string): string | null {
-	const configs = ["wrangler.jsonc", "wrangler.toml", "wrangler.json"];
-	for (const config of configs) {
-		if (existsSync(join(projectPath, config))) {
-			return config;
-		}
-	}
-	return null;
-}
-
-/**
  * Run wrangler deploy with explicit config to avoid parent directory conflicts
  */
 async function runWranglerDeploy(
 	projectPath: string,
 	options: { dryRun?: boolean; outDir?: string } = {},
 ) {
-	const configFile = getWranglerConfigPath(projectPath);
+	const configFile = findWranglerConfig(projectPath);
 	const configArg = configFile ? ["--config", configFile] : [];
 	const dryRunArgs = options.dryRun
 		? ["--dry-run", ...(options.outDir ? ["--outdir", options.outDir] : [])]
@@ -1606,25 +1594,22 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 	const interactive = interactiveOption ?? !isCi;
 
 	// Check for wrangler config
-	const hasWranglerConfig =
-		existsSync(join(projectPath, "wrangler.toml")) ||
-		existsSync(join(projectPath, "wrangler.jsonc")) ||
-		existsSync(join(projectPath, "wrangler.json"));
+	const hasConfig = hasWranglerConfig(projectPath);
 
 	// Check for existing project link
 	const hasProjectLink = existsSync(join(projectPath, ".jack", "project.json"));
 
 	// Auto-detect flow: no wrangler config and no project link
 	let autoDetectResult: AutoDetectResult | null = null;
-	if (!hasWranglerConfig && !hasProjectLink) {
+	if (!hasConfig && !hasProjectLink) {
 		autoDetectResult = await runAutoDetectFlow(projectPath, reporter, interactive, dryRun);
-	} else if (!hasWranglerConfig) {
+	} else if (!hasConfig) {
 		throw new JackError(
 			JackErrorCode.PROJECT_NOT_FOUND,
 			"No wrangler config found in current directory",
 			"Run: jack new <project-name>",
 		);
-	} else if (hasWranglerConfig && !hasProjectLink) {
+	} else if (hasConfig && !hasProjectLink) {
 		// Orphaned state: wrangler config exists but no project link
 		// This happens when: linking failed during jack new, user has existing wrangler project,
 		// or project was moved/copied without .jack directory
@@ -1814,9 +1799,7 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 		managedDeployResult = await deployToManagedProject(managedProjectId as string, projectPath, reporter, options.message);
 
 		// Construct URL with username if available
-		workerUrl = link?.owner_username
-			? `https://${link.owner_username}-${projectName}.runjack.xyz`
-			: `https://${projectName}.runjack.xyz`;
+		workerUrl = await buildManagedUrl(projectName, link?.owner_username, projectPath);
 	} else {
 		// BYO mode: deploy via wrangler
 
@@ -2006,11 +1989,8 @@ export async function getProjectStatus(
 	const link = await readProjectLink(resolvedPath);
 
 	// Check if local project exists at the resolved path
-	const hasWranglerConfig =
-		existsSync(join(resolvedPath, "wrangler.jsonc")) ||
-		existsSync(join(resolvedPath, "wrangler.toml")) ||
-		existsSync(join(resolvedPath, "wrangler.json"));
-	const localExists = hasWranglerConfig;
+	const hasConfig = hasWranglerConfig(resolvedPath);
+	const localExists = hasConfig;
 	const localPath = localExists ? resolvedPath : null;
 
 	// If no link and no local project, return null
@@ -2030,9 +2010,7 @@ export async function getProjectStatus(
 	// Determine URL based on mode
 	let workerUrl: string | null = null;
 	if (link?.deploy_mode === "managed") {
-		workerUrl = link.owner_username
-			? `https://${link.owner_username}-${projectName}.runjack.xyz`
-			: `https://${projectName}.runjack.xyz`;
+		workerUrl = await buildManagedUrl(projectName, link.owner_username, resolvedPath);
 	}
 
 	// Get database name on-demand
@@ -2140,12 +2118,9 @@ export async function scanStaleProjects(): Promise<StaleProjectScan> {
 
 		for (const projectPath of paths) {
 			// Check if path exists and has valid wrangler config
-			const hasWranglerConfig =
-				existsSync(join(projectPath, "wrangler.jsonc")) ||
-				existsSync(join(projectPath, "wrangler.toml")) ||
-				existsSync(join(projectPath, "wrangler.json"));
+			const hasConfig = hasWranglerConfig(projectPath);
 
-			if (!hasWranglerConfig) {
+			if (!hasConfig) {
 				// Type 1: No wrangler config at path (dir deleted/moved)
 				const name = projectPath.split("/").pop() || projectId;
 				stale.push({

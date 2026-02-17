@@ -9,6 +9,7 @@ import { $ } from "bun";
 import { createProjectResource } from "../control-plane.ts";
 import { readProjectLink } from "../project-link.ts";
 import { getProjectNameFromDir } from "../storage/index.ts";
+import { findWranglerConfig } from "../wrangler-config.ts";
 import {
 	addR2Binding,
 	generateBucketName,
@@ -103,7 +104,7 @@ export async function createStorageBucket(
 	const projectName = await getProjectNameFromDir(projectDir);
 
 	// Get existing R2 bindings to determine naming
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir) ?? join(projectDir, "wrangler.jsonc");
 	const existingBindings = await getExistingR2Bindings(wranglerPath);
 	const existingCount = existingBindings.length;
 

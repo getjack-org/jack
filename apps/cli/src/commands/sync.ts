@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { getSyncConfig } from "../lib/config.ts";
 import { error, info, spinner, success, warn } from "../lib/output.ts";
 import { readProjectLink } from "../lib/project-link.ts";
@@ -10,17 +9,17 @@ export interface SyncFlags {
 	force?: boolean;
 }
 
-function hasWranglerConfig(): boolean {
-	return (
-		existsSync("./wrangler.toml") || existsSync("./wrangler.jsonc") || existsSync("./wrangler.json")
-	);
+import { hasWranglerConfig } from "../lib/wrangler-config.ts";
+
+function hasWranglerConfigInCwd(): boolean {
+	return hasWranglerConfig(process.cwd());
 }
 
 export default async function sync(flags: SyncFlags = {}): Promise<void> {
 	const { verbose = false, dryRun = false, force = false } = flags;
 
 	// Check for wrangler config
-	if (!hasWranglerConfig()) {
+	if (!hasWranglerConfigInCwd()) {
 		error("Not in a project directory");
 		info("Run jack new <name> to create a project");
 		process.exit(1);

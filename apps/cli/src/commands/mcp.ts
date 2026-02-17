@@ -126,18 +126,17 @@ async function parseWranglerBindings(cwd: string): Promise<{
 	kv: string[];
 } | null> {
 	try {
-		const jsoncPath = join(cwd, "wrangler.jsonc");
-		const tomlPath = join(cwd, "wrangler.toml");
+		const { findWranglerConfig } = await import("../lib/wrangler-config.ts");
+		const { parseJsonc } = await import("../lib/jsonc.ts");
+		const configPath = findWranglerConfig(cwd);
+		if (!configPath) return null;
+
+		const content = await readFile(configPath, "utf-8");
 
 		let config: Record<string, unknown> | null = null;
 
-		if (existsSync(jsoncPath)) {
-			const content = await readFile(jsoncPath, "utf-8");
-			const jsonContent = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-			config = JSON.parse(jsonContent);
-		} else if (existsSync(tomlPath)) {
+		if (configPath.endsWith(".toml")) {
 			// For toml, just check for key patterns — not worth a full parser here
-			const content = await readFile(tomlPath, "utf-8");
 			return {
 				databases: content.includes("d1_databases") ? ["(see wrangler.toml)"] : [],
 				buckets: content.includes("r2_buckets") ? ["(see wrangler.toml)"] : [],
@@ -147,6 +146,7 @@ async function parseWranglerBindings(cwd: string): Promise<{
 			};
 		}
 
+		config = parseJsonc<Record<string, unknown>>(content);
 		if (!config) return null;
 
 		const databases =
@@ -198,8 +198,10 @@ async function outputProjectContext(): Promise<void> {
 
 		// --- Section 1: Project identity ---
 		const lines = [`# Jack Project: ${name}`, ""];
-		if (link.deploy_mode === "managed" && link.owner_username) {
-			lines.push(`- **URL:** https://${link.owner_username}-${name}.runjack.xyz`);
+		if (link.deploy_mode === "managed") {
+			const { buildManagedUrl } = await import("../lib/project-link.ts");
+			const url = await buildManagedUrl(name, link.owner_username, cwd);
+			lines.push(`- **URL:** ${url}`);
 		}
 		lines.push(`- **Project ID:** ${link.project_id}`);
 		lines.push(

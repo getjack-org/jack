@@ -9,7 +9,7 @@ import { $ } from "bun";
 import { createProjectResource } from "../control-plane.ts";
 import { readProjectLink } from "../project-link.ts";
 import { getProjectNameFromDir } from "../storage/index.ts";
-import { addD1Binding, getExistingD1Bindings } from "../wrangler-config.ts";
+import { addD1Binding, findWranglerConfig, getExistingD1Bindings } from "../wrangler-config.ts";
 
 export interface CreateDatabaseOptions {
 	name?: string;
@@ -135,7 +135,7 @@ export async function createDatabase(
 	const projectName = await getProjectNameFromDir(projectDir);
 
 	// Get existing D1 bindings to determine naming
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir) ?? join(projectDir, "wrangler.jsonc");
 	const existingBindings = await getExistingD1Bindings(wranglerPath);
 	const existingCount = existingBindings.length;
 

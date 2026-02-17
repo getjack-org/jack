@@ -5,9 +5,8 @@
  * For managed projects, fetches metadata via control plane instead of wrangler.
  */
 
-import { join } from "node:path";
 import { readProjectLink } from "../project-link.ts";
-import { getExistingD1Bindings } from "../wrangler-config.ts";
+import { findWranglerConfig, getExistingD1Bindings } from "../wrangler-config.ts";
 import { getDatabaseInfo } from "./db.ts";
 
 export interface DatabaseListEntry {
@@ -25,9 +24,12 @@ export interface DatabaseListEntry {
  * For BYO projects: reads bindings from wrangler.jsonc and fetches metadata via wrangler.
  */
 export async function listDatabases(projectDir: string): Promise<DatabaseListEntry[]> {
-	const wranglerPath = join(projectDir, "wrangler.jsonc");
+	const wranglerPath = findWranglerConfig(projectDir);
+	if (!wranglerPath) {
+		return [];
+	}
 
-	// Get existing D1 bindings from wrangler.jsonc
+	// Get existing D1 bindings from wrangler config
 	const bindings = await getExistingD1Bindings(wranglerPath);
 
 	if (bindings.length === 0) {
