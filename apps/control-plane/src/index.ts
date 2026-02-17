@@ -1077,6 +1077,137 @@ api.get("/projects/:projectId", async (c) => {
 	return c.json({ project, url });
 });
 
+// GET /v1/projects/:projectId/overview - Unified project overview (project + resources + latest deployment + crons)
+api.get("/projects/:projectId/overview", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+
+	// Single query: project + auth check via JOIN
+	const project = await c.env.DB.prepare(
+		`SELECT p.id, p.org_id, p.name, p.slug, p.status, p.owner_username, p.tags, p.created_at, p.updated_at
+		 FROM projects p
+		 JOIN org_memberships om ON p.org_id = om.org_id
+		 WHERE p.id = ? AND om.user_id = ? AND p.status != 'deleted'`,
+	)
+		.bind(projectId, auth.userId)
+		.first<{
+			id: string;
+			org_id: string;
+			name: string;
+			slug: string;
+			status: string;
+			owner_username: string | null;
+			tags: string;
+			created_at: string;
+			updated_at: string;
+		}>();
+
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Batch: resources + latest deployment + crons in a single D1 round trip
+	const [resourcesResult, deploymentResult, cronsResult] = await c.env.DB.batch([
+		c.env.DB.prepare(
+			`SELECT id, resource_type, resource_name, binding_name, provider_id, status, created_at
+			 FROM resources WHERE project_id = ?`,
+		).bind(projectId),
+		c.env.DB.prepare(
+			`SELECT id, status, source, error_message, message, created_at, updated_at
+			 FROM deployments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`,
+		).bind(projectId),
+		c.env.DB.prepare(
+			`SELECT id, expression, expression_normalized, enabled, is_running, next_run_at,
+			        last_run_at, last_run_status, last_run_duration_ms, consecutive_failures, created_at
+			 FROM cron_schedules WHERE project_id = ? ORDER BY created_at DESC`,
+		).bind(projectId),
+	]);
+
+	// Format resources
+	const resourceRows = (resourcesResult?.results ?? []) as Array<Record<string, unknown>>;
+	const resources = resourceRows.map((r) => ({
+		id: r.id as string,
+		resource_type: r.resource_type as string,
+		resource_name: r.resource_name as string,
+		binding_name: (r.binding_name as string | null) ?? null,
+		provider_id: r.provider_id as string,
+		status: r.status as string,
+		created_at: r.created_at as string,
+	}));
+
+	// Format latest deployment
+	const deployRows = (deploymentResult?.results ?? []) as Array<Record<string, unknown>>;
+	const latestDep = deployRows[0] as Record<string, unknown> | undefined;
+	const latest_deployment = latestDep
+		? {
+				id: latestDep.id as string,
+				status: latestDep.status as string,
+				source: latestDep.source as string,
+				error_message: (latestDep.error_message as string | null) ?? null,
+				message: (latestDep.message as string | null) ?? null,
+				created_at: d1DatetimeToIso(latestDep.created_at as string),
+				updated_at: d1DatetimeToIso(latestDep.updated_at as string),
+			}
+		: null;
+
+	// Format crons with human-readable descriptions
+	const cronRows = (cronsResult?.results ?? []) as Array<Record<string, unknown>>;
+	let crons: Array<Record<string, unknown>> = [];
+	if (cronRows.length > 0) {
+		const cronstrue = await import("cronstrue");
+		crons = cronRows.map((s) => {
+			let description: string;
+			try {
+				description = cronstrue.toString(s.expression_normalized as string);
+			} catch {
+				description = s.expression_normalized as string;
+			}
+			return {
+				id: s.id as string,
+				expression: s.expression as string,
+				description,
+				enabled: (s.enabled as number) === 1,
+				is_running: (s.is_running as number) === 1,
+				next_run_at: s.next_run_at as string,
+				last_run_at: s.last_run_at as string | null,
+				last_run_status: s.last_run_status as string | null,
+				last_run_duration_ms: s.last_run_duration_ms as number | null,
+				consecutive_failures: s.consecutive_failures as number,
+				created_at: s.created_at as string,
+			};
+		});
+	}
+
+	// Construct URL
+	const url = project.owner_username
+		? `https://${project.owner_username}-${project.slug}.runjack.xyz`
+		: `https://${project.slug}.runjack.xyz`;
+
+	// Parse tags
+	let tags: string[] = [];
+	try {
+		tags = JSON.parse(project.tags || "[]");
+	} catch {
+		tags = [];
+	}
+
+	return c.json({
+		project: {
+			id: project.id,
+			name: project.name,
+			slug: project.slug,
+			status: project.status,
+			url,
+			tags,
+			created_at: project.created_at,
+			updated_at: project.updated_at,
+		},
+		resources,
+		latest_deployment,
+		crons,
+	});
+});
+
 api.get("/projects/:projectId/resources", async (c) => {
 	const auth = c.get("auth");
 	const projectId = c.req.param("projectId");

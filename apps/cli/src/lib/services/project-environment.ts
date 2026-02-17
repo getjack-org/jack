@@ -11,7 +11,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
 	type CronScheduleInfo,
+	type ProjectOverview,
 	executeManagedSql,
+	fetchProjectOverview,
 	fetchProjectResources,
 	listCronSchedules as listCronSchedulesApi,
 } from "../control-plane.ts";
@@ -99,6 +101,90 @@ export async function getProjectEnvironment(projectDir: string): Promise<Project
 	const link = await readProjectLink(projectDir);
 	const deployMode: DeployMode = link?.deploy_mode ?? "byo";
 
+	// Managed mode: use single overview call instead of 3-5 separate calls
+	if (deployMode === "managed" && link?.project_id) {
+		return getManagedProjectEnvironment(projectDir, link.project_id);
+	}
+
+	// BYO mode: original multi-call path
+	return getByoProjectEnvironment(projectDir, deployMode, link?.project_id);
+}
+
+/**
+ * Managed mode: single overview call + local enrichment.
+ */
+async function getManagedProjectEnvironment(
+	projectDir: string,
+	projectId: string,
+): Promise<ProjectEnvironment> {
+	// 1. Single API call for project + resources + deployment + crons
+	const overview = await fetchProjectOverview(projectId);
+
+	// 2. Convert resources to bindings
+	const rawResources = overview.resources as ControlPlaneResource[];
+	const resolved = convertControlPlaneResources(rawResources);
+	const bindings = buildBindingsFromResolved(resolved);
+
+	// Also parse wrangler.jsonc for vectorize and durable_objects
+	await enrichFromWranglerConfig(projectDir, bindings);
+
+	// 3. Get variables from wrangler.jsonc
+	const wranglerResources = await parseWranglerResourcesSafe(projectDir);
+	const variables = wranglerResources?.vars ?? {};
+
+	// 4. Get secrets names
+	const secretsSet = await getSecretsNames(projectDir);
+
+	// 5. Get database schema (if D1 exists)
+	let database: DatabaseSchema | null = null;
+	if (bindings.d1) {
+		database = await getDatabaseSchema(projectDir, "managed", projectId, bindings.d1.database_name);
+	}
+
+	// 6. Map crons from overview
+	const crons: CronEntry[] = overview.crons.map((s) => ({
+		expression: s.expression,
+		enabled: s.enabled,
+		last_run_status: s.last_run_status,
+	}));
+
+	// 7. Detect issues
+	const issues = detectIssues(bindings, rawResources, wranglerResources, projectDir);
+
+	// 8. Map deployment info
+	const dep = overview.latest_deployment;
+
+	return {
+		project: {
+			name: overview.project.name,
+			url: overview.project.url,
+			deploy_mode: "managed",
+			last_deploy: dep
+				? {
+						at: dep.created_at,
+						status: dep.status,
+						message: dep.message,
+						source: dep.source,
+					}
+				: null,
+		},
+		bindings,
+		secrets_set: secretsSet,
+		variables,
+		database,
+		crons,
+		issues,
+	};
+}
+
+/**
+ * BYO mode: original multi-call path.
+ */
+async function getByoProjectEnvironment(
+	projectDir: string,
+	deployMode: DeployMode,
+	projectId?: string,
+): Promise<ProjectEnvironment> {
 	// 1. Get project status (name, URL, deploy info)
 	const status = await getProjectStatus(undefined, projectDir);
 	if (!status) {
@@ -109,7 +195,7 @@ export async function getProjectEnvironment(projectDir: string): Promise<Project
 	const { bindings, rawResources, wranglerResources } = await getBindings(
 		projectDir,
 		deployMode,
-		link?.project_id,
+		projectId,
 	);
 
 	// 3. Get variables from wrangler.jsonc
@@ -124,18 +210,12 @@ export async function getProjectEnvironment(projectDir: string): Promise<Project
 		database = await getDatabaseSchema(
 			projectDir,
 			deployMode,
-			link?.project_id,
+			projectId,
 			bindings.d1.database_name,
 		);
 	}
 
-	// 6. Get crons (managed only)
-	let crons: CronEntry[] = [];
-	if (deployMode === "managed" && link?.project_id) {
-		crons = await getCrons(link.project_id);
-	}
-
-	// 7. Detect issues
+	// 6. Detect issues
 	const issues = detectIssues(bindings, rawResources, wranglerResources, projectDir);
 
 	return {
@@ -157,9 +237,51 @@ export async function getProjectEnvironment(projectDir: string): Promise<Project
 		secrets_set: secretsSet,
 		variables,
 		database,
-		crons,
+		crons: [], // BYO doesn't have managed crons
 		issues,
 	};
+}
+
+/**
+ * Build EnvironmentBindings from resolved resources.
+ */
+function buildBindingsFromResolved(resolved: ResolvedResources): EnvironmentBindings {
+	const result: EnvironmentBindings = {};
+	if (resolved.d1) {
+		result.d1 = {
+			binding: resolved.d1.binding,
+			database_name: resolved.d1.name,
+			database_id: resolved.d1.id,
+		};
+	}
+	if (resolved.r2?.length) {
+		result.r2 = resolved.r2.map((r) => ({
+			binding: r.binding,
+			bucket_name: r.name,
+		}));
+	}
+	if (resolved.kv?.length) {
+		result.kv = resolved.kv.map((k) => ({
+			binding: k.binding,
+			namespace_id: k.id,
+			name: k.name,
+		}));
+	}
+	if (resolved.ai) {
+		result.ai = { binding: resolved.ai.binding };
+	}
+	return result;
+}
+
+/**
+ * Safely parse wrangler resources, returning undefined on failure.
+ */
+async function parseWranglerResourcesSafe(projectDir: string): Promise<ResolvedResources | undefined> {
+	try {
+		return await parseWranglerResources(projectDir);
+	} catch {
+		return undefined;
+	}
 }
 
 // ============================================================================

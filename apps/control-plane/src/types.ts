@@ -31,7 +31,15 @@ export type Bindings = {
 export type ProjectStatus = "provisioning" | "active" | "error" | "deleted";
 
 // Resource types
-export type ResourceType = "worker" | "d1" | "r2_content" | "r2" | "kv";
+export type ResourceType =
+	| "worker"
+	| "d1"
+	| "r2_content"
+	| "r2"
+	| "kv"
+	| "vectorize"
+	| "ai"
+	| "durable_object";
 
 // Project interface matching DB schema
 export interface Project {

@@ -24,28 +24,24 @@ export async function getProjectStatus(
 	projectId: string,
 ): Promise<McpToolResult> {
 	try {
-		const [{ project, url }, { deployment }, { resources }] = await Promise.all([
-			client.getProject(projectId),
-			client.getLatestDeployment(projectId),
-			client.getProjectResources(projectId),
-		]);
+		const overview = await client.getProjectOverview(projectId);
 
 		return ok({
 			project: {
-				id: project.id,
-				name: project.name,
-				slug: project.slug,
-				url,
+				id: overview.project.id,
+				name: overview.project.name,
+				slug: overview.project.slug,
+				url: overview.project.url,
 			},
-			latest_deployment: deployment
+			latest_deployment: overview.latest_deployment
 				? {
-						id: deployment.id,
-						status: deployment.status,
-						source: deployment.source,
-						created_at: deployment.created_at,
+						id: overview.latest_deployment.id,
+						status: overview.latest_deployment.status,
+						source: overview.latest_deployment.source,
+						created_at: overview.latest_deployment.created_at,
 					}
 				: null,
-			resources: resources.map((r) => ({
+			resources: overview.resources.map((r) => ({
 				id: r.id,
 				type: r.resource_type,
 				name: r.resource_name,

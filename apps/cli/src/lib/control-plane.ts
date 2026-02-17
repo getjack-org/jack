@@ -187,6 +187,50 @@ export async function checkSlugAvailability(slug: string): Promise<SlugAvailabil
 	return response.json() as Promise<SlugAvailabilityResponse>;
 }
 
+// ============================================================================
+// Project Overview (unified endpoint)
+// ============================================================================
+
+export interface ProjectOverview {
+	project: {
+		id: string;
+		name: string;
+		slug: string;
+		status: string;
+		url: string;
+		tags: string[];
+		created_at: string;
+		updated_at: string;
+	};
+	resources: ProjectResource[];
+	latest_deployment: DeploymentInfo | null;
+	crons: CronScheduleInfo[];
+}
+
+/**
+ * Fetch a unified project overview: project info, resources, latest deployment, and crons.
+ * Single API call replaces 3-5 separate calls.
+ */
+export async function fetchProjectOverview(projectId: string): Promise<ProjectOverview> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const response = await authFetch(
+		`${getControlApiUrl()}/v1/projects/${encodeURIComponent(projectId)}/overview`,
+	);
+
+	if (!response.ok) {
+		if (response.status === 404) {
+			throw new Error("Project not found");
+		}
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to fetch project overview: ${response.status}`);
+	}
+
+	return response.json() as Promise<ProjectOverview>;
+}
+
 export interface DatabaseInfoResponse {
 	name: string;
 	id: string;

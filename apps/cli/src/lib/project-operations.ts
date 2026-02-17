@@ -2013,17 +2013,31 @@ export async function getProjectStatus(
 		workerUrl = await buildManagedUrl(projectName, link.owner_username, resolvedPath);
 	}
 
-	// Get database name on-demand
+	// Get database name and deployment data
 	let dbName: string | null = null;
+	let lastDeployAt: string | null = null;
+	let deployCount = 0;
+	let lastDeployStatus: string | null = null;
+	let lastDeploySource: string | null = null;
+	let lastDeployMessage: string | null = null;
+
 	if (link?.deploy_mode === "managed") {
-		// For managed projects, fetch from control plane
+		// Single overview call replaces fetchProjectResources + fetchDeployments
 		try {
-			const { fetchProjectResources } = await import("./control-plane.ts");
-			const resources = await fetchProjectResources(link.project_id);
-			const d1 = resources.find((r) => r.resource_type === "d1");
+			const { fetchProjectOverview } = await import("./control-plane.ts");
+			const overview = await fetchProjectOverview(link.project_id);
+			const d1 = overview.resources.find((r) => r.resource_type === "d1");
 			dbName = d1?.resource_name || null;
+
+			const latest = overview.latest_deployment;
+			if (latest) {
+				lastDeployAt = latest.created_at;
+				lastDeployStatus = latest.status;
+				lastDeploySource = latest.source;
+				lastDeployMessage = latest.message;
+			}
 		} catch {
-			// Ignore errors, dbName stays null
+			// Silent fail — supplementary data
 		}
 	} else if (localExists) {
 		// For BYO, parse from wrangler config
@@ -2033,30 +2047,6 @@ export async function getProjectStatus(
 			dbName = resources.d1?.name || null;
 		} catch {
 			// Ignore errors, dbName stays null
-		}
-	}
-
-	// Fetch real deployment data for managed projects
-	let lastDeployAt: string | null = null;
-	let deployCount = 0;
-	let lastDeployStatus: string | null = null;
-	let lastDeploySource: string | null = null;
-	let lastDeployMessage: string | null = null;
-
-	if (link?.deploy_mode === "managed") {
-		try {
-			const { fetchDeployments } = await import("./control-plane.ts");
-			const result = await fetchDeployments(link.project_id);
-			deployCount = result.total;
-			const latest = result.deployments[0];
-			if (latest) {
-				lastDeployAt = latest.created_at;
-				lastDeployStatus = latest.status;
-				lastDeploySource = latest.source;
-				lastDeployMessage = latest.message;
-			}
-		} catch {
-			// Silent fail — deploy tracking is supplementary
 		}
 	}
 

@@ -90,6 +90,52 @@ export class ControlPlaneClient {
 		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/resources`);
 	}
 
+	async getProjectOverview(projectId: string): Promise<{
+		project: {
+			id: string;
+			name: string;
+			slug: string;
+			status: string;
+			url: string;
+			tags: string[];
+			created_at: string;
+			updated_at: string;
+		};
+		resources: Array<{
+			id: string;
+			resource_type: string;
+			resource_name: string;
+			binding_name: string | null;
+			provider_id: string;
+			status: string;
+			created_at: string;
+		}>;
+		latest_deployment: {
+			id: string;
+			status: string;
+			source: string;
+			error_message: string | null;
+			message: string | null;
+			created_at: string;
+			updated_at: string;
+		} | null;
+		crons: Array<{
+			id: string;
+			expression: string;
+			description: string;
+			enabled: boolean;
+			is_running: boolean;
+			next_run_at: string;
+			last_run_at: string | null;
+			last_run_status: string | null;
+			last_run_duration_ms: number | null;
+			consecutive_failures: number;
+			created_at: string;
+		}>;
+	}> {
+		return this.jsonFetch(`/projects/${encodeURIComponent(projectId)}/overview`);
+	}
+
 	async createProject(
 		name: string,
 		slug?: string,
