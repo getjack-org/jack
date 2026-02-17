@@ -1,0 +1,260 @@
+# Durable Objects
+
+Durable Objects give your worker persistent state and real-time coordination — think chat rooms, game sessions, collaborative editing, or any stateful backend that needs to survive between requests.
+
+Each Durable Object instance has its own SQLite database and runs in a single location, so you get strong consistency without managing infrastructure.
+
+## Quick Start
+
+Add a Durable Object to your `wrangler.jsonc`:
+
+```jsonc
+{
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "COUNTER", "class_name": "Counter" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Counter"] }]
+}
+```
+
+Create and export your class:
+
+```typescript
+// src/counter.ts
+import { DurableObject } from "cloudflare:workers";
+
+export class Counter extends DurableObject<Env> {
+  async fetch(request: Request): Promise<Response> {
+    const count = (this.ctx.storage.sql
+      .exec("SELECT count FROM hits LIMIT 1")
+      .one()?.count as number) ?? 0;
+
+    this.ctx.storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS hits (count INTEGER)"
+    );
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO hits (rowid, count) VALUES (1, ?)",
+      count + 1
+    );
+
+    return Response.json({ count: count + 1 });
+  }
+}
+```
+
+Re-export it from your entrypoint:
+
+```typescript
+// src/index.ts
+export { Counter } from "./counter";
+
+interface Env {
+  COUNTER: DurableObjectNamespace;
+}
+
+export default {
+  async fetch(request: Request, env: Env) {
+    const id = env.COUNTER.idFromName("global");
+    const stub = env.COUNTER.get(id);
+    return stub.fetch(request);
+  },
+};
+```
+
+Deploy:
+
+```bash
+jack ship
+```
+
+## Configuration
+
+### Bindings
+
+Each Durable Object class needs a binding in `wrangler.jsonc`:
+
+```jsonc
+{
+  "durable_objects": {
+    "bindings": [
+      { "name": "COUNTER", "class_name": "Counter" },
+      { "name": "ROOM", "class_name": "ChatRoom" }
+    ]
+  }
+}
+```
+
+- `name` — the variable name in your `Env` type
+- `class_name` — must match the exported class name exactly
+
+### Migrations
+
+Durable Objects with SQLite storage need a migration entry:
+
+```jsonc
+{
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Counter", "ChatRoom"] }
+  ]
+}
+```
+
+When you add a new class later, add a new migration step:
+
+```jsonc
+{
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Counter", "ChatRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["GameSession"] }
+  ]
+}
+```
+
+Don't edit existing migration entries — always append.
+
+### Compatibility Flags
+
+Durable Objects require the `nodejs_compat` flag:
+
+```jsonc
+{
+  "compatibility_flags": ["nodejs_compat"]
+}
+```
+
+Jack auto-adds this if you forget, but it's better to be explicit.
+
+## Usage Patterns
+
+### Named instances
+
+Use `idFromName()` when you want a predictable, shared instance:
+
+```typescript
+// Everyone hitting /room/lobby gets the same DO
+const id = env.ROOM.idFromName("lobby");
+const room = env.ROOM.get(id);
+```
+
+### Unique instances
+
+Use `newUniqueId()` for per-session or per-user state:
+
+```typescript
+const id = env.SESSION.newUniqueId();
+const session = env.SESSION.get(id);
+
+// Store the ID somewhere so you can reconnect
+const sessionId = id.toString();
+```
+
+### SQLite storage
+
+Every DO instance gets its own SQLite database via `this.ctx.storage.sql`:
+
+```typescript
+export class Notes extends DurableObject<Env> {
+  async fetch(request: Request): Promise<Response> {
+    if (request.method === "POST") {
+      const { title, body } = await request.json();
+      this.ctx.storage.sql.exec(
+        "CREATE TABLE IF NOT EXISTS notes (title TEXT, body TEXT, created_at TEXT)"
+      );
+      this.ctx.storage.sql.exec(
+        "INSERT INTO notes (title, body, created_at) VALUES (?, ?, datetime('now'))",
+        title, body
+      );
+      return Response.json({ ok: true });
+    }
+
+    const notes = this.ctx.storage.sql
+      .exec("SELECT * FROM notes ORDER BY created_at DESC")
+      .toArray();
+    return Response.json(notes);
+  }
+}
+```
+
+### WebSockets
+
+Durable Objects are the standard way to handle WebSockets:
+
+```typescript
+export class ChatRoom extends DurableObject<Env> {
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade") === "websocket") {
+      const [client, server] = Object.values(new WebSocketPair());
+      this.ctx.acceptWebSocket(server);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    return new Response("Expected WebSocket", { status: 400 });
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string) {
+    // Broadcast to all connected clients
+    for (const client of this.ctx.getWebSockets()) {
+      if (client !== ws) {
+        client.send(message);
+      }
+    }
+  }
+
+  async webSocketClose(ws: WebSocket) {
+    ws.close();
+  }
+}
+```
+
+## Agents SDK
+
+For AI chat applications, the [Agents SDK](https://developers.cloudflare.com/agents/) provides `AIChatAgent` — a higher-level abstraction built on Durable Objects that handles message history, real-time sync, and streaming out of the box.
+
+The **ai-chat** template uses this pattern:
+
+```bash
+jack new my-chat -t ai-chat
+```
+
+```typescript
+import { AIChatAgent } from "@cloudflare/ai-chat";
+import { streamText } from "ai";
+
+export class Chat extends AIChatAgent<Env> {
+  async onChatMessage(onFinish) {
+    const result = streamText({
+      model: provider("@cf/meta/llama-3.3-70b-instruct-fp8-fast"),
+      messages: await convertToModelMessages(this.messages),
+      onFinish,
+    });
+    return result.toUIMessageStreamResponse();
+  }
+}
+```
+
+Rooms, persistence, and WebSocket sync are all handled automatically.
+
+## What Jack Does For You
+
+When you run `jack ship` with Durable Objects configured:
+
+1. **Auto-fixes prerequisites** — adds `nodejs_compat` flag and migration entries if missing
+2. **Validates exports** — checks your built code actually exports the declared classes (catches typos before deploy)
+3. **Handles deployment** — configures dispatch hints and DO bindings on the Cloudflare side
+4. **Tracks resources** — registers your DOs so they show up in `jack info`
+
+You don't need a Cloudflare account or API tokens — jack cloud manages everything.
+
+## Local Development
+
+For local development with `wrangler dev`, Durable Objects work out of the box — no extra setup needed. State is stored in `.wrangler/state/`.
+
+```bash
+wrangler dev
+```
+
+## Resources
+
+- [Cloudflare Durable Objects Docs](https://developers.cloudflare.com/durable-objects/)
+- [Agents SDK](https://developers.cloudflare.com/agents/)
+- [SQLite in Durable Objects](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/)

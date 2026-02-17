@@ -70,6 +70,7 @@ export default defineConfig({
 			items: [
 				{ text: "OpenClaw / Claude Code", link: "/guides/openclaw" },
 				{ text: "AI & Vectorize Bindings", link: "/guides/ai-vectorize" },
+			{ text: "Durable Objects", link: "/guides/durable-objects" },
 				{ text: "Using with AI Agents", link: "/guides/ai-agents" },
 				{ text: "Troubleshooting", link: "/guides/troubleshooting" },
 			],
