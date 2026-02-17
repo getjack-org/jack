@@ -7,8 +7,10 @@ export type Bindings = {
 	CLOUDFLARE_ZONE_ID: string;
 	PROJECTS_CACHE: KVNamespace;
 	CODE_BUCKET: R2Bucket;
+	ASK_INDEX_QUEUE?: Queue<unknown>;
 	TENANT_DISPATCH: DispatchNamespace;
 	USAGE: AnalyticsEngineDataset;
+	CONTROL_USAGE?: AnalyticsEngineDataset;
 	LOG_STREAM: DurableObjectNamespace;
 	FEEDBACK_LIMITER: {
 		limit: (options: { key: string }) => Promise<{ success: boolean }>;
@@ -25,6 +27,9 @@ export type Bindings = {
 	DAIMO_RECEIVER_ADDRESS: string;
 	// Secrets encryption (RSA-OAEP private key JWK, set via wrangler secret put)
 	SECRETS_ENCRYPTION_PRIVATE_KEY: string;
+	// Optional PostHog server-side capture key for control-plane events
+	POSTHOG_API_KEY?: string;
+	POSTHOG_HOST?: string;
 };
 
 // Project status enum

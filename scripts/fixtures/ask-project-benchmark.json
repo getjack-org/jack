@@ -1,0 +1,35 @@
+[
+  {
+    "name": "Runtime 500 diagnosis",
+    "question": "Why is /api/todos returning 500 right now?",
+    "hints": { "endpoint": "/api/todos", "method": "GET" },
+    "min_evidence": 1
+  },
+  {
+    "name": "Recent change impact",
+    "question": "What changed recently that likely caused this issue?",
+    "min_evidence": 2
+  },
+  {
+    "name": "Deployment rationale",
+    "question": "Why did we ship the latest deployment?",
+    "min_evidence": 1
+  },
+  {
+    "name": "Code to prod mapping",
+    "question": "Which code areas are most likely tied to this endpoint behavior?",
+    "hints": { "endpoint": "/api/todos", "method": "GET" },
+    "min_evidence": 1
+  },
+  {
+    "name": "Config mismatch probe",
+    "question": "Do runtime bindings and schema look mismatched with this endpoint?",
+    "hints": { "endpoint": "/api/todos", "method": "GET" },
+    "min_evidence": 1
+  },
+  {
+    "name": "Next best check",
+    "question": "What should I check next to confirm root cause?",
+    "min_evidence": 1
+  }
+]

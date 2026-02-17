@@ -21,6 +21,13 @@ import { DaimoBillingService } from "./daimo-billing-service";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { getDoEnforcementStatus, processDoMetering } from "./do-metering";
 import { REFERRAL_CAP, TIER_LIMITS, computeLimits } from "./entitlements-config";
+import { indexLatestDeploymentSource } from "./ask-code-index";
+import {
+	type AskIndexQueueMessage,
+	consumeAskIndexBatch,
+	enqueueAskIndexJob,
+} from "./ask-index-queue";
+import { answerProjectQuestion, type AskProjectRequest } from "./ask-project";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
 import { validateReadOnly } from "./sql-utils";
@@ -31,6 +38,7 @@ import type {
 	CustomDomainNextStep,
 	CustomDomainResponse,
 	CustomDomainStatus,
+	Deployment,
 	OrgBilling,
 	PlanStatus,
 	PlanTier,
@@ -148,6 +156,172 @@ function d1DatetimeToIso(value: string): string {
 	// D1 CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" in UTC.
 	if (value.includes("T")) return value;
 	return `${value.replace(" ", "T")}Z`;
+}
+
+const POSTHOG_CAPTURE_DEFAULT_HOST = "https://eu.i.posthog.com";
+
+function getStatusBucket(status: number): string {
+	if (status < 300) return "2xx";
+	if (status < 400) return "3xx";
+	if (status < 500) return "4xx";
+	return "5xx";
+}
+
+function inferAskSource(c: { req: { header: (name: string) => string | undefined } }): string {
+	const explicit = c.req.header("x-jack-source")?.trim().toLowerCase();
+	if (
+		explicit === "web" ||
+		explicit === "api" ||
+		explicit === "mcp_local" ||
+		explicit === "mcp_remote" ||
+		explicit === "cli"
+	) {
+		return explicit;
+	}
+
+	const userAgent = c.req.header("user-agent")?.toLowerCase() ?? "";
+	if (userAgent.includes("mozilla")) return "web";
+	if (userAgent.includes("curl")) return "api";
+	if (userAgent.includes("jack") || userAgent.includes("bun") || userAgent.includes("node")) return "cli";
+	return "api";
+}
+
+async function resolveOrgPlanTier(db: D1Database, orgId: string): Promise<PlanTier> {
+	try {
+		const billing = await db
+			.prepare("SELECT plan_tier FROM org_billing WHERE org_id = ?")
+			.bind(orgId)
+			.first<{ plan_tier: PlanTier | null }>();
+		return billing?.plan_tier ?? "free";
+	} catch {
+		return "free";
+	}
+}
+
+async function capturePosthogEvent(
+	env: Bindings,
+	distinctId: string,
+	event: string,
+	properties: Record<string, unknown>,
+): Promise<void> {
+	if (!env.POSTHOG_API_KEY) return;
+	const host = (env.POSTHOG_HOST || POSTHOG_CAPTURE_DEFAULT_HOST).replace(/\/+$/, "");
+
+	try {
+		await fetch(`${host}/capture`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				api_key: env.POSTHOG_API_KEY,
+				distinct_id: distinctId,
+				event,
+				properties: {
+					...properties,
+					$timestamp: Date.now(),
+				},
+			}),
+		});
+	} catch {
+		// Fail-open: analytics must not affect API behavior.
+	}
+}
+
+type AskProjectTrackingInput = {
+	env: Bindings;
+	userId: string;
+	projectId: string;
+	orgId: string;
+	tier: PlanTier;
+	source: string;
+	status: number;
+	latencyMs: number;
+	evidenceCount: number;
+	questionLength: number;
+	hasEndpointHint: boolean;
+	hintMethod?: string;
+	errorCode?: string;
+};
+
+async function trackAskProjectRequest(input: AskProjectTrackingInput): Promise<void> {
+	const dataset = input.env.CONTROL_USAGE;
+
+	if (dataset) {
+		try {
+			dataset.writeDataPoint({
+				indexes: [input.projectId],
+				blobs: [
+					input.orgId, // blob1: org_id
+					input.tier, // blob2: plan tier
+					"ask_project", // blob3: feature
+					input.source, // blob4: source
+					getStatusBucket(input.status), // blob5: status bucket
+					input.errorCode ?? "", // blob6: error code
+					input.hasEndpointHint ? "1" : "0", // blob7: endpoint hint present
+					input.hintMethod ?? "", // blob8: hint method
+					"", // blob9: reserved
+					"", // blob10: reserved
+				],
+				doubles: [
+					1, // double1: request count
+					Math.max(0, Math.round(input.latencyMs)), // double2: latency ms
+					Math.max(0, Math.round(input.evidenceCount)), // double3: evidence count
+					Math.max(0, Math.round(input.questionLength)), // double4: question length
+				],
+			});
+		} catch (error) {
+			console.error("Failed to write ask_project usage datapoint:", error);
+		}
+	} else {
+		console.error("CONTROL_USAGE binding not configured; skipping ask_project AE metering.");
+	}
+
+	await capturePosthogEvent(input.env, input.userId, "ask_project_request", {
+		project_id: input.projectId,
+		org_id: input.orgId,
+		tier: input.tier,
+		source: input.source,
+		status: input.status,
+		status_bucket: getStatusBucket(input.status),
+		latency_ms: Math.max(0, Math.round(input.latencyMs)),
+		evidence_count: Math.max(0, Math.round(input.evidenceCount)),
+		question_length: Math.max(0, Math.round(input.questionLength)),
+		has_endpoint_hint: input.hasEndpointHint,
+		hint_method: input.hintMethod ?? null,
+		error_code: input.errorCode ?? null,
+	});
+}
+
+function scheduleLatestCodeIndex(
+	env: Bindings,
+	ctx: ExecutionContext,
+	projectId: string,
+	deployment: Deployment,
+	reason: AskIndexQueueMessage["reason"] = "deploy",
+): void {
+	if (deployment.status !== "live") return;
+	ctx.waitUntil(
+		(async () => {
+			if (env.ASK_INDEX_QUEUE) {
+				await enqueueAskIndexJob(env, {
+					version: 1,
+					projectId,
+					deploymentId: deployment.id,
+					enqueuedAt: new Date().toISOString(),
+					reason,
+				});
+				return;
+			}
+
+			// Fallback path when queue is not bound (dev/smoke environments).
+			await indexLatestDeploymentSource(env, {
+				projectId,
+				deployment,
+				queueAttempts: 1,
+			});
+		})().catch((error) => {
+			console.error("ask_project indexer failed:", error);
+		}),
+	);
 }
 
 function validateUsername(username: string): string | null {
@@ -2743,6 +2917,7 @@ api.post("/projects/:projectId/rollback", async (c) => {
 	try {
 		const deploymentService = new DeploymentService(c.env);
 		const deployment = await deploymentService.rollbackDeployment(projectId, deploymentId);
+		scheduleLatestCodeIndex(c.env, c.executionCtx, projectId, deployment, "rollback");
 		return c.json({
 			deployment: {
 				id: deployment.id,
@@ -2766,6 +2941,111 @@ api.post("/projects/:projectId/rollback", async (c) => {
 	}
 });
 
+// POST /v1/projects/:projectId/ask - Ask an evidence-backed debugging question
+api.post("/projects/:projectId/ask", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const tier = await resolveOrgPlanTier(c.env.DB, project.org_id);
+	const source = inferAskSource(c);
+	const requestStartedAt = Date.now();
+
+	const recordAskOutcome = (params: {
+		status: number;
+		errorCode?: string;
+		evidenceCount?: number;
+		questionLength?: number;
+		hasEndpointHint?: boolean;
+		hintMethod?: string;
+	}) => {
+		c.executionCtx.waitUntil(
+			trackAskProjectRequest({
+				env: c.env,
+				userId: auth.userId,
+				projectId: project.id,
+				orgId: project.org_id,
+				tier,
+				source,
+				status: params.status,
+				latencyMs: Date.now() - requestStartedAt,
+				evidenceCount: params.evidenceCount ?? 0,
+				questionLength: params.questionLength ?? 0,
+				hasEndpointHint: params.hasEndpointHint ?? false,
+				hintMethod: params.hintMethod,
+				errorCode: params.errorCode,
+			}),
+		);
+	};
+
+	let body: AskProjectRequest;
+	try {
+		body = await c.req.json<AskProjectRequest>();
+	} catch {
+		recordAskOutcome({ status: 400, errorCode: "invalid_json" });
+		return c.json({ error: "invalid_request", message: "Invalid JSON body" }, 400);
+	}
+
+	const question = body.question?.trim() ?? "";
+	const hasEndpointHint = Boolean(body.hints?.endpoint);
+	const hintMethod = body.hints?.method;
+
+	if (!question) {
+		recordAskOutcome({
+			status: 400,
+			errorCode: "invalid_question",
+			questionLength: 0,
+			hasEndpointHint,
+			hintMethod,
+		});
+		return c.json({ error: "invalid_request", message: "question is required" }, 400);
+	}
+
+	try {
+		const response = await answerProjectQuestion({
+			env: c.env,
+			project: {
+				id: project.id,
+				slug: project.slug,
+				owner_username: project.owner_username,
+			},
+			question,
+			hints: body.hints,
+		});
+		recordAskOutcome({
+			status: 200,
+			evidenceCount: response.evidence.length,
+			questionLength: question.length,
+			hasEndpointHint,
+			hintMethod,
+		});
+		return c.json(response);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Failed to answer question";
+		recordAskOutcome({
+			status: 500,
+			errorCode: "internal_error",
+			questionLength: question.length,
+			hasEndpointHint,
+			hintMethod,
+		});
+		return c.json({ error: "internal_error", message }, 500);
+	}
+});
 
 // GET /v1/projects/:projectId/crons - List cron schedules
 api.get("/projects/:projectId/crons", async (c) => {
@@ -3186,9 +3466,7 @@ api.delete("/projects/:projectId", async (c) => {
 	}
 
 	// Clean up DO enforcement state (if any)
-	await c.env.DB.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
-		.bind(projectId)
-		.run();
+	await c.env.DB.prepare("DELETE FROM do_enforcement WHERE project_id = ?").bind(projectId).run();
 
 	// Soft-delete in DB
 	const now = new Date().toISOString();
@@ -3270,6 +3548,7 @@ api.post("/projects/:projectId/deployments", async (c) => {
 	try {
 		const deploymentService = new DeploymentService(c.env);
 		const deployment = await deploymentService.createDeployment(projectId, body.source);
+		scheduleLatestCodeIndex(c.env, c.executionCtx, projectId, deployment);
 		return c.json(deployment, 201);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Deployment creation failed";
@@ -3421,6 +3700,7 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 			assetManifest,
 			message: deployMessage ?? undefined,
 		});
+		scheduleLatestCodeIndex(c.env, c.executionCtx, projectId, deployment);
 
 		return c.json(deployment, 201);
 	} catch (error) {
@@ -5847,6 +6127,9 @@ const handler: ExportedHandler<Bindings> = {
 		ctx.waitUntil(pollPendingCustomDomains(env));
 		ctx.waitUntil(processDueCronSchedules(env, ctx));
 		ctx.waitUntil(processDoMetering(env));
+	},
+	queue: async (batch, env) => {
+		await consumeAskIndexBatch(batch, env);
 	},
 };
 
