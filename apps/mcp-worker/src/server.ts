@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ControlPlaneClient } from "./control-plane.ts";
+import { askProject } from "./tools/ask-project.ts";
 import { createDatabase, executeSql, listDatabases } from "./tools/database.ts";
 import { deploy } from "./tools/deploy-code.ts";
 import { getLogs } from "./tools/logs.ts";
@@ -57,6 +58,31 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 		},
 		async (params) => {
 			return deploy(client, params);
+		},
+	);
+
+	server.tool(
+		"ask_project",
+		"Ask an evidence-backed debugging question about a deployed project. Best for runtime failures, recent changes, and code-to-production impact analysis.",
+		{
+			project_id: z.string().describe("The project ID"),
+			question: z.string().describe("Debugging question to ask about this project"),
+			hints: z
+				.object({
+					endpoint: z.string().optional().describe("Endpoint path hint, e.g. /api/todos"),
+					method: z
+						.enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+						.optional()
+						.describe("HTTP method hint for endpoint checks"),
+					deployment_id: z
+						.string()
+						.optional()
+						.describe("Optional deployment ID to focus historical reasoning"),
+				})
+				.optional(),
+		},
+		async ({ project_id, question, hints }) => {
+			return askProject(client, project_id, question, hints);
 		},
 	);
 

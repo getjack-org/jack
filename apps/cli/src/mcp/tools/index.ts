@@ -7,6 +7,7 @@ import { JackError, JackErrorCode } from "../../lib/errors.ts";
 import { getDeployMode, getProjectId } from "../../lib/project-link.ts";
 import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
 import { listAllProjects } from "../../lib/project-resolver.ts";
+import { askProject } from "../../lib/services/ask-project.ts";
 import { createCronSchedule } from "../../lib/services/cron-create.ts";
 import { deleteCronSchedule } from "../../lib/services/cron-delete.ts";
 import { listCronSchedules } from "../../lib/services/cron-list.ts";
@@ -321,6 +322,27 @@ const TestEndpointSchema = z.object({
 		.optional()
 		.default(true)
 		.describe("Capture runtime logs during the request (managed mode only)"),
+});
+
+const AskProjectSchema = z.object({
+	project_path: z
+		.string()
+		.optional()
+		.describe("Path to project directory (defaults to current directory)"),
+	question: z.string().describe("Debugging question to ask about the project"),
+	hints: z
+		.object({
+			endpoint: z.string().optional().describe("Endpoint path hint, e.g. /api/todos"),
+			method: z
+				.enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+				.optional()
+				.describe("HTTP method hint for endpoint checks"),
+			deployment_id: z
+				.string()
+				.optional()
+				.describe("Optional deployment ID to focus historical reasoning"),
+		})
+		.optional(),
 });
 
 export function registerTools(server: McpServer, _options: McpServerOptions, debug: DebugLogger) {
@@ -896,6 +918,44 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 							},
 						},
 						required: ["path"],
+					},
+				},
+				{
+					name: "ask_project",
+					description:
+						"Ask an evidence-backed debugging question about this managed Jack Cloud project. " +
+						"Use for runtime failures, recent change analysis, and code-to-production impact mapping.",
+					inputSchema: {
+						type: "object",
+						properties: {
+							project_path: {
+								type: "string",
+								description: "Path to project directory (defaults to current directory)",
+							},
+							question: {
+								type: "string",
+								description: "Debugging question to ask about the project",
+							},
+							hints: {
+								type: "object",
+								properties: {
+									endpoint: {
+										type: "string",
+										description: "Endpoint path hint, e.g. /api/todos",
+									},
+									method: {
+										type: "string",
+										enum: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+										description: "HTTP method hint for endpoint checks",
+									},
+									deployment_id: {
+										type: "string",
+										description: "Optional deployment ID for historical reasoning",
+									},
+								},
+							},
+						},
+						required: ["question"],
 					},
 				},
 			],
@@ -2234,6 +2294,50 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 									null,
 									2,
 								),
+							},
+						],
+					};
+				}
+
+				case "ask_project": {
+					const args = AskProjectSchema.parse(request.params.arguments ?? {});
+					const projectPath = args.project_path ?? process.cwd();
+
+					const wrappedAskProject = withTelemetry(
+						"ask_project",
+						async (
+							projectDir: string,
+							question: string,
+							hints?: {
+								endpoint?: string;
+								method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+								deployment_id?: string;
+							},
+						) => {
+							const result = await askProject({
+								projectDir,
+								question,
+								hints,
+							});
+
+							track(Events.COMMAND_COMPLETED, {
+								command: "ask_project",
+								evidence_count: result.evidence.length,
+								platform: "mcp",
+							});
+
+							return result;
+						},
+						{ platform: "mcp" },
+					);
+
+					const result = await wrappedAskProject(projectPath, args.question, args.hints);
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
 							},
 						],
 					};
