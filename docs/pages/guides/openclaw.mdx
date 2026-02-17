@@ -39,7 +39,27 @@ curl -fsSL docs.getjack.org/install.sh | bash
 
 Or try without installing: `npx -y @getjack/jack new my-api --template api`
 
-Auth happens automatically on first use.
+### Authentication
+
+**Already have a token?** Set it and go:
+
+```bash
+export JACK_API_TOKEN=jkt_abc123...
+```
+
+**No token yet?** Use magic auth (no browser needed):
+
+```bash
+jack login --email you@example.com
+```
+
+Check your email for a 6-digit code, then:
+
+```bash
+jack login --email you@example.com --code 847291
+```
+
+The CLI is now authenticated and a `jkt_*` API token is created automatically. See the [AI agents guide](/guides/ai-agents#authentication) for the full breakdown.
 
 ## CLI or MCP — Both Work
 

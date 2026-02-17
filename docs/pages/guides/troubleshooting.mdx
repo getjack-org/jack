@@ -17,17 +17,36 @@ jack ship
 
 ### "Authentication required"
 
-Your Cloudflare session expired or was never set up.
+Your session expired or was never set up.
 
 **Fix:** Run the login flow:
 
 ```bash
-# For managed mode (jack cloud)
+# Interactive (opens browser)
 jack login
+
+# Headless / agent (email verification, no browser)
+jack login --email you@example.com
+# then: jack login --email you@example.com --code <6-digit-code>
+
+# Or set an API token directly
+export JACK_API_TOKEN=jkt_abc123...
 
 # For BYO mode (your Cloudflare account)
 wrangler login
 ```
+
+### "Cannot open browser in this environment"
+
+You ran `jack login` in a non-interactive environment (CI, Docker, SSH, agent) without specifying an email.
+
+**Fix:** Use the headless login flow:
+
+```bash
+jack login --email you@example.com
+```
+
+Or set `JACK_API_TOKEN` if you already have a token.
 
 ### "Worker not found" or "404 after deploy"
 
