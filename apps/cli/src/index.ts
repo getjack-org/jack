@@ -58,6 +58,9 @@ const cli = meow(
 
   Run 'jack <command> --help' for command-specific options.
 
+  Full docs: https://docs.getjack.org
+  AI context: https://docs.getjack.org/llms.txt
+
   Examples
     $ jack init           Set up once
     $ jack new my-app     Create and deploy
@@ -247,6 +250,11 @@ let updateCheckPromise: Promise<string | null> | null = null;
 if (!skipVersionCheck) {
 	const { checkForUpdate } = await import("./lib/version-check.ts");
 	updateCheckPromise = checkForUpdate().catch(() => null);
+}
+
+// Handle --help for subcommands (meow only auto-handles --help when no positional args)
+if (command && (cli.flags as Record<string, unknown>).help) {
+	cli.showHelp(0);
 }
 
 try {

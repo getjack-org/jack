@@ -332,7 +332,7 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 				{
 					name: "create_project",
 					description:
-						"Create a new project from a template. Automatically installs dependencies, deploys, and registers the project. Also supports forking: pass a 'username/slug' template to fork a published project, or a project slug to fork your own.",
+						"Create a new project from a template. Returns targetDir — you MUST use that path as your working directory for all subsequent file edits and tool calls (e.g. deploy_project project_path). Projects are created in ~/.jack/projects/<name>. Also supports forking: pass 'username/slug' to fork a published project.",
 					inputSchema: {
 						type: "object",
 						properties: {
@@ -939,7 +939,14 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 						content: [
 							{
 								type: "text",
-								text: JSON.stringify(formatSuccessResponse(result, startTime), null, 2),
+								text: JSON.stringify(
+									formatSuccessResponse(result, startTime, [
+										`IMPORTANT: Your working directory for this project is ${result.targetDir} — use this path for all file edits and as project_path in subsequent tool calls (deploy_project, execute_sql, etc).`,
+										`The project has AGENTS.md and CLAUDE.md with full context. Read ${result.targetDir}/AGENTS.md first.`,
+									]),
+									null,
+									2,
+								),
 							},
 						],
 					};
