@@ -25,6 +25,61 @@ export default defineConfig({
 	},
 	iconUrl: "/jack-logo.png",
 	ogImageUrl: "/og.png",
+	font: {
+		default: { google: "Inter" },
+		mono: { google: "JetBrains Mono" },
+	},
+	theme: {
+		accentColor: "oklch(0.72 0.15 220)",
+		colorScheme: "dark",
+		variables: {
+			color: {
+				// Background hierarchy
+				background: "oklch(0.06 0.01 250)",
+				background2: "oklch(0.10 0.012 250)",
+				background3: "oklch(0.10 0.012 250)",
+				background4: "oklch(0.14 0.013 250)",
+				background5: "oklch(0.18 0.015 250)",
+				backgroundDark: "oklch(0.06 0.01 250)",
+				backgroundDarkTint: "oklch(0.10 0.012 250)",
+
+				// Text hierarchy
+				heading: "oklch(0.95 0.008 250)",
+				title: "oklch(0.95 0.008 250)",
+				text: "oklch(0.60 0.015 250)",
+				text2: "oklch(0.55 0.015 250)",
+				text3: "oklch(0.45 0.015 250)",
+				text4: "oklch(0.35 0.015 250)",
+				textHover: "oklch(0.95 0.008 250)",
+
+				// Borders
+				border: "oklch(0.25 0.015 250)",
+				border2: "oklch(0.30 0.015 250)",
+
+				// Accent (blue primary)
+				backgroundAccent: "oklch(0.72 0.15 220)",
+				backgroundAccentHover: "oklch(0.65 0.15 220)",
+				backgroundAccentText: "oklch(0.06 0.01 250)",
+				textAccent: "oklch(0.72 0.15 220)",
+				textAccentHover: "oklch(0.65 0.15 220)",
+				borderAccent: "oklch(0.72 0.15 220)",
+
+				// Green (brand accent)
+				textGreen: "oklch(0.72 0.18 150)",
+				textGreenHover: "oklch(0.65 0.18 150)",
+
+				// Kill shadows
+				shadow: "transparent",
+				shadow2: "transparent",
+
+				// Inverted for buttons
+				inverted: "oklch(0.95 0.008 250)",
+			},
+			// Code block & inline code (semantic)
+			// codeBlockBackground → card bg
+			// codeInlineBackground → muted bg
+		},
+	},
 	topNav: [
 		{ text: "Quickstart", link: "/quickstart" },
 		{ text: "Templates", link: "/templates" },
