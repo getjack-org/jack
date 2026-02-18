@@ -43,6 +43,30 @@ export function hasWranglerConfig(projectDir: string): boolean {
 }
 
 // ============================================================================
+// Wrangler Config Name Updates
+// ============================================================================
+
+/**
+ * Update the "name" field in a wrangler config file.
+ * Uses text replacement to preserve comments and formatting.
+ * Supports both JSONC/JSON ("name": "value") and TOML (name = "value").
+ *
+ * @returns true if the name was updated, false if unchanged or not found
+ */
+export async function updateWranglerConfigName(configPath: string, newName: string): Promise<boolean> {
+	const content = await Bun.file(configPath).text();
+	let updated: string;
+	if (configPath.endsWith(".toml")) {
+		updated = content.replace(/^name\s*=\s*"[^"]*"/m, `name = "${newName}"`);
+	} else {
+		updated = content.replace(/"name"\s*:\s*"[^"]*"/, `"name": "${newName}"`);
+	}
+	if (updated === content) return false;
+	await Bun.write(configPath, updated);
+	return true;
+}
+
+// ============================================================================
 // D1 Binding Config
 // ============================================================================
 
