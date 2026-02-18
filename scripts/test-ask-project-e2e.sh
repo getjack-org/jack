@@ -16,6 +16,8 @@ JACK_API_TOKEN="${JACK_API_TOKEN:-}"
 PROJECT_ID="${PROJECT_ID:-}"
 PROJECT_SLUG="${PROJECT_SLUG:-}"
 QUESTION="${QUESTION:-Why is /api/todos returning 500?}"
+ENDPOINT_HINT="${ENDPOINT_HINT:-}"
+METHOD_HINT="${METHOD_HINT:-GET}"
 
 if [[ -z "$JACK_API_TOKEN" ]]; then
   echo "error: set JACK_API_TOKEN" >&2
@@ -53,10 +55,22 @@ fi
 
 echo "Using project: $PID"
 
-payload="$(jq -n --arg q "$QUESTION" '{
-  question: $q,
-  hints: { endpoint: "/api/todos", method: "GET" }
-}')"
+payload="$(jq -n \
+  --arg q "$QUESTION" \
+  --arg endpoint "$ENDPOINT_HINT" \
+  --arg method "$METHOD_HINT" \
+  'if ($endpoint | length) > 0 then
+     {
+       question: $q,
+       hints: {
+         endpoint: $endpoint,
+         method: ($method | ascii_upcase)
+       }
+     }
+   else
+     { question: $q }
+   end'
+)"
 
 tmp_body="$(mktemp)"
 http_code="$(

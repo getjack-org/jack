@@ -380,6 +380,7 @@ Respond with only valid JSON (no markdown fences):
 function pickAnswer(params: {
 	question: string;
 	latestDeployment: Deployment | null;
+	questionMatchedDeployment: Deployment | null;
 	endpointPath: string | null;
 	endpointCheck: EndpointCheckResult | null;
 	missingTableName: string | null;
@@ -391,6 +392,7 @@ function pickAnswer(params: {
 	const {
 		question,
 		latestDeployment,
+		questionMatchedDeployment,
 		endpointPath,
 		endpointCheck,
 		missingTableName,
@@ -433,6 +435,16 @@ function pickAnswer(params: {
 	}
 
 	if (isChangeQuestion(question) && latestDeployment) {
+		if (questionMatchedDeployment?.message) {
+			if (
+				latestDeployment.id !== questionMatchedDeployment.id &&
+				!latestDeployment.message
+			) {
+				return `The change most related to your question is deployment ${questionMatchedDeployment.id}: "${questionMatchedDeployment.message}". The latest deployment ${latestDeployment.id} is live but has no deploy message.`;
+			}
+			return `The change most related to your question is deployment ${questionMatchedDeployment.id}: "${questionMatchedDeployment.message}".`;
+		}
+
 		if (latestDeployment.message) {
 			return `The most recent change is deployment ${latestDeployment.id} with message: "${latestDeployment.message}".`;
 		}
@@ -476,6 +488,9 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		!hintedDeployment && isWhyShippedQuestion(question)
 			? inferDeploymentFromQuestion(question, deployments)
 			: null;
+	const questionMatchedDeployment = isChangeQuestion(question)
+		? inferDeploymentFromQuestion(question, deployments)
+		: null;
 	const targetDeployment = hintedDeployment ?? inferredDeployment ?? latestDeployment;
 
 	evidence.add(
@@ -562,14 +577,22 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		);
 	}
 
-	const endpointPath = hints?.endpoint ?? extractEndpointFromQuestion(question);
+	const endpointMentionInQuestion = extractEndpointFromQuestion(question);
+	const endpointPath = hints?.endpoint ?? endpointMentionInQuestion;
+	const isHistoryStyleQuestion = isWhyShippedQuestion(question) || isChangeQuestion(question);
+	const shouldRunEndpointCheck =
+		Boolean(endpointPath) &&
+		!isHistoryStyleQuestion &&
+		(Boolean(endpointMentionInQuestion) ||
+			(Boolean(hints?.endpoint) && looksLikeFailureQuestion(question)));
+	const shouldRunCodeSearch = !isHistoryStyleQuestion || shouldRunEndpointCheck;
 	const endpointMethod = hints?.method ?? "GET";
 	let liveChecks = 0;
 	let endpointCheck: EndpointCheckResult | null = null;
 	let missingTableName: string | null = null;
 	let tableMissingConfirmed = false;
 
-	if (endpointPath && liveChecks < 4) {
+	if (shouldRunEndpointCheck && endpointPath && liveChecks < 4) {
 		const baseUrl = project.owner_username
 			? `https://${project.owner_username}-${project.slug}.runjack.xyz`
 			: `https://${project.slug}.runjack.xyz`;
@@ -600,7 +623,7 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		}
 	}
 
-	if (endpointCheck?.status && endpointCheck.status >= 500 && liveChecks < 4) {
+	if (shouldRunEndpointCheck && endpointCheck?.status && endpointCheck.status >= 500 && liveChecks < 4) {
 		const missingTable = endpointCheck.bodyExcerpt.match(/no such table:\s*([A-Za-z0-9_]+)/i);
 		if (missingTable?.[1]) {
 			missingTableName = missingTable[1];
@@ -653,9 +676,9 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		}
 	}
 
-	const codeQuery = endpointPath ?? question;
+	const codeQuery = shouldRunEndpointCheck && endpointPath ? endpointPath : question;
 	const routeMatches =
-		endpointPath && latestIndex?.status === "ready"
+		shouldRunEndpointCheck && endpointPath && latestIndex?.status === "ready"
 			? await findRouteMatchesForEndpoint(env, project.id, endpointPath, 4)
 			: [];
 
@@ -673,7 +696,7 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 				},
 			);
 		}
-	} else if (endpointPath) {
+	} else if (shouldRunEndpointCheck && endpointPath) {
 		evidence.add(
 			"code_symbol",
 			"code_index_latest",
@@ -682,45 +705,63 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		);
 	}
 
-	let codeHits =
-		latestIndex?.status === "ready"
-			? await searchLatestCodeIndex(env, project.id, codeQuery, 3)
-			: [];
+	if (!shouldRunCodeSearch) {
+		evidence.add(
+			"index_status",
+			"code_search",
+			"Skipped code retrieval for this history-focused question; deployment evidence is prioritized.",
+			"supports",
+		);
+	}
 
-	if (codeHits.length === 0) {
-		const fallback = await searchSourceFallback(env, targetDeployment, codeQuery, 3);
-		if (fallback.length > 0) {
-			codeHits = fallback;
+	let codeHits: Array<{
+		path: string;
+		lineStart: number | null;
+		lineEnd: number | null;
+		snippet: string;
+	}> = [];
+
+	if (shouldRunCodeSearch) {
+		codeHits =
+			latestIndex?.status === "ready"
+				? await searchLatestCodeIndex(env, project.id, codeQuery, 3)
+				: [];
+
+		if (codeHits.length === 0) {
+			const fallback = await searchSourceFallback(env, targetDeployment, codeQuery, 3);
+			if (fallback.length > 0) {
+				codeHits = fallback;
+				evidence.add(
+					"index_status",
+					"source_fallback",
+					"Used source fallback search because latest code index had no hits.",
+					"gap",
+				);
+			}
+		}
+
+		for (const hit of codeHits.slice(0, 3)) {
 			evidence.add(
-				"index_status",
-				"source_fallback",
-				"Used source fallback search because latest code index had no hits.",
+				"code_chunk",
+				"code_search",
+				`Possible relevant code in ${hit.path}: ${hit.snippet}`,
+				"supports",
+				{
+					path: hit.path,
+					line_start: hit.lineStart,
+					line_end: hit.lineEnd,
+				},
+			);
+		}
+
+		if (codeHits.length === 0) {
+			evidence.add(
+				"code_chunk",
+				"code_search",
+				"No relevant code chunks were found for this query.",
 				"gap",
 			);
 		}
-	}
-
-	for (const hit of codeHits.slice(0, 3)) {
-		evidence.add(
-			"code_chunk",
-			"code_search",
-			`Possible relevant code in ${hit.path}: ${hit.snippet}`,
-			"supports",
-			{
-				path: hit.path,
-				line_start: hit.lineStart,
-				line_end: hit.lineEnd,
-			},
-		);
-	}
-
-	if (codeHits.length === 0) {
-		evidence.add(
-			"code_chunk",
-			"code_search",
-			"No relevant code chunks were found for this query.",
-			"gap",
-		);
 	}
 
 	// Use pre-computed session digest if available
@@ -739,6 +780,7 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 	const pickAnswerParams = {
 		question,
 		latestDeployment,
+		questionMatchedDeployment,
 		endpointPath,
 		endpointCheck,
 		missingTableName,
