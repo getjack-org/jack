@@ -4,6 +4,17 @@ import { unzipSync } from "fflate";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type Stripe from "stripe";
+import { indexLatestDeploymentSource } from "./ask-code-index";
+import {
+	type AskIndexQueueMessage,
+	consumeAskIndexBatch,
+	enqueueAskIndexJob,
+} from "./ask-index-queue";
+import {
+	type AskProjectRequest,
+	answerProjectQuestion,
+	generateSessionDigest,
+} from "./ask-project";
 import { BillingService } from "./billing-service";
 import {
 	type AIUsageByModel,
@@ -21,13 +32,6 @@ import { DaimoBillingService } from "./daimo-billing-service";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { getDoEnforcementStatus, processDoMetering } from "./do-metering";
 import { REFERRAL_CAP, TIER_LIMITS, computeLimits } from "./entitlements-config";
-import { indexLatestDeploymentSource } from "./ask-code-index";
-import {
-	type AskIndexQueueMessage,
-	consumeAskIndexBatch,
-	enqueueAskIndexJob,
-} from "./ask-index-queue";
-import { answerProjectQuestion, type AskProjectRequest } from "./ask-project";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
 import { validateReadOnly } from "./sql-utils";
@@ -182,7 +186,8 @@ function inferAskSource(c: { req: { header: (name: string) => string | undefined
 	const userAgent = c.req.header("user-agent")?.toLowerCase() ?? "";
 	if (userAgent.includes("mozilla")) return "web";
 	if (userAgent.includes("curl")) return "api";
-	if (userAgent.includes("jack") || userAgent.includes("bun") || userAgent.includes("node")) return "cli";
+	if (userAgent.includes("jack") || userAgent.includes("bun") || userAgent.includes("node"))
+		return "cli";
 	return "api";
 }
 
@@ -3707,6 +3712,64 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 		const message = error instanceof Error ? error.message : "Deployment creation failed";
 		return c.json({ error: "internal_error", message }, 500);
 	}
+});
+
+// Upload session transcript for a deployment
+api.put("/projects/:projectId/deployments/:deploymentId/session-transcript", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const deploymentId = c.req.param("deploymentId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify deployment belongs to this project
+	const deployment = await c.env.DB.prepare(
+		"SELECT id FROM deployments WHERE id = ? AND project_id = ?",
+	)
+		.bind(deploymentId, projectId)
+		.first();
+	if (!deployment) {
+		return c.json({ error: "not_found", message: "Deployment not found" }, 404);
+	}
+
+	const body = await c.req.text();
+	if (!body) {
+		return c.json({ error: "invalid_request", message: "Empty body" }, 400);
+	}
+
+	// Limit to 1MB to avoid unbounded storage
+	const MAX_TRANSCRIPT_BYTES = 1_000_000;
+	const bodyBytes = new TextEncoder().encode(body).length;
+	if (bodyBytes > MAX_TRANSCRIPT_BYTES) {
+		return c.json({ error: "payload_too_large", message: "Transcript exceeds 1MB limit" }, 413);
+	}
+
+	const r2Key = `projects/${projectId}/deployments/${deploymentId}/session-transcript.jsonl`;
+	await c.env.CODE_BUCKET.put(r2Key, body, {
+		httpMetadata: { contentType: "application/x-ndjson" },
+	});
+
+	await c.env.DB.prepare("UPDATE deployments SET has_session_transcript = 1 WHERE id = ?")
+		.bind(deploymentId)
+		.run();
+
+	// Generate a prose digest in the background — never blocks the response
+	c.executionCtx.waitUntil(generateSessionDigest(c.env, deploymentId, body));
+
+	return c.json({ ok: true });
 });
 
 // Secrets endpoints - never stores secrets in D1, passes directly to Cloudflare

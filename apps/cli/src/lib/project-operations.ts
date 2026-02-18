@@ -72,7 +72,7 @@ import { applySchema, getD1Bindings, getD1DatabaseName, hasD1Config } from "./sc
 import { getSavedSecrets, saveSecrets } from "./secrets.ts";
 import { getProjectNameFromDir, getRemoteManifest } from "./storage/index.ts";
 import { Events, track, trackActivationIfFirst } from "./telemetry.ts";
-import { findWranglerConfig, hasWranglerConfig } from "./wrangler-config.ts";
+import { findWranglerConfig, hasWranglerConfig, updateWranglerConfigName } from "./wrangler-config.ts";
 
 // ============================================================================
 // Type Definitions
@@ -644,6 +644,14 @@ async function runAutoDetectFlow(
 			usePrebuilt: false,
 		});
 
+		// Sync wrangler config name with cloud slug if they differ
+		if (remoteResult.projectSlug !== projectName) {
+			const configPath = findWranglerConfig(projectPath);
+			if (configPath) {
+				await updateWranglerConfigName(configPath, remoteResult.projectSlug);
+			}
+		}
+
 		// Link project locally (include username for correct URL display)
 		await linkProject(projectPath, remoteResult.projectId, "managed", ownerUsername ?? undefined);
 		await registerPath(remoteResult.projectId, projectPath);
@@ -651,7 +659,7 @@ async function runAutoDetectFlow(
 		track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
 
 		return {
-			projectName,
+			projectName: remoteResult.projectSlug,
 			projectId: remoteResult.projectId,
 			deployMode: "managed",
 		};
@@ -723,6 +731,14 @@ async function runAutoDetectFlow(
 		usePrebuilt: false,
 	});
 
+	// Sync wrangler config name with cloud slug if they differ
+	if (remoteResult.projectSlug !== slugifiedName) {
+		const configPath = findWranglerConfig(projectPath);
+		if (configPath) {
+			await updateWranglerConfigName(configPath, remoteResult.projectSlug);
+		}
+	}
+
 	// Link project locally (include username for correct URL display)
 	await linkProject(projectPath, remoteResult.projectId, "managed", ownerUsername ?? undefined);
 	await registerPath(remoteResult.projectId, projectPath);
@@ -730,7 +746,7 @@ async function runAutoDetectFlow(
 	track(Events.AUTO_DETECT_SUCCESS, { type: detection.type });
 
 	return {
-		projectName: slugifiedName,
+		projectName: remoteResult.projectSlug,
 		projectId: remoteResult.projectId,
 		deployMode: "managed",
 	};
@@ -1243,6 +1259,15 @@ export async function createProject(
 					},
 				});
 				remoteResult = result.remoteResult;
+
+				// Sync wrangler config name with cloud slug if they differ
+				if (remoteResult && remoteResult.projectSlug !== projectName) {
+					const configPath = findWranglerConfig(targetDir);
+					if (configPath) {
+						await updateWranglerConfigName(configPath, remoteResult.projectSlug);
+					}
+				}
+
 				timings.push({ label: "Parallel setup", duration: timerEnd("parallel-setup") });
 				reporter.stop();
 				if (urlShownEarly) {
@@ -1620,6 +1645,15 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 			// User is logged into Jack Cloud - create managed project
 			const orphanedProjectName = await getProjectNameFromDir(projectPath);
 
+			// Reject template placeholder — this is always a bug (raw template files)
+			if (orphanedProjectName === "jack-template") {
+				throw new JackError(
+					JackErrorCode.VALIDATION_ERROR,
+					'Project has un-rendered template name "jack-template" in wrangler config',
+					'Update the "name" field in wrangler.jsonc to your project name, then run: jack ship',
+				);
+			}
+
 			// Get username for confirmation prompt and URL construction
 			const { getCurrentUserProfile } = await import("./control-plane.ts");
 			const profile = await getCurrentUserProfile();
@@ -1659,9 +1693,17 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 			await linkProject(projectPath, remoteResult.projectId, "managed", ownerUsername);
 			await registerPath(remoteResult.projectId, projectPath);
 
-			// Set autoDetectResult so the rest of the flow uses managed mode
+			// Sync wrangler config name with cloud slug if they differ
+			if (remoteResult.projectSlug !== orphanedProjectName) {
+				const configPath = findWranglerConfig(projectPath);
+				if (configPath) {
+					await updateWranglerConfigName(configPath, remoteResult.projectSlug);
+				}
+			}
+
+			// Set autoDetectResult — use cloud slug as authoritative name
 			autoDetectResult = {
-				projectName: orphanedProjectName,
+				projectName: remoteResult.projectSlug,
 				projectId: remoteResult.projectId,
 				deployMode: "managed",
 			};
@@ -2007,13 +2049,8 @@ export async function getProjectStatus(
 	const backupFiles = manifest ? manifest.files.length : null;
 	const backupLastSync = manifest ? manifest.lastSync : null;
 
-	// Determine URL based on mode
+	// Get URL, database name, and deployment data
 	let workerUrl: string | null = null;
-	if (link?.deploy_mode === "managed") {
-		workerUrl = await buildManagedUrl(projectName, link.owner_username, resolvedPath);
-	}
-
-	// Get database name and deployment data
 	let dbName: string | null = null;
 	let lastDeployAt: string | null = null;
 	let deployCount = 0;
@@ -2022,10 +2059,15 @@ export async function getProjectStatus(
 	let lastDeployMessage: string | null = null;
 
 	if (link?.deploy_mode === "managed") {
-		// Single overview call replaces fetchProjectResources + fetchDeployments
+		// For managed projects, cloud is authoritative for name and URL
 		try {
 			const { fetchProjectOverview } = await import("./control-plane.ts");
 			const overview = await fetchProjectOverview(link.project_id);
+
+			// Use cloud-authoritative name and URL
+			projectName = overview.project.slug || overview.project.name || projectName;
+			workerUrl = overview.project.url || null;
+
 			const d1 = overview.resources.find((r) => r.resource_type === "d1");
 			dbName = d1?.resource_name || null;
 
@@ -2037,7 +2079,8 @@ export async function getProjectStatus(
 				lastDeployMessage = latest.message;
 			}
 		} catch {
-			// Silent fail — supplementary data
+			// Fallback to local data if cloud is unreachable
+			workerUrl = await buildManagedUrl(projectName, link.owner_username, resolvedPath);
 		}
 	} else if (localExists) {
 		// For BYO, parse from wrangler config

@@ -547,6 +547,12 @@ try {
 			await withTelemetry("skills", skills, { subcommand: args[0] })(args[0], args.slice(1));
 			break;
 		}
+		case "_internal": {
+			// Internal commands used by Claude Code hooks — not shown in help
+			const { default: internal } = await import("./commands/internal.ts");
+			await internal(args[0]);
+			break;
+		}
 		default: {
 			// No command provided - show interactive picker if TTY, else help
 			if (!command) {
