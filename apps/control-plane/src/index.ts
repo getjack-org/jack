@@ -3709,6 +3709,63 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 	}
 });
 
+// Upload session transcript for a deployment
+api.put("/projects/:projectId/deployments/:deploymentId/session-transcript", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const deploymentId = c.req.param("deploymentId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify deployment belongs to this project
+	const deployment = await c.env.DB.prepare(
+		"SELECT id FROM deployments WHERE id = ? AND project_id = ?",
+	)
+		.bind(deploymentId, projectId)
+		.first();
+	if (!deployment) {
+		return c.json({ error: "not_found", message: "Deployment not found" }, 404);
+	}
+
+	const body = await c.req.text();
+	if (!body) {
+		return c.json({ error: "invalid_request", message: "Empty body" }, 400);
+	}
+
+	// Limit to 1MB to avoid unbounded storage
+	const MAX_TRANSCRIPT_BYTES = 1_000_000;
+	const bodyBytes = new TextEncoder().encode(body).length;
+	if (bodyBytes > MAX_TRANSCRIPT_BYTES) {
+		return c.json({ error: "payload_too_large", message: "Transcript exceeds 1MB limit" }, 413);
+	}
+
+	const r2Key = `projects/${projectId}/deployments/${deploymentId}/session-transcript.jsonl`;
+	await c.env.CODE_BUCKET.put(r2Key, body, {
+		httpMetadata: { contentType: "application/x-ndjson" },
+	});
+
+	await c.env.DB.prepare(
+		"UPDATE deployments SET has_session_transcript = 1 WHERE id = ?",
+	)
+		.bind(deploymentId)
+		.run();
+
+	return c.json({ ok: true });
+});
+
 // Secrets endpoints - never stores secrets in D1, passes directly to Cloudflare
 api.post("/projects/:projectId/secrets", async (c) => {
 	const auth = c.get("auth");
