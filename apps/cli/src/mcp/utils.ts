@@ -27,12 +27,18 @@ export function formatErrorResponse(error: unknown, startTime: number): McpToolR
 		? (error.suggestion ?? getSuggestionForError(code))
 		: getSuggestionForError(code);
 
+	// Surface subprocess stderr so AI agents can see actual build/deploy errors
+	const details = isJackError(error) && error.meta?.stderr
+		? String(error.meta.stderr)
+		: undefined;
+
 	return {
 		success: false,
 		error: {
 			code,
 			message,
 			suggestion,
+			...(details && { details }),
 		},
 		meta: {
 			duration_ms: Date.now() - startTime,

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { platform } from "node:os";
 import { dirname, join } from "node:path";
 import { CONFIG_DIR } from "./config.ts";
@@ -86,6 +86,9 @@ export function getJackMcpConfig(): McpServerConfig {
 		args: ["mcp", "serve"],
 		env: {
 			PATH: defaultPaths.join(":"),
+			HOME: homedir(),
+			TMPDIR: tmpdir(),
+			...(process.env.USER && { USER: process.env.USER }),
 		},
 	};
 }
