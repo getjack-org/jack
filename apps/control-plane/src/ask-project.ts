@@ -276,7 +276,7 @@ export async function generateSessionDigest(
 		// Take last 50 turns — recent context matters most for debugging
 		const recentTurns = turns.slice(-50).join("\n\n");
 
-		const response = await env.AI.run("@cf/glm4/glm-4.7-flash" as keyof AiModels, {
+		const response = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
 			messages: [
 				{
 					role: "system",
@@ -341,7 +341,7 @@ Respond with only valid JSON (no markdown fences):
   "confidence": "high" | "medium" | "low"
 }`;
 
-	const response = await env.AI.run("@cf/glm4/glm-4.7-flash" as keyof AiModels, {
+	const response = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
 		messages: [
 			{
 				role: "system",
@@ -352,29 +352,36 @@ Respond with only valid JSON (no markdown fences):
 		max_tokens: 512,
 	});
 
-	const text =
-		typeof response === "object" && response !== null && "response" in response
-			? String((response as { response: unknown }).response)
-			: "";
+	// Workers AI returns { response: string | object } — may auto-parse JSON responses
+	const raw = response as Record<string, unknown>;
+	const inner = raw?.response;
 
-	if (!text) return null;
-
+	let parsed: Record<string, unknown>;
 	try {
-		const parsed = JSON.parse(text) as Record<string, unknown>;
-		return {
-			answer: typeof parsed.answer === "string" ? parsed.answer : text.slice(0, 800),
-			root_cause: typeof parsed.root_cause === "string" ? parsed.root_cause : undefined,
-			suggested_fix: typeof parsed.suggested_fix === "string" ? parsed.suggested_fix : undefined,
-			confidence:
-				parsed.confidence === "high" ||
-				parsed.confidence === "medium" ||
-				parsed.confidence === "low"
-					? parsed.confidence
-					: "low",
-		};
+		parsed =
+			typeof inner === "string"
+				? (JSON.parse(inner) as Record<string, unknown>)
+				: typeof inner === "object" && inner !== null
+					? (inner as Record<string, unknown>)
+					: {};
 	} catch {
-		return { answer: text.slice(0, 800), confidence: "low" };
+		// Model returned non-JSON text — use as-is
+		return { answer: String(inner).slice(0, 800), confidence: "low" as const };
 	}
+
+	if (Object.keys(parsed).length === 0) return null;
+
+	return {
+		answer: typeof parsed.answer === "string" ? parsed.answer : JSON.stringify(parsed).slice(0, 800),
+		root_cause: typeof parsed.root_cause === "string" ? parsed.root_cause : undefined,
+		suggested_fix: typeof parsed.suggested_fix === "string" ? parsed.suggested_fix : undefined,
+		confidence:
+			parsed.confidence === "high" ||
+			parsed.confidence === "medium" ||
+			parsed.confidence === "low"
+				? parsed.confidence
+				: "low",
+	};
 }
 
 function pickAnswer(params: {
