@@ -14,11 +14,10 @@
 		"cronstrue": "^2.50.0",
 		"fflate": "^0.8.2",
 		"hono": "^4.6.0",
-		"@anthropic-ai/sdk": "^0.36.3",
 		"stripe": "^17.5.0"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^4.20241205.0",
+		"@cloudflare/workers-types": "^4.20260218.0",
 		"typescript": "^5.0.0"
 	}
 }

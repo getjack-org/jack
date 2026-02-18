@@ -30,7 +30,8 @@ export type Bindings = {
 	// Optional PostHog server-side capture key for control-plane events
 	POSTHOG_API_KEY?: string;
 	POSTHOG_HOST?: string;
-	ANTHROPIC_API_KEY?: string;
+	// Workers AI binding for LLM synthesis in ask_project
+	AI: Ai;
 };
 
 // Project status enum
@@ -116,6 +117,7 @@ export interface Deployment {
 	error_message: string | null;
 	message: string | null;
 	has_session_transcript: number; // SQLite boolean (0 or 1)
+	session_digest: string | null;
 	created_at: string;
 	updated_at: string;
 }

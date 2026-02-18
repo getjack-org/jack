@@ -8,8 +8,6 @@ import { CloudflareClient } from "./cloudflare-api";
 import { DeploymentService } from "./deployment-service";
 import { ProvisioningService } from "./provisioning";
 import type { Bindings, Deployment } from "./types";
-import Anthropic from "@anthropic-ai/sdk";
-
 export interface AskProjectHints {
 	endpoint?: string;
 	method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -225,68 +223,102 @@ function summarizeDeploymentMessage(deployment: Deployment): string {
 	return `Deployment ${deployment.id} (${deployment.status}) at ${createdAt} has no deploy message`;
 }
 
-async function fetchSessionTranscript(
-	env: Bindings,
-	projectId: string,
-	deploymentId: string,
-): Promise<string | null> {
-	try {
-		const r2Key = `projects/${projectId}/deployments/${deploymentId}/session-transcript.jsonl`;
-		const obj = await env.CODE_BUCKET.get(r2Key);
-		if (!obj) return null;
-
-		const raw = await obj.text();
-		const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-
-		// Parse Claude Code JSONL format: { type: "user"|"assistant", message: { content: string | ContentBlock[] } }
-		const turns: string[] = [];
-		for (const line of lines) {
-			try {
-				const parsed = JSON.parse(line) as Record<string, unknown>;
-				if (parsed.type !== "user" && parsed.type !== "assistant") continue;
-				const msg = parsed.message as Record<string, unknown> | undefined;
-				if (!msg) continue;
-				const content = msg.content;
-				let text = "";
-				if (typeof content === "string") {
-					text = content;
-				} else if (Array.isArray(content)) {
-					// Extract text blocks only (skip tool_use, tool_result, etc.)
-					text = content
-						.filter((b): b is { type: "text"; text: string } =>
+/**
+ * Parse raw JSONL transcript into redacted conversation turns.
+ * Shared between the digest generator and the fallback read path.
+ */
+export function parseTranscriptTurns(raw: string): string[] {
+	const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+	const turns: string[] = [];
+	for (const line of lines) {
+		try {
+			const parsed = JSON.parse(line) as Record<string, unknown>;
+			if (parsed.type !== "user" && parsed.type !== "assistant") continue;
+			const msg = parsed.message as Record<string, unknown> | undefined;
+			if (!msg) continue;
+			const content = msg.content;
+			let text = "";
+			if (typeof content === "string") {
+				text = content;
+			} else if (Array.isArray(content)) {
+				text = content
+					.filter(
+						(b): b is { type: "text"; text: string } =>
 							typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "text",
-						)
-						.map((b) => b.text)
-						.join(" ");
-				}
-				if (text.trim()) {
-					turns.push(`[${parsed.type as string}]: ${redactText(text).slice(0, 500)}`);
-				}
-			} catch {
-				// skip malformed lines
+					)
+					.map((b) => b.text)
+					.join(" ");
 			}
+			if (text.trim()) {
+				turns.push(`[${parsed.type as string}]: ${redactText(text).slice(0, 500)}`);
+			}
+		} catch {
+			// skip malformed lines
 		}
+	}
+	return turns;
+}
 
-		const lastTurns = turns.slice(-30);
-		return lastTurns.length > 0 ? lastTurns.join("\n\n") : null;
-	} catch {
-		return null;
+/**
+ * Generate a prose digest of a session transcript using Workers AI.
+ * Called via waitUntil at upload time — failures are silent.
+ * Writes the result to the session_digest column on the deployment.
+ */
+export async function generateSessionDigest(
+	env: Bindings,
+	deploymentId: string,
+	rawTranscript: string,
+): Promise<void> {
+	try {
+		const turns = parseTranscriptTurns(rawTranscript);
+		if (turns.length === 0) return;
+
+		// Take last 50 turns — recent context matters most for debugging
+		const recentTurns = turns.slice(-50).join("\n\n");
+
+		const response = await env.AI.run("@cf/glm4/glm-4.7-flash" as keyof AiModels, {
+			messages: [
+				{
+					role: "system",
+					content:
+						"You summarize coding session transcripts. Be concise (3-8 sentences). Focus on: problems encountered and how they were resolved, key decisions or trade-offs made, workarounds applied, and anything that could break later. Skip pleasantries, tool invocations, and routine file edits. If the session is trivial (a quick fix with no complications), say so in one sentence.",
+				},
+				{
+					role: "user",
+					content: `Summarize this coding session transcript:\n\n${recentTurns}`,
+				},
+			],
+			max_tokens: 400,
+		});
+
+		const text =
+			typeof response === "object" && response !== null && "response" in response
+				? String((response as { response: unknown }).response).trim()
+				: "";
+
+		if (!text) return;
+
+		await env.DB.prepare("UPDATE deployments SET session_digest = ? WHERE id = ?")
+			.bind(text, deploymentId)
+			.run();
+	} catch (err) {
+		console.error("generateSessionDigest failed:", err);
 	}
 }
 
-// Returns null when ANTHROPIC_API_KEY is absent; throws on API failure (caller catches and falls back)
 async function synthesizeAnswer(
 	env: Bindings,
 	question: string,
 	evidence: AskProjectEvidence[],
 	sessionExcerpt: string | null,
-): Promise<Pick<AskProjectResponse, "answer" | "root_cause" | "suggested_fix" | "confidence"> | null> {
-	if (!env.ANTHROPIC_API_KEY) return null;
-
-	const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-
+): Promise<Pick<
+	AskProjectResponse,
+	"answer" | "root_cause" | "suggested_fix" | "confidence"
+> | null> {
 	const evidenceBlock = evidence
-		.map((e) => `- [${e.id}] type=${e.type} source=${e.source} relation=${e.relation}: ${e.summary}`)
+		.map(
+			(e) => `- [${e.id}] type=${e.type} source=${e.source} relation=${e.relation}: ${e.summary}`,
+		)
 		.join("\n");
 
 	const transcriptBlock = sessionExcerpt
@@ -309,13 +341,23 @@ Respond with only valid JSON (no markdown fences):
   "confidence": "high" | "medium" | "low"
 }`;
 
-	const message = await client.messages.create({
-		model: "claude-haiku-4-5-20251001",
+	const response = await env.AI.run("@cf/glm4/glm-4.7-flash" as keyof AiModels, {
+		messages: [
+			{
+				role: "system",
+				content: "You are a concise debugging assistant. Respond with only valid JSON.",
+			},
+			{ role: "user", content: prompt },
+		],
 		max_tokens: 512,
-		messages: [{ role: "user", content: prompt }],
 	});
 
-	const text = message.content[0]?.type === "text" ? message.content[0].text : "";
+	const text =
+		typeof response === "object" && response !== null && "response" in response
+			? String((response as { response: unknown }).response)
+			: "";
+
+	if (!text) return null;
 
 	try {
 		const parsed = JSON.parse(text) as Record<string, unknown>;
@@ -324,7 +366,9 @@ Respond with only valid JSON (no markdown fences):
 			root_cause: typeof parsed.root_cause === "string" ? parsed.root_cause : undefined,
 			suggested_fix: typeof parsed.suggested_fix === "string" ? parsed.suggested_fix : undefined,
 			confidence:
-				parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
+				parsed.confidence === "high" ||
+				parsed.confidence === "medium" ||
+				parsed.confidence === "low"
 					? parsed.confidence
 					: "low",
 		};
@@ -679,19 +723,16 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		);
 	}
 
-	// Load session transcript for the target deployment if available
-	let sessionExcerpt: string | null = null;
-	if ((targetDeployment as Record<string, unknown>).has_session_transcript === 1) {
-		sessionExcerpt = await fetchSessionTranscript(env, project.id, targetDeployment.id);
-		if (sessionExcerpt) {
-			evidence.add(
-				"session_transcript",
-				"deploy_session",
-				`Deploy session context: ${sessionExcerpt.slice(0, 200)}`,
-				"supports",
-				{ deployment_id: targetDeployment.id },
-			);
-		}
+	// Use pre-computed session digest if available
+	const sessionExcerpt = targetDeployment.session_digest;
+	if (sessionExcerpt) {
+		evidence.add(
+			"session_transcript",
+			"deploy_session",
+			`Deploy session context: ${sessionExcerpt.slice(0, 300)}`,
+			"supports",
+			{ deployment_id: targetDeployment.id },
+		);
 	}
 
 	const hasInsufficientEvidence = evidence.values().some((e) => e.relation === "gap");
@@ -707,12 +748,15 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		hasInsufficientEvidence,
 	};
 
-	const synthesized = await synthesizeAnswer(env, question, evidence.values(), sessionExcerpt).catch(
-		(err: unknown) => {
-			console.error("ask_project: LLM synthesis failed, falling back to pickAnswer:", err);
-			return null;
-		},
-	);
+	const synthesized = await synthesizeAnswer(
+		env,
+		question,
+		evidence.values(),
+		sessionExcerpt,
+	).catch((err: unknown) => {
+		console.error("ask_project: LLM synthesis failed, falling back to pickAnswer:", err);
+		return null;
+	});
 
 	const synthesis = synthesized ?? { answer: pickAnswer(pickAnswerParams) };
 

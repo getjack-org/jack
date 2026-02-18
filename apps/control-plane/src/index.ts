@@ -4,6 +4,17 @@ import { unzipSync } from "fflate";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type Stripe from "stripe";
+import { indexLatestDeploymentSource } from "./ask-code-index";
+import {
+	type AskIndexQueueMessage,
+	consumeAskIndexBatch,
+	enqueueAskIndexJob,
+} from "./ask-index-queue";
+import {
+	type AskProjectRequest,
+	answerProjectQuestion,
+	generateSessionDigest,
+} from "./ask-project";
 import { BillingService } from "./billing-service";
 import {
 	type AIUsageByModel,
@@ -21,13 +32,6 @@ import { DaimoBillingService } from "./daimo-billing-service";
 import { DeploymentService, validateManifest } from "./deployment-service";
 import { getDoEnforcementStatus, processDoMetering } from "./do-metering";
 import { REFERRAL_CAP, TIER_LIMITS, computeLimits } from "./entitlements-config";
-import { indexLatestDeploymentSource } from "./ask-code-index";
-import {
-	type AskIndexQueueMessage,
-	consumeAskIndexBatch,
-	enqueueAskIndexJob,
-} from "./ask-index-queue";
-import { answerProjectQuestion, type AskProjectRequest } from "./ask-project";
 import { ProvisioningService, normalizeSlug, validateSlug } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
 import { validateReadOnly } from "./sql-utils";
@@ -182,7 +186,8 @@ function inferAskSource(c: { req: { header: (name: string) => string | undefined
 	const userAgent = c.req.header("user-agent")?.toLowerCase() ?? "";
 	if (userAgent.includes("mozilla")) return "web";
 	if (userAgent.includes("curl")) return "api";
-	if (userAgent.includes("jack") || userAgent.includes("bun") || userAgent.includes("node")) return "cli";
+	if (userAgent.includes("jack") || userAgent.includes("bun") || userAgent.includes("node"))
+		return "cli";
 	return "api";
 }
 
@@ -3757,11 +3762,12 @@ api.put("/projects/:projectId/deployments/:deploymentId/session-transcript", asy
 		httpMetadata: { contentType: "application/x-ndjson" },
 	});
 
-	await c.env.DB.prepare(
-		"UPDATE deployments SET has_session_transcript = 1 WHERE id = ?",
-	)
+	await c.env.DB.prepare("UPDATE deployments SET has_session_transcript = 1 WHERE id = ?")
 		.bind(deploymentId)
 		.run();
+
+	// Generate a prose digest in the background — never blocks the response
+	c.executionCtx.waitUntil(generateSessionDigest(c.env, deploymentId, body));
 
 	return c.json({ ok: true });
 });
