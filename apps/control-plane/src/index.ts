@@ -2830,6 +2830,8 @@ api.get("/projects/:projectId/deployments", async (c) => {
 		source: d.source,
 		error_message: d.error_message,
 		message: d.message,
+		has_session_transcript: d.has_session_transcript === 1,
+		session_digest: d.session_digest,
 		created_at: d1DatetimeToIso(d.created_at),
 		updated_at: d1DatetimeToIso(d.updated_at),
 	}));
