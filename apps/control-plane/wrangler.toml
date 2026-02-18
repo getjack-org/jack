@@ -81,3 +81,4 @@ dataset = "jack_control_usage"
 # - DAIMO_WEBHOOK_SECRET   # Daimo webhook basic auth token
 # - DAIMO_RECEIVER_ADDRESS # Wallet address to receive USDC on Base
 # - POSTHOG_API_KEY        # Optional: server-side product analytics capture
+# - ANTHROPIC_API_KEY     # Optional: Anthropic API key for LLM answer synthesis in ask_project

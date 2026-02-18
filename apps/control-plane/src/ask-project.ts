@@ -8,6 +8,7 @@ import { CloudflareClient } from "./cloudflare-api";
 import { DeploymentService } from "./deployment-service";
 import { ProvisioningService } from "./provisioning";
 import type { Bindings, Deployment } from "./types";
+import Anthropic from "@anthropic-ai/sdk";
 
 export interface AskProjectHints {
 	endpoint?: string;
@@ -30,7 +31,8 @@ export interface AskProjectEvidence {
 		| "env_snapshot"
 		| "code_chunk"
 		| "code_symbol"
-		| "index_status";
+		| "index_status"
+		| "session_transcript";
 	source: string;
 	summary: string;
 	timestamp: string;
@@ -41,6 +43,9 @@ export interface AskProjectEvidence {
 export interface AskProjectResponse {
 	answer: string;
 	evidence: AskProjectEvidence[];
+	root_cause?: string;
+	suggested_fix?: string;
+	confidence?: "high" | "medium" | "low";
 }
 
 interface AskProjectInput {
@@ -218,6 +223,114 @@ function summarizeDeploymentMessage(deployment: Deployment): string {
 		return `Deployment ${deployment.id} (${deployment.status}) at ${createdAt}: ${deployment.message}`;
 	}
 	return `Deployment ${deployment.id} (${deployment.status}) at ${createdAt} has no deploy message`;
+}
+
+async function fetchSessionTranscript(
+	env: Bindings,
+	projectId: string,
+	deploymentId: string,
+): Promise<string | null> {
+	try {
+		const r2Key = `projects/${projectId}/deployments/${deploymentId}/session-transcript.jsonl`;
+		const obj = await env.CODE_BUCKET.get(r2Key);
+		if (!obj) return null;
+
+		const raw = await obj.text();
+		const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+
+		// Parse Claude Code JSONL format: { type: "user"|"assistant", message: { content: string | ContentBlock[] } }
+		const turns: string[] = [];
+		for (const line of lines) {
+			try {
+				const parsed = JSON.parse(line) as Record<string, unknown>;
+				if (parsed.type !== "user" && parsed.type !== "assistant") continue;
+				const msg = parsed.message as Record<string, unknown> | undefined;
+				if (!msg) continue;
+				const content = msg.content;
+				let text = "";
+				if (typeof content === "string") {
+					text = content;
+				} else if (Array.isArray(content)) {
+					// Extract text blocks only (skip tool_use, tool_result, etc.)
+					text = content
+						.filter((b): b is { type: "text"; text: string } =>
+							typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "text",
+						)
+						.map((b) => b.text)
+						.join(" ");
+				}
+				if (text.trim()) {
+					turns.push(`[${parsed.type as string}]: ${redactText(text).slice(0, 500)}`);
+				}
+			} catch {
+				// skip malformed lines
+			}
+		}
+
+		const lastTurns = turns.slice(-30);
+		return lastTurns.length > 0 ? lastTurns.join("\n\n") : null;
+	} catch {
+		return null;
+	}
+}
+
+// Returns null when ANTHROPIC_API_KEY is absent; throws on API failure (caller catches and falls back)
+async function synthesizeAnswer(
+	env: Bindings,
+	question: string,
+	evidence: AskProjectEvidence[],
+	sessionExcerpt: string | null,
+): Promise<Pick<AskProjectResponse, "answer" | "root_cause" | "suggested_fix" | "confidence"> | null> {
+	if (!env.ANTHROPIC_API_KEY) return null;
+
+	const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+
+	const evidenceBlock = evidence
+		.map((e) => `- [${e.id}] type=${e.type} source=${e.source} relation=${e.relation}: ${e.summary}`)
+		.join("\n");
+
+	const transcriptBlock = sessionExcerpt
+		? `\n\n## Deploy Session Context (last 30 turns)\n\n${sessionExcerpt}`
+		: "";
+
+	const prompt = `You are a debugging assistant for a Cloudflare Workers deployment platform. Answer the user's question about their deployed project based only on the collected evidence below.
+
+## Question
+${question}
+
+## Evidence
+${evidenceBlock}${transcriptBlock}
+
+Respond with only valid JSON (no markdown fences):
+{
+  "answer": "Concise direct answer (2-4 sentences)",
+  "root_cause": "Specific root cause or null",
+  "suggested_fix": "Concrete fix or null",
+  "confidence": "high" | "medium" | "low"
+}`;
+
+	const message = await client.messages.create({
+		model: "claude-haiku-4-5-20251001",
+		max_tokens: 512,
+		messages: [{ role: "user", content: prompt }],
+	});
+
+	const text = message.content[0]?.type === "text" ? message.content[0].text : "";
+
+	try {
+		const parsed = JSON.parse(text) as Record<string, unknown>;
+		return {
+			answer: typeof parsed.answer === "string" ? parsed.answer : text.slice(0, 800),
+			root_cause: typeof parsed.root_cause === "string" ? parsed.root_cause : undefined,
+			suggested_fix: typeof parsed.suggested_fix === "string" ? parsed.suggested_fix : undefined,
+			confidence:
+				parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
+					? parsed.confidence
+					: "low",
+		};
+	} catch {
+		return { answer: text.slice(0, 800), confidence: "low" };
+	}
 }
 
 function pickAnswer(params: {
@@ -566,8 +679,23 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		);
 	}
 
+	// Load session transcript for the target deployment if available
+	let sessionExcerpt: string | null = null;
+	if ((targetDeployment as Record<string, unknown>).has_session_transcript === 1) {
+		sessionExcerpt = await fetchSessionTranscript(env, project.id, targetDeployment.id);
+		if (sessionExcerpt) {
+			evidence.add(
+				"session_transcript",
+				"deploy_session",
+				`Deploy session context: ${sessionExcerpt.slice(0, 200)}`,
+				"supports",
+				{ deployment_id: targetDeployment.id },
+			);
+		}
+	}
+
 	const hasInsufficientEvidence = evidence.values().some((e) => e.relation === "gap");
-	const answer = pickAnswer({
+	const pickAnswerParams = {
 		question,
 		latestDeployment,
 		endpointPath,
@@ -577,10 +705,19 @@ export async function answerProjectQuestion(input: AskProjectInput): Promise<Ask
 		routeMatches,
 		deployMessage: targetDeployment.message,
 		hasInsufficientEvidence,
-	});
+	};
+
+	const synthesized = await synthesizeAnswer(env, question, evidence.values(), sessionExcerpt).catch(
+		(err: unknown) => {
+			console.error("ask_project: LLM synthesis failed, falling back to pickAnswer:", err);
+			return null;
+		},
+	);
+
+	const synthesis = synthesized ?? { answer: pickAnswer(pickAnswerParams) };
 
 	return {
-		answer,
+		...synthesis,
 		evidence: evidence.values(),
 	};
 }

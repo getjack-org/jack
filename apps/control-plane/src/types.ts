@@ -30,6 +30,7 @@ export type Bindings = {
 	// Optional PostHog server-side capture key for control-plane events
 	POSTHOG_API_KEY?: string;
 	POSTHOG_HOST?: string;
+	ANTHROPIC_API_KEY?: string;
 };
 
 // Project status enum
@@ -114,6 +115,7 @@ export interface Deployment {
 	worker_version_id: string | null;
 	error_message: string | null;
 	message: string | null;
+	has_session_transcript: number; // SQLite boolean (0 or 1)
 	created_at: string;
 	updated_at: string;
 }
