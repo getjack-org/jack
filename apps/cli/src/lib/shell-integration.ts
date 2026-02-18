@@ -43,24 +43,12 @@ jack() {
       fi
       ;;
     new|clone)
-      # Run the command, then cd to the project
-      command jack "$@"
+      # Run the command, capture stdout (project path) while showing stderr
+      local dir
+      dir="$(command jack "$@")"
       local exit_code=$?
-      if [[ $exit_code -eq 0 ]]; then
-        # Extract project name from args (skip flags)
-        local name=""
-        shift  # remove 'new' or 'clone'
-        for arg in "$@"; do
-          if [[ ! "$arg" =~ ^- ]]; then
-            name="$arg"
-            break
-          fi
-        done
-        if [[ -n "$name" ]]; then
-          local dir
-          dir="$(command jack cd "$name" 2>/dev/null)"
-          [[ -n "$dir" && -d "$dir" ]] && cd "$dir"
-        fi
+      if [[ $exit_code -eq 0 && -n "$dir" && -d "$dir" ]]; then
+        cd "$dir" || return $exit_code
       fi
       return $exit_code
       ;;

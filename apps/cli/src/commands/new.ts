@@ -106,6 +106,8 @@ export default async function newProject(
 	if (!process.stdout.isTTY || isCi) {
 		console.error("");
 		console.error(`cd ${result.targetDir}`);
+		// Print path to stdout for shell integration to capture
+		console.log(result.targetDir);
 		return;
 	}
 
@@ -146,6 +148,8 @@ export default async function newProject(
 	console.error("");
 	if (hasShellIntegration) {
 		output.success(`Ready in ${result.projectName}`);
+		// Print path to stdout for shell integration to capture
+		console.log(result.targetDir);
 	} else {
 		console.error(`cd ${result.targetDir}`);
 	}

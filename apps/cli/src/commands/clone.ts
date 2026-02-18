@@ -7,6 +7,11 @@ import { isCancel, promptSelectValue } from "../lib/hooks.ts";
 import { box, error, info, spinner, success } from "../lib/output.ts";
 import { readProjectLink } from "../lib/project-link.ts";
 import { resolveProject } from "../lib/project-resolver.ts";
+import {
+	detectShell,
+	getRcFilePath,
+	isInstalled as isShellIntegrationInstalled,
+} from "../lib/shell-integration.ts";
 
 export interface CloneFlags {
 	as?: string;
@@ -104,6 +109,13 @@ export default async function clone(projectName?: string, flags: CloneFlags = {}
 
 	try {
 		await cloneProject(projectName, targetDir, { silent: false, skipPrompts: false }, reporter);
+
+		// Print path to stdout for shell integration to capture
+		const shell = detectShell();
+		const rcFile = getRcFilePath(shell);
+		if (rcFile && isShellIntegrationInstalled(rcFile)) {
+			console.log(targetDir);
+		}
 
 		// Show next steps
 		box("Next steps:", [`cd ${displayName}`, "bun install", "jack ship"]);
