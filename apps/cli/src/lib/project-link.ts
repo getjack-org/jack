@@ -30,6 +30,8 @@ export interface LocalProjectLink {
 	linked_at: string;
 	tags?: string[];
 	owner_username?: string;
+	last_transcript_path?: string;
+	last_transcript_byte_offset?: number;
 }
 
 /**

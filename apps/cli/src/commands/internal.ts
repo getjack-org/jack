@@ -1,6 +1,5 @@
-import { appendFile } from "node:fs/promises";
 import { readProjectLink } from "../lib/project-link.ts";
-import { uploadSessionTranscript } from "../lib/session-transcript.ts";
+import { uploadDeltaSessionTranscript } from "../lib/session-transcript.ts";
 
 /**
  * Internal commands used by Claude Code hooks.
@@ -24,27 +23,14 @@ export default async function internal(subcommand?: string): Promise<void> {
 /**
  * SessionStart hook handler.
  *
- * Claude Code passes JSON via stdin:
- *   { session_id, transcript_path, cwd, ... }
+ * Previously wrote CLAUDE_TRANSCRIPT_PATH to $CLAUDE_ENV_FILE, but that
+ * mechanism is broken upstream (GitHub #15840). Transcript path is now
+ * obtained via PostToolUse hooks or filesystem discovery instead.
  *
- * We write CLAUDE_TRANSCRIPT_PATH to $CLAUDE_ENV_FILE so that subsequent
- * Bash tool calls (e.g. `jack deploy`) can find the transcript and upload it.
+ * This handler is kept as a no-op so existing hook configs don't error.
  */
 async function handleSessionStart(): Promise<void> {
-	try {
-		const raw = await readStdin();
-		if (!raw) return;
-
-		const payload = JSON.parse(raw) as Record<string, unknown>;
-		const transcriptPath = payload.transcript_path as string | undefined;
-		const envFile = process.env.CLAUDE_ENV_FILE;
-
-		if (transcriptPath && envFile) {
-			await appendFile(envFile, `export CLAUDE_TRANSCRIPT_PATH='${transcriptPath}'\n`);
-		}
-	} catch {
-		// Never surface errors from hooks
-	}
+	// No-op — transcript path is handled by PostToolUse hooks now
 }
 
 /**
@@ -94,10 +80,11 @@ async function handlePostDeploy(): Promise<void> {
 		const link = await readProjectLink(resolvedPath).catch(() => null);
 		if (!link || link.deploy_mode !== "managed") return;
 
-		await uploadSessionTranscript({
+		await uploadDeltaSessionTranscript({
 			projectId: link.project_id,
 			deploymentId,
 			transcriptPath,
+			projectDir: resolvedPath,
 		});
 	} catch {
 		// Never surface errors from hooks

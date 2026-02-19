@@ -3,14 +3,12 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 const MCP_CONTEXT_COMMAND = "jack mcp context 2>/dev/null || true";
-const SESSION_START_COMMAND = "jack _internal session-start 2>/dev/null || true";
 const POST_DEPLOY_COMMAND = "jack _internal post-deploy 2>/dev/null || true";
 
 /**
  * Install Claude Code hooks to the project's .claude/settings.json:
  *
- * - SessionStart: runs `jack mcp context` (project context) + `jack _internal session-start`
- *   (exports CLAUDE_TRANSCRIPT_PATH via CLAUDE_ENV_FILE so `jack deploy` can read it)
+ * - SessionStart: runs `jack mcp context` (project context for Claude Code)
  * - PostToolUse(deploy_project): runs `jack _internal post-deploy` to upload the session
  *   transcript to the control plane after an MCP-triggered deploy
  *
@@ -48,17 +46,6 @@ export async function installClaudeCodeHooks(projectPath: string): Promise<boole
 			sessionStart.push({
 				matcher: "",
 				hooks: [{ type: "command", command: MCP_CONTEXT_COMMAND }],
-			});
-		}
-
-		const hasSessionStart = sessionStart.some((entry) => {
-			const entryHooks = entry.hooks as Array<Record<string, string>> | undefined;
-			return entryHooks?.some((h) => h.command?.includes("jack _internal session-start"));
-		});
-		if (!hasSessionStart) {
-			sessionStart.push({
-				matcher: "",
-				hooks: [{ type: "command", command: SESSION_START_COMMAND }],
 			});
 		}
 

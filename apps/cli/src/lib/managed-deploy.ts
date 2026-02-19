@@ -18,7 +18,7 @@ import { formatSize } from "./format.ts";
 import { createFileCountProgress, createUploadProgress } from "./progress.ts";
 import type { OperationReporter } from "./project-operations.ts";
 import { getProjectTags } from "./tags.ts";
-import { uploadSessionTranscript } from "./session-transcript.ts";
+import { findTranscriptPath, uploadDeltaSessionTranscript } from "./session-transcript.ts";
 import { Events, track, trackActivationIfFirst } from "./telemetry.ts";
 import { findWranglerConfig } from "./wrangler-config.ts";
 import { packageForDeploy } from "./zip-packager.ts";
@@ -226,16 +226,23 @@ export async function deployCodeToManagedProject(
 		// Source snapshot for forking is now derived from deployment artifacts on the control plane.
 		// No separate upload needed — clone/fork reads from the latest live deployment's source.zip.
 
-		// Fire-and-forget: upload Claude Code session transcript if running under Claude Code.
-		// CLAUDE_TRANSCRIPT_PATH is exported by the SessionStart hook via CLAUDE_ENV_FILE.
-		const transcriptPath = process.env.CLAUDE_TRANSCRIPT_PATH;
+		// Best-effort: upload Claude Code session transcript if running under Claude Code.
+		// Uses findTranscriptPath() which checks env var first, then filesystem discovery.
+		// Awaited so the upload completes before the process exits, but errors are silenced.
+		const transcriptPath = findTranscriptPath(projectPath);
 		if (transcriptPath) {
-			void uploadSessionTranscript({
+			await uploadDeltaSessionTranscript({
 				projectId,
 				deploymentId: result.id,
 				transcriptPath,
-			});
+				projectDir: projectPath,
+			}).catch(() => {});
 		}
+
+		// Ensure Claude Code hooks are installed (retroactively for projects that missed initial install)
+		await import("./claude-hooks-installer.ts")
+			.then(({ installClaudeCodeHooks }) => installClaudeCodeHooks(projectPath))
+			.catch(() => {});
 
 		return {
 			deploymentId: result.id,

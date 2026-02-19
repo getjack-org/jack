@@ -3716,6 +3716,55 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 	}
 });
 
+// Get session transcript for a deployment
+api.get("/projects/:projectId/deployments/:deploymentId/session-transcript", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const deploymentId = c.req.param("deploymentId");
+	const provisioning = new ProvisioningService(c.env);
+
+	const project = await provisioning.getProject(projectId);
+	if (!project) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	const membership = await c.env.DB.prepare(
+		"SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?",
+	)
+		.bind(project.org_id, auth.userId)
+		.first();
+	if (!membership) {
+		return c.json({ error: "not_found", message: "Project not found" }, 404);
+	}
+
+	// Verify deployment belongs to this project
+	const deployment = await c.env.DB.prepare(
+		"SELECT id, has_session_transcript FROM deployments WHERE id = ? AND project_id = ?",
+	)
+		.bind(deploymentId, projectId)
+		.first<{ id: string; has_session_transcript: number }>();
+	if (!deployment) {
+		return c.json({ error: "not_found", message: "Deployment not found" }, 404);
+	}
+
+	if (!deployment.has_session_transcript) {
+		return c.json({ error: "not_found", message: "No transcript for this deployment" }, 404);
+	}
+
+	const r2Key = `projects/${projectId}/deployments/${deploymentId}/session-transcript.jsonl`;
+	const object = await c.env.CODE_BUCKET.get(r2Key);
+	if (!object) {
+		return c.json({ error: "not_found", message: "Transcript not found in storage" }, 404);
+	}
+
+	return new Response(object.body, {
+		headers: {
+			"Content-Type": "application/x-ndjson",
+			"Cache-Control": "private, max-age=3600",
+		},
+	});
+});
+
 // Upload session transcript for a deployment
 api.put("/projects/:projectId/deployments/:deploymentId/session-transcript", async (c) => {
 	const auth = c.get("auth");
