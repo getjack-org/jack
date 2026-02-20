@@ -293,15 +293,16 @@ try {
 			});
 			break;
 		}
-		case "shit": {
-			// Easter egg for typo
-			console.error("💩💩💩");
-			// Fall through to ship
-		}
+		case "shit":
 		case "ship":
 		case "push":
 		case "up":
 		case "deploy": {
+			// Easter egg for typo
+			if (command === "shit") {
+				console.error("💩💩💩");
+			}
+
 			const { default: ship } = await import("./commands/ship.ts");
 			await withTelemetry(
 				"ship",

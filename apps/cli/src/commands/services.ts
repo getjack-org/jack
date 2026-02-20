@@ -630,7 +630,7 @@ async function dbCreate(args: string[], options: ServiceOptions): Promise<void> 
 		outputSpinner.start("Deploying to activate database binding...");
 		try {
 			const { deployProject } = await import("../lib/project-operations.ts");
-			await deployProject(process.cwd(), { interactive: true });
+			await deployProject({ projectPath: process.cwd(), interactive: true });
 			outputSpinner.stop();
 			console.error("");
 			success("Database ready");
@@ -1134,7 +1134,7 @@ async function storageCreate(args: string[], options: ServiceOptions): Promise<v
 		outputSpinner.start("Deploying to activate storage binding...");
 		try {
 			const { deployProject } = await import("../lib/project-operations.ts");
-			await deployProject(process.cwd(), { interactive: true });
+			await deployProject({ projectPath: process.cwd(), interactive: true });
 			outputSpinner.stop();
 			console.error("");
 			success("Storage ready");

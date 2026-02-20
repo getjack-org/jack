@@ -9,7 +9,7 @@
 
 import { existsSync } from "node:fs";
 import { isLoggedIn } from "../lib/auth/index.ts";
-import { findProjectById, findProjectBySlug } from "../lib/control-plane.ts";
+import { findProjectById, findProjectBySlug, type ManagedProject } from "../lib/control-plane.ts";
 import { error, info, output, success } from "../lib/output.ts";
 import { registerPath } from "../lib/paths-index.ts";
 import { pickProject, requireTTY } from "../lib/picker.ts";
