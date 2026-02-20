@@ -10,7 +10,7 @@ export interface DetectedSecret {
 /**
  * Known secret key names to look for
  */
-const KNOWN_SECRET_KEYS = [
+export const KNOWN_SECRET_KEYS = [
 	// AI/ML APIs
 	"OPENAI_API_KEY",
 	"ANTHROPIC_API_KEY",
@@ -46,7 +46,7 @@ const KNOWN_SECRET_KEYS = [
 /**
  * Patterns that indicate a key is likely a secret
  */
-const SECRET_KEY_PATTERNS = [
+export const SECRET_KEY_PATTERNS = [
 	/_API_KEY$/,
 	/_SECRET$/,
 	/_SECRET_KEY$/,

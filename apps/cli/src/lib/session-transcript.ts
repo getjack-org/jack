@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { authFetch } from "./auth/index.ts";
 import { getControlApiUrl } from "./control-plane.ts";
 import { readProjectLink, updateProjectLink } from "./project-link.ts";
+import { redactSensitiveData } from "./redact.ts";
 
 // Keep last N messages and cap at MAX_BYTES to stay well under the 1MB server limit
 const MAX_MESSAGES = 200;
@@ -119,7 +120,7 @@ export async function readDeltaTranscript(
 		try {
 			const parsed = JSON.parse(line.trim()) as TranscriptLine;
 			if (parsed.type === "user" || parsed.type === "assistant") {
-				turns.push(line.trim());
+				turns.push(redactSensitiveData(line.trim()));
 			}
 		} catch {
 			// Skip malformed/partial lines (e.g. partial first line at slice boundary)

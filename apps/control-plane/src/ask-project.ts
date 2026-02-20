@@ -69,10 +69,21 @@ function toIsoTimestamp(value?: string | null): string {
 	return `${value.replace(" ", "T")}Z`;
 }
 
+/**
+ * Redact sensitive data from evidence text.
+ * Defense-in-depth: transcripts are already redacted at CLI upload time
+ * (see apps/cli/src/lib/redact.ts), but this catches secrets from other
+ * evidence sources (endpoint responses, code chunks, etc.).
+ */
 function redactText(input: string): string {
 	return input
-		.replace(/\b(sk|pk|rk|jkt)_[A-Za-z0-9_-]+\b/g, "[redacted-token]")
-		.replace(/\b(password|secret|token|api[_-]?key)\b\s*[:=]\s*["'][^"']+["']/gi, "$1=[redacted]");
+		.replace(/\b(sk|pk|rk|jkt|ghp|gho|ghu|ghs|ghr|glpat|xoxb|xoxp|xapp|whsec|sk_live|pk_live|sk_test|pk_test)[_-][A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+		.replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED]")
+		.replace(/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[REDACTED]")
+		.replace(/Bearer\s+[A-Za-z0-9._~+/=-]{20,}/g, "Bearer [REDACTED]")
+		.replace(/(postgres|mysql|redis|mongodb(\+srv)?):\/\/[^\s"']+/g, "[REDACTED-URL]")
+		.replace(/https?:\/\/[^@/\s]+:[^@/\s]+@[^\s"']+/g, "[REDACTED-URL]")
+		.replace(/\b(password|secret|token|api[_-]?key)\b\s*[:=]\s*["'][^"']+["']/gi, "$1=[REDACTED]");
 }
 
 function isWhyShippedQuestion(question: string): boolean {
