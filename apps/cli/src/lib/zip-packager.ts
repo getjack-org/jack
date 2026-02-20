@@ -92,8 +92,7 @@ async function createZipArchive(
 		if (files) {
 			// Add specific files with progress tracking
 			const total = files.length;
-			for (let i = 0; i < files.length; i++) {
-				const file = files[i];
+			for (const [i, file] of files.entries()) {
 				const filePath = join(sourceDir, file);
 				archive.file(filePath, { name: file });
 				onProgress?.(i + 1, total);
@@ -122,10 +121,10 @@ export async function createSourceZip(projectPath: string): Promise<string> {
 
 	// Debug output for source file statistics
 	const totalSize = projectFiles.reduce((sum, f) => sum + f.size, 0);
-	const largest =
-		projectFiles.length > 0
-			? projectFiles.reduce((max, f) => (f.size > max.size ? f : max), projectFiles[0])
-			: null;
+	const firstFile = projectFiles[0];
+	const largest = firstFile
+		? projectFiles.reduce((max, f) => (f.size > max.size ? f : max), firstFile)
+		: null;
 
 	debug(`Source: ${projectFiles.length} files, ${formatSize(totalSize)} uncompressed`);
 	if (largest) {

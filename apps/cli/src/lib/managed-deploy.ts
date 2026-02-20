@@ -129,10 +129,11 @@ export async function deployCodeToManagedProject(
 			}
 
 			// Validate DO class exports
+			const durableObjectBindings = config.durable_objects?.bindings ?? [];
 			const missing = await validateDoExports(
 				buildOutput.outDir,
 				buildOutput.entrypoint,
-				config.durable_objects.bindings.map((b) => b.class_name),
+				durableObjectBindings.map((b) => b.class_name),
 			);
 			if (missing.length > 0) {
 				throw new JackError(

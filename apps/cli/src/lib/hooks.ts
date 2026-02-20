@@ -133,26 +133,25 @@ export async function promptSelectValue<T>(
 	const prompt = new SelectPrompt({
 		options: normalizedOptions,
 		initialValue: normalizedOptions[0]?.value,
-		render() {
-			const title = `${message}\n`;
-			const lines: string[] = [];
+			render() {
+				const title = `${message}\n`;
+				const lines: string[] = [];
 
-			for (let i = 0; i < normalizedOptions.length; i++) {
-				const opt = normalizedOptions[i];
-				const isActive = this.cursor === i;
-				const num = `${i + 1}.`;
+				for (const [i, opt] of normalizedOptions.entries()) {
+					const isActive = this.cursor === i;
+					const num = `${i + 1}.`;
 
-				if (isActive) {
-					const hint = opt.hint ? pc.dim(` (${opt.hint})`) : "";
-					lines.push(`${pc.green(S_RADIO_ACTIVE)} ${num} ${opt.label}${hint}`);
-				} else {
-					lines.push(`${pc.dim(S_RADIO_INACTIVE)} ${pc.dim(num)} ${pc.dim(opt.label)}`);
+					if (isActive) {
+						const hint = opt.hint ? pc.dim(` (${opt.hint})`) : "";
+						lines.push(`${pc.green(S_RADIO_ACTIVE)} ${num} ${opt.label}${hint}`);
+					} else {
+						lines.push(`${pc.dim(S_RADIO_INACTIVE)} ${pc.dim(num)} ${pc.dim(opt.label)}`);
+					}
 				}
-			}
 
-			return title + lines.join("\n");
-		},
-	});
+				return title + lines.join("\n");
+			},
+		});
 
 	// Add number key support for immediate selection
 	prompt.on("key", (char) => {
@@ -764,7 +763,8 @@ const actionHandlers: {
 			if (result.ok && result.data) {
 				const prices = result.data.data as Array<{ id: string }>;
 				if (prices.length > 0) {
-					return prices[0].id;
+					const firstPrice = prices[0];
+					if (firstPrice) return firstPrice.id;
 				}
 			}
 			return null;

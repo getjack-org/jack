@@ -27,6 +27,18 @@ interface GitHubContent {
 	download_url: string | null;
 }
 
+function isGitHubContent(value: unknown): value is GitHubContent {
+	if (!value || typeof value !== "object") return false;
+	const obj = value as Record<string, unknown>;
+	if (typeof obj.name !== "string" || typeof obj.type !== "string") return false;
+	if (!("download_url" in obj)) return false;
+	return obj.download_url === null || typeof obj.download_url === "string";
+}
+
+function isGitHubContentArray(value: unknown): value is GitHubContent[] {
+	return Array.isArray(value) && value.every((item) => isGitHubContent(item));
+}
+
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -57,7 +69,12 @@ async function fetchAvailableSkills(): Promise<{ name: string; description: stri
 			return [];
 		}
 
-		const contents: GitHubContent[] = await res.json();
+		const responseJson: unknown = await res.json();
+		if (!isGitHubContentArray(responseJson)) {
+			fetchError = "Unexpected skills catalog response format.";
+			return [];
+		}
+		const contents = responseJson;
 		const skillDirs = contents.filter((c) => c.type === "dir");
 
 		// Fetch descriptions from SKILL.md in parallel (with timeout each)
@@ -96,13 +113,15 @@ async function fetchSkillDescription(skillName: string): Promise<string> {
 		const content = await res.text();
 		// Parse YAML frontmatter for description
 		const match = content.match(/^---\n([\s\S]*?)\n---/);
-		if (match) {
-			const frontmatter = match[1];
-			const descMatch = frontmatter.match(/description:\s*>?\s*\n?\s*(.+?)(?:\n\s{2,}|$)/s);
-			if (descMatch) {
-				// Get first line of description
-				return descMatch[1].split("\n")[0].trim();
-			}
+		const frontmatter = match?.[1];
+		if (!frontmatter) return "";
+
+		const descMatch = frontmatter.match(/description:\s*>?\s*\n?\s*(.+?)(?:\n\s{2,}|$)/s);
+		const description = descMatch?.[1];
+		if (description) {
+			// Get first line of description
+			const firstLine = description.split("\n")[0];
+			return firstLine ? firstLine.trim() : "";
 		}
 		return "";
 	} catch {

@@ -403,7 +403,8 @@ async function runPicker(
 			// URL: prefer custom domain, fall back to runjack.xyz URL (strip https://)
 			let urlStr = "";
 			if (project.domains && project.domains.length > 0) {
-				urlStr = project.domains[0];
+				const primaryDomain = project.domains[0];
+				if (primaryDomain) urlStr = primaryDomain;
 			} else if (project.url) {
 				urlStr = project.url.replace("https://", "");
 			}

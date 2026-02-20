@@ -315,7 +315,7 @@ const TestEndpointSchema = z.object({
 		.optional()
 		.default("GET")
 		.describe("HTTP method"),
-	headers: z.record(z.string()).optional().describe("Request headers"),
+	headers: z.record(z.string(), z.string()).optional().describe("Request headers"),
 	body: z.string().optional().describe("Request body (JSON string for POST/PUT/PATCH)"),
 	include_logs: z
 		.boolean()

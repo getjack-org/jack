@@ -97,7 +97,8 @@ function extractOperation(sql: string): string {
 		// Look for: ) followed by optional whitespace then SELECT/INSERT/UPDATE/DELETE
 		const cteEndMatch = cleaned.match(/\)\s*(SELECT|INSERT|UPDATE|DELETE)\b/i);
 		if (cteEndMatch) {
-			return cteEndMatch[1].toUpperCase();
+			const operation = cteEndMatch[1];
+			if (operation) return operation.toUpperCase();
 		}
 
 		// Fallback: if no match, look for any of these operations

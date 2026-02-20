@@ -8,7 +8,7 @@ const green = "\x1b[38;2;0;200;0m";
 const matrixChars = "░▒▓█▀▄■□◆◇●◐◑◒◓ｦｱｳｴｵｶｷｸｹｺ";
 
 function randomChar(): string {
-	return matrixChars[Math.floor(Math.random() * matrixChars.length)];
+	return matrixChars.charAt(Math.floor(Math.random() * matrixChars.length)) || "█";
 }
 
 async function sleep(ms: number) {
@@ -104,19 +104,20 @@ async function traceRoute() {
 	];
 
 	const midHops = pickRandom(serverPool, 3);
-	const hops = [
+	const [hop1 = "relay.freeside.orbital", hop2 = "proxy.night.city", hop3 = "node.sprawl.net"] =
+		midHops;
+	const hops: Array<[string, string]> = [
 		["localhost", "0.1"],
 		[`${username}.meat.space`, String(10 + Math.floor(Math.random() * 20))],
-		[midHops[0], String(50 + Math.floor(Math.random() * 50))],
-		[midHops[1], String(100 + Math.floor(Math.random() * 100))],
-		[midHops[2], "███"],
+		[hop1, String(50 + Math.floor(Math.random() * 50))],
+		[hop2, String(100 + Math.floor(Math.random() * 100))],
+		[hop3, "███"],
 	];
 
 	console.log();
 	await typeLine(`${green}Tracing route...${reset}`, 20);
 
-	for (let i = 0; i < hops.length; i++) {
-		const [host, ms] = hops[i];
+	for (const [i, [host, ms]] of hops.entries()) {
 		await type(`  ${dim}${i + 1}${reset}  ${host}`, 10);
 		await sleep(150 + Math.random() * 300);
 		console.log(`  ${dimCyan}${ms}ms${reset}`);
@@ -165,7 +166,7 @@ export default async function hack(): Promise<void> {
 		"Create and ship before your first commit.",
 		"Don't punish exploration. Creation is free.",
 	];
-	const quote = quotes[Math.floor(Math.random() * quotes.length)];
+	const quote = quotes[Math.floor(Math.random() * quotes.length)] ?? "Hack the planet!";
 
 	const serverPool = [
 		"node.chiba.city",
@@ -181,7 +182,7 @@ export default async function hack(): Promise<void> {
 		"edge.straylight.run",
 		"sync.maelstrom.net",
 	];
-	const target = serverPool[Math.floor(Math.random() * serverPool.length)];
+	const target = serverPool[Math.floor(Math.random() * serverPool.length)] ?? "node.chiba.city";
 
 	await bootSequence();
 	await traceRoute();

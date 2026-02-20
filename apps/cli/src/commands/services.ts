@@ -575,8 +575,11 @@ function parseNameFlag(args: string[]): string | undefined {
 	// Check --name flag first (takes priority)
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
-		if (arg === "--name" && args[i + 1]) {
-			return args[i + 1];
+		if (!arg) continue;
+		if (arg === "--name") {
+			const next = args[i + 1];
+			if (next) return next;
+			continue;
 		}
 		if (arg.startsWith("--name=")) {
 			return arg.slice("--name=".length);

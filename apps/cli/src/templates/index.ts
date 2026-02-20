@@ -124,6 +124,11 @@ const INTERNAL_FILES = [".jack.json", ".jack/template.json"];
 // Wrangler config files that need sanitization when forking (JSONC only, no TOML support)
 const WRANGLER_CONFIG_FILES = ["wrangler.jsonc", "wrangler.json"];
 
+interface SanitizableWranglerConfig {
+	d1_databases?: unknown[];
+	kv_namespaces?: unknown[];
+}
+
 /**
  * Strip provider-specific IDs from wrangler config bindings.
  * When forking a template, the original author's resource IDs won't work
@@ -141,13 +146,13 @@ function sanitizeWranglerConfig(content: string, filename: string): string {
 	}
 
 	try {
-		const config = parseJsonc(content);
+		const config = parseJsonc<SanitizableWranglerConfig>(content);
 
 		// D1: strip database_id
 		if (Array.isArray(config.d1_databases)) {
 			for (const db of config.d1_databases) {
 				if (db && typeof db === "object" && "database_id" in db) {
-					delete db.database_id;
+					delete (db as Record<string, unknown>).database_id;
 				}
 			}
 		}
@@ -156,7 +161,7 @@ function sanitizeWranglerConfig(content: string, filename: string): string {
 		if (Array.isArray(config.kv_namespaces)) {
 			for (const kv of config.kv_namespaces) {
 				if (kv && typeof kv === "object" && "id" in kv) {
-					delete kv.id;
+					delete (kv as Record<string, unknown>).id;
 				}
 			}
 		}

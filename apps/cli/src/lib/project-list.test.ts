@@ -45,15 +45,22 @@ function createMockResolvedProject(overrides: Partial<ResolvedProject> = {}): Re
  * Create a mock ProjectListItem for testing
  */
 function createMockListItem(overrides: Partial<ProjectListItem> = {}): ProjectListItem {
-	return {
+	const base: ProjectListItem = {
 		name: "test-project",
 		status: "live",
 		url: "https://test-project.runjack.xyz",
 		localPath: null,
+		createdAt: null,
+		linkedAt: null,
 		updatedAt: "2024-01-15T10:00:00.000Z",
 		isLocal: false,
 		isCloudOnly: true,
+	};
+
+	return {
+		...base,
 		...overrides,
+		createdAt: overrides.createdAt ?? base.createdAt,
 	};
 }
 

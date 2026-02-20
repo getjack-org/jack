@@ -28,8 +28,8 @@ const PUBLIC_KEY_JWK = {
 function base64urlEncode(bytes: ArrayBuffer | Uint8Array): string {
 	const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
 	let bin = "";
-	for (let i = 0; i < u8.length; i++) {
-		bin += String.fromCharCode(u8[i]);
+	for (const byte of u8) {
+		bin += String.fromCharCode(byte);
 	}
 	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
