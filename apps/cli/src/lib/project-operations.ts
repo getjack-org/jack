@@ -142,7 +142,7 @@ export interface ProjectStatus {
 
 export interface StaleProject {
 	name: string;
-	reason: "worker not deployed";
+	reason: "worker not deployed" | "directory missing or no wrangler config" | "cloud project deleted";
 	workerUrl: string | null;
 }
 

@@ -7,6 +7,7 @@
 
 import { parseJsonc } from "./jsonc.ts";
 import { findWranglerConfig } from "./wrangler-config.ts";
+import type { ProjectResource } from "./control-plane.ts";
 
 // Resource types matching control plane schema
 export type ResourceType =
@@ -29,6 +30,57 @@ export interface ControlPlaneResource {
 	status: "active" | "provisioning" | "error" | "deleted";
 	metadata?: Record<string, unknown>;
 	created_at: string;
+}
+
+const RESOURCE_TYPES: ResourceType[] = [
+	"worker",
+	"d1",
+	"r2_content",
+	"kv",
+	"queue",
+	"ai",
+	"hyperdrive",
+	"vectorize",
+];
+
+const RESOURCE_STATUSES: ControlPlaneResource["status"][] = [
+	"active",
+	"provisioning",
+	"error",
+	"deleted",
+];
+
+function isResourceType(value: string): value is ResourceType {
+	return RESOURCE_TYPES.includes(value as ResourceType);
+}
+
+function toResourceStatus(value: string): ControlPlaneResource["status"] {
+	return RESOURCE_STATUSES.includes(value as ControlPlaneResource["status"])
+		? (value as ControlPlaneResource["status"])
+		: "active";
+}
+
+/**
+ * Adapt control-plane project resources into the stricter resource shape used by CLI helpers.
+ */
+export function toControlPlaneResources(
+	resources: ProjectResource[],
+	projectId: string,
+): ControlPlaneResource[] {
+	const normalized: ControlPlaneResource[] = [];
+	for (const resource of resources) {
+		if (!isResourceType(resource.resource_type)) continue;
+		normalized.push({
+			id: resource.id,
+			project_id: projectId,
+			resource_type: resource.resource_type,
+			resource_name: resource.resource_name,
+			provider_id: resource.provider_id,
+			status: toResourceStatus(resource.status),
+			created_at: resource.created_at,
+		});
+	}
+	return normalized;
 }
 
 // Unified resource view (used by CLI)

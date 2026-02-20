@@ -24,6 +24,7 @@ import {
 	type ResolvedResources,
 	convertControlPlaneResources,
 	parseWranglerResources,
+	toControlPlaneResources,
 } from "../resources.ts";
 import { findWranglerConfig, hasWranglerConfig } from "../wrangler-config.ts";
 
@@ -121,7 +122,7 @@ async function getManagedProjectEnvironment(
 	const overview = await fetchProjectOverview(projectId);
 
 	// 2. Convert resources to bindings
-	const rawResources = overview.resources as ControlPlaneResource[];
+	const rawResources = toControlPlaneResources(overview.resources, projectId);
 	const resolved = convertControlPlaneResources(rawResources);
 	const bindings = buildBindingsFromResolved(resolved);
 
@@ -303,7 +304,8 @@ async function getBindings(
 
 	if (deployMode === "managed" && projectId) {
 		// Managed: fetch from control plane
-		rawResources = await fetchProjectResources(projectId);
+		const projectResources = await fetchProjectResources(projectId);
+		rawResources = toControlPlaneResources(projectResources, projectId);
 		const resolved = convertControlPlaneResources(rawResources);
 		wranglerResources = resolved;
 

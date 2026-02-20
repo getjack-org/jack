@@ -37,6 +37,7 @@ import {
 	type ResolvedResources,
 	convertControlPlaneResources,
 	parseWranglerResources,
+	toControlPlaneResources,
 } from "./resources.ts";
 
 /**
@@ -221,9 +222,8 @@ export async function resolveProjectResources(
 	if (project.remote?.projectId) {
 		try {
 			const resources = await fetchProjectResources(project.remote.projectId);
-			// Cast ProjectResource[] to ControlPlaneResource[] (compatible shapes)
 			return convertControlPlaneResources(
-				resources as Parameters<typeof convertControlPlaneResources>[0],
+				toControlPlaneResources(resources, project.remote.projectId),
 			);
 		} catch {
 			// Network error, return null
