@@ -31,6 +31,7 @@ export interface ProjectListItem {
 	isCloudOnly: boolean;
 	errorMessage?: string;
 	tags?: string[];
+	domains?: string[];
 }
 
 /**
@@ -140,6 +141,7 @@ export function toListItems(projects: ResolvedProject[]): ProjectListItem[] {
 		isCloudOnly: !proj.localPath && proj.sources.controlPlane,
 		errorMessage: proj.errorMessage,
 		tags: proj.tags,
+		domains: proj.domains,
 	}));
 }
 

@@ -15,7 +15,12 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { CONFIG_DIR } from "./config.ts";
-import { type DeployMode, getJackDir, readProjectLink } from "./project-link.ts";
+import {
+	type DeployMode,
+	type LocalProjectLink,
+	getJackDir,
+	readProjectLink,
+} from "./project-link.ts";
 
 /**
  * Paths index structure stored in ~/.config/jack/paths.json
@@ -171,20 +176,36 @@ export async function getAllPaths(): Promise<Record<string, string[]>> {
 	const result: Record<string, string[]> = {};
 	let needsWrite = false;
 
+	// Build flat array of all entries for parallel validation
+	const entries: { projectId: string; path: string }[] = [];
 	for (const [projectId, paths] of Object.entries(index.paths)) {
-		const validPaths: string[] = [];
-
 		for (const path of paths) {
-			if (await isValidProjectPath(projectId, path)) {
-				validPaths.push(path);
-			} else {
-				needsWrite = true;
-			}
+			entries.push({ projectId, path });
 		}
+	}
 
-		if (validPaths.length > 0) {
-			result[projectId] = validPaths;
-		} else if (paths.length > 0) {
+	// Validate all paths in parallel
+	const validations = await Promise.all(
+		entries.map(async ({ projectId, path }) => ({
+			projectId,
+			path,
+			valid: await isValidProjectPath(projectId, path),
+		})),
+	);
+
+	// Rebuild result from validated entries
+	for (const { projectId, path, valid } of validations) {
+		if (valid) {
+			if (!result[projectId]) result[projectId] = [];
+			result[projectId].push(path);
+		} else {
+			needsWrite = true;
+		}
+	}
+
+	// Check for projects that had paths but now have none
+	for (const [projectId, paths] of Object.entries(index.paths)) {
+		if (paths.length > 0 && !result[projectId]) {
 			needsWrite = true;
 		}
 	}
@@ -192,6 +213,73 @@ export async function getAllPaths(): Promise<Record<string, string[]>> {
 	// Write back pruned index if needed
 	if (needsWrite) {
 		index.paths = result;
+		await writePathsIndex(index);
+	}
+
+	return result;
+}
+
+/**
+ * Validated path entry with its parsed project link
+ */
+export interface PathWithLink {
+	projectId: string;
+	path: string;
+	link: LocalProjectLink;
+}
+
+/**
+ * Get all paths with their parsed project links, validated and pruned.
+ * Avoids redundant readProjectLink() calls in callers like listAllProjects().
+ * Returns one entry per project (first valid path), keyed by project ID.
+ */
+export async function getAllPathsWithLinks(): Promise<Map<string, PathWithLink>> {
+	const index = await readPathsIndex();
+	const validPaths: Record<string, string[]> = {};
+	const result = new Map<string, PathWithLink>();
+	let needsWrite = false;
+
+	// Build flat array for parallel validation + link reading
+	const entries: { projectId: string; path: string }[] = [];
+	for (const [projectId, paths] of Object.entries(index.paths)) {
+		for (const path of paths) {
+			entries.push({ projectId, path });
+		}
+	}
+
+	// Read all links in parallel
+	const reads = await Promise.all(
+		entries.map(async ({ projectId, path }) => ({
+			projectId,
+			path,
+			link: await readProjectLink(path),
+		})),
+	);
+
+	for (const { projectId, path, link } of reads) {
+		const valid = link !== null && link.project_id === projectId;
+		if (valid && link) {
+			if (!validPaths[projectId]) validPaths[projectId] = [];
+			validPaths[projectId].push(path);
+			// Keep first valid path+link per project
+			if (!result.has(projectId)) {
+				result.set(projectId, { projectId, path, link });
+			}
+		} else {
+			needsWrite = true;
+		}
+	}
+
+	// Check for projects that had paths but now have none
+	for (const [projectId, paths] of Object.entries(index.paths)) {
+		if (paths.length > 0 && !validPaths[projectId]) {
+			needsWrite = true;
+		}
+	}
+
+	// Write back pruned index if needed
+	if (needsWrite) {
+		index.paths = validPaths;
 		await writePathsIndex(index);
 	}
 

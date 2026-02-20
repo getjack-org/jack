@@ -59,6 +59,7 @@ export interface Project {
 	content_bucket_enabled: number; // SQLite boolean (0 or 1)
 	owner_username: string | null;
 	tags: string; // JSON string array of tags
+	domain_hostnames?: string | null; // JSON array from subquery, e.g. '["api.example.com"]'
 	created_at: string;
 	updated_at: string;
 }

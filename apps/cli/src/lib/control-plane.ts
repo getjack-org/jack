@@ -277,6 +277,7 @@ export interface ManagedProject {
 	updated_at: string;
 	tags?: string; // JSON string array from DB, e.g., '["backend", "api"]'
 	owner_username?: string | null;
+	domain_hostnames?: string | null; // JSON array from subquery, e.g. '["api.example.com"]'
 }
 
 /**
@@ -571,7 +572,6 @@ export async function rollbackDeployment(
 
 	return response.json() as Promise<RollbackResponse>;
 }
-
 
 /**
  * Create a resource for a managed project.

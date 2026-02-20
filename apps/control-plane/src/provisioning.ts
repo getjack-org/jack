@@ -625,7 +625,18 @@ export class ProvisioningService {
 	async listProjectsByOrg(orgId: string): Promise<Project[]> {
 		const result = await this.db
 			.prepare(
-				"SELECT * FROM projects WHERE org_id = ? AND status != 'deleted' ORDER BY created_at DESC",
+				`SELECT p.*,
+					(SELECT CASE
+					   WHEN COUNT(*) = 0 THEN NULL
+					   ELSE json_group_array(cd.hostname)
+					 END
+					 FROM custom_domains cd
+					 WHERE cd.project_id = p.id
+					 AND cd.status NOT IN ('deleting', 'deleted')
+					) as domain_hostnames
+				FROM projects p
+				WHERE p.org_id = ? AND p.status != 'deleted'
+				ORDER BY p.created_at DESC`,
 			)
 			.bind(orgId)
 			.all<Project>();

@@ -91,3 +91,50 @@ export function fuzzyFilter<T>(query: string, items: T[], getText: (item: T) => 
 
 	return scored.map(({ item }) => item);
 }
+
+/**
+ * A weighted text field for multi-field fuzzy matching
+ */
+export interface WeightedField {
+	text: string;
+	weight: number;
+}
+
+/**
+ * Filter and sort items by fuzzy match across multiple weighted fields.
+ * Each item's best matching field (score * weight) determines its rank.
+ * Returns only items with score > 0, sorted by weighted score descending.
+ *
+ * Weights: name (1.0), domain (0.4), tag (0.3).
+ * The wide gap ensures name matches always rank above domain/tag matches
+ * at the same match tier.
+ */
+export function fuzzyFilterMulti<T>(
+	query: string,
+	items: T[],
+	getFields: (item: T) => WeightedField[],
+): T[] {
+	if (!query) return items;
+
+	const scored = items
+		.map((item) => {
+			const fields = getFields(item);
+			let bestScore = 0;
+
+			for (const { text, weight } of fields) {
+				if (!text) continue;
+				const raw = fuzzyMatch(query, text);
+				const weighted = raw * weight;
+				if (weighted > bestScore) {
+					bestScore = weighted;
+				}
+			}
+
+			return { item, score: bestScore };
+		})
+		.filter(({ score }) => score > 0);
+
+	scored.sort((a, b) => b.score - a.score);
+
+	return scored.map(({ item }) => item);
+}

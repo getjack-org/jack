@@ -2,17 +2,25 @@
  * Interactive fuzzy project picker
  *
  * Features:
- * - Fuzzy search as you type
+ * - Fuzzy search as you type (name, domains, tags)
+ * - #tag prefix for exact tag filtering
  * - Arrow keys/j/k to navigate
  * - Enter to select
  * - Esc to cancel
  * - Cloud-only projects shown separately
+ * - Progressive rendering (local first, cloud merges in)
  */
 
 import { isCancel } from "@clack/core";
 import { formatRelativeTime } from "./format.ts";
-import { fuzzyFilter } from "./fuzzy.ts";
-import { type ProjectListItem, shortenPath, sortByUpdated, toListItems } from "./project-list.ts";
+import { fuzzyFilter, fuzzyFilterMulti, fuzzyMatch } from "./fuzzy.ts";
+import {
+	type ProjectListItem,
+	buildTagColorMap,
+	formatTagsInline,
+	sortByUpdated,
+	toListItems,
+} from "./project-list.ts";
 import { listAllProjects } from "./project-resolver.ts";
 import { restoreTty } from "./tty.ts";
 
@@ -55,6 +63,90 @@ const colors = {
 };
 
 // ============================================================================
+// Query Parsing
+// ============================================================================
+
+interface ParsedQuery {
+	/** Exact #tag filters (AND logic) */
+	tags: string[];
+	/** Free text for fuzzy matching */
+	text: string;
+}
+
+/**
+ * Parse query into #tag filters and free text.
+ * "#api #prod hello" -> { tags: ["api", "prod"], text: "hello" }
+ */
+function parseQuery(raw: string): ParsedQuery {
+	const tags: string[] = [];
+	const textParts: string[] = [];
+
+	for (const token of raw.split(/\s+/)) {
+		if (token.startsWith("#") && token.length > 1) {
+			tags.push(token.slice(1));
+		} else if (token.length > 0) {
+			textParts.push(token);
+		}
+	}
+
+	return { tags, text: textParts.join(" ") };
+}
+
+// ============================================================================
+// Multi-field filtering
+// ============================================================================
+
+/**
+ * Get weighted fields for fuzzy matching a project.
+ * name (1.0), each domain (0.4), each tag (0.3).
+ */
+function getProjectFields(p: ProjectListItem): { text: string; weight: number }[] {
+	const fields: { text: string; weight: number }[] = [{ text: p.name, weight: 1.0 }];
+	if (p.domains) {
+		for (const d of p.domains) {
+			fields.push({ text: d, weight: 0.4 });
+		}
+	}
+	if (p.tags) {
+		for (const t of p.tags) {
+			fields.push({ text: t, weight: 0.3 });
+		}
+	}
+	return fields;
+}
+
+/**
+ * Fuzzy-match a tag query against a project's tags.
+ * Returns true if any tag fuzzy-matches the query.
+ */
+function fuzzyMatchTag(tagQuery: string, projectTags: string[]): boolean {
+	if (projectTags.length === 0) return false;
+	return projectTags.some((t) => fuzzyMatch(tagQuery, t) > 0);
+}
+
+/**
+ * Filter projects using parsed query: fuzzy #tag filter + multi-field fuzzy text.
+ */
+function filterProjects(parsed: ParsedQuery, items: ProjectListItem[]): ProjectListItem[] {
+	let result = items;
+
+	// Apply fuzzy #tag filters (AND logic — every #tag must match at least one project tag)
+	if (parsed.tags.length > 0) {
+		result = result.filter((item) => {
+			const projectTags = item.tags ?? [];
+			return parsed.tags.every((tq) => fuzzyMatchTag(tq, projectTags));
+		});
+	}
+
+	// Apply multi-field fuzzy search on remaining text
+	if (parsed.text) {
+		result = fuzzyFilterMulti(parsed.text, result, getProjectFields);
+	}
+
+	return result;
+}
+
+// ============================================================================
 // TTY Safety
 // ============================================================================
 
@@ -89,15 +181,21 @@ export function requireTTY(): void {
 export async function pickProject(
 	options?: PickProjectOptions,
 ): Promise<PickerResult | PickerCancelResult> {
-	// Fetch all projects
+	// Show loading indicator while fetching all data in parallel
+	process.stderr.write(`  ${colors.dim}Loading projects...${colors.reset}`);
+
 	let allProjects: ProjectListItem[];
 	try {
 		const resolved = await listAllProjects();
 		allProjects = sortByUpdated(toListItems(resolved));
 	} catch {
+		process.stderr.write("\x1b[2J\x1b[H");
 		console.error("Could not fetch projects. Check your connection.");
 		process.exit(1);
 	}
+
+	// Clear loading message
+	process.stderr.write("\x1b[2J\x1b[H");
 
 	// Separate local and cloud-only projects
 	const cloudOnlyProjects = allProjects.filter((p) => p.isCloudOnly);
@@ -116,10 +214,7 @@ export async function pickProject(
 		process.exit(1);
 	}
 
-	// Run the interactive picker
-	const result = await runPicker(localProjects, cloudOnlyProjects);
-
-	return result;
+	return runPicker(localProjects, cloudOnlyProjects);
 }
 
 /**
@@ -135,6 +230,9 @@ async function runPicker(
 		let scrollOffset = 0;
 		let filteredLocal = localProjects;
 		let filteredCloud = cloudOnlyProjects;
+
+		// Build tag color map
+		const tagColorMap = buildTagColorMap([...localProjects, ...cloudOnlyProjects]);
 
 		// Calculate visible window size (leave room for header, footer, cloud header)
 		// Use stderr.rows since UI is on stderr (stdout may be a pipe)
@@ -154,12 +252,14 @@ async function runPicker(
 
 		// Update filtered lists based on query
 		const updateFilter = () => {
+			const parsed = parseQuery(query);
+
 			if (!query) {
 				filteredLocal = localProjects;
 				filteredCloud = cloudOnlyProjects;
 			} else {
-				filteredLocal = fuzzyFilter(query, localProjects, (p) => p.name);
-				filteredCloud = fuzzyFilter(query, cloudOnlyProjects, (p) => p.name);
+				filteredLocal = filterProjects(parsed, localProjects);
+				filteredCloud = filterProjects(parsed, cloudOnlyProjects);
 			}
 			// Reset cursor if out of bounds
 			const total = getTotalItems();
@@ -212,22 +312,6 @@ async function runPicker(
 				process.stderr.write(`  ${colors.dim}↑ ${scrollOffset} more above${colors.reset}\n`);
 			}
 
-			// Build combined list for scrolling
-			const allItems: { project: ProjectListItem; isCloud: boolean; isCloudHeader?: boolean }[] =
-				[];
-
-			for (const project of filteredLocal) {
-				allItems.push({ project, isCloud: false });
-			}
-
-			if (filteredCloud.length > 0) {
-				// Add cloud header as a special item
-				allItems.push({ project: filteredCloud[0]!, isCloud: true, isCloudHeader: true });
-				for (const project of filteredCloud) {
-					allItems.push({ project, isCloud: true });
-				}
-			}
-
 			// Render visible window
 			let renderedCount = 0;
 			let lineIndex = 0;
@@ -236,7 +320,7 @@ async function runPicker(
 			for (const project of filteredLocal) {
 				if (lineIndex >= scrollOffset && renderedCount < maxVisible) {
 					const isSelected = lineIndex === cursor;
-					const line = formatPickerLine(project, isSelected, false);
+					const line = formatPickerLine(project, isSelected);
 					process.stderr.write(`${line}\n`);
 					renderedCount++;
 				}
@@ -270,7 +354,7 @@ async function runPicker(
 							cloudHeaderShown = true;
 						}
 						const isSelected = lineIndex === cursor;
-						const line = formatPickerLine(project, isSelected, true);
+						const line = formatPickerLine(project, isSelected);
 						process.stderr.write(`${line}\n`);
 						renderedCount++;
 					}
@@ -292,29 +376,46 @@ async function runPicker(
 			// Search input
 			const searchPrompt = query
 				? `${colors.brightCyan}/${colors.reset} ${query}${colors.dim}▌${colors.reset}`
-				: `${colors.dim}/ type to filter${colors.reset}`;
+				: `${colors.dim}/ type to filter  #tag to filter by tag${colors.reset}`;
 			process.stderr.write(`\n  ${searchPrompt}\n`);
 		};
 
 		// Format a single picker line
-		const formatPickerLine = (
-			project: ProjectListItem,
-			isSelected: boolean,
-			isCloudOnly: boolean,
-		): string => {
+		const formatPickerLine = (project: ProjectListItem, isSelected: boolean): string => {
 			const prefix = isSelected ? `${colors.brightCyan}▸${colors.reset}` : " ";
-			const name = project.name.padEnd(22);
-			const time = project.updatedAt
-				? colors.dim + formatRelativeTime(project.updatedAt).padEnd(10) + colors.reset
-				: "".padEnd(10);
-
-			let location = "";
-			if (!isCloudOnly && project.localPath) {
-				location = colors.dim + shortenPath(project.localPath) + colors.reset;
-			}
-
+			const nameStr = project.name.length > 22 ? project.name.slice(0, 22) : project.name;
 			const nameColor = isSelected ? colors.brightGreen + colors.bold : "";
-			return `  ${prefix} ${nameColor}${name}${colors.reset} ${time} ${location}`;
+
+			// Tags inline after name
+			const tagsStr = formatTagsInline(project.tags, tagColorMap);
+
+			// Build name+tags column with consistent width
+			const nameCol = tagsStr ? `${nameStr} ${tagsStr}` : nameStr;
+			// Visible length (strip ANSI for padding calc)
+			const visibleTagsLen = project.tags?.length
+				? project.tags.slice(0, 3).reduce((n, t) => n + t.length + 2, 0) +
+					(project.tags.length > 3 ? 3 : 0)
+				: 0;
+			const visibleNameColLen = nameStr.length + (visibleTagsLen > 0 ? 1 + visibleTagsLen : 0);
+			const nameColWidth = 30;
+			const pad = " ".repeat(Math.max(1, nameColWidth - visibleNameColLen));
+
+			// URL: prefer custom domain, fall back to runjack.xyz URL (strip https://)
+			let urlStr = "";
+			if (project.domains && project.domains.length > 0) {
+				urlStr = project.domains[0];
+			} else if (project.url) {
+				urlStr = project.url.replace("https://", "");
+			}
+			const urlCol = urlStr
+				? `${colors.dim}${urlStr.length > 35 ? `${urlStr.slice(0, 32)}...` : urlStr}${colors.reset}`
+				: "";
+
+			const time = project.updatedAt
+				? colors.dim + formatRelativeTime(project.updatedAt) + colors.reset
+				: "";
+
+			return `  ${prefix} ${nameColor}${nameCol}${colors.reset}${pad}${urlCol}${urlCol ? "  " : ""}${time}`;
 		};
 
 		// Handle keyboard input
@@ -346,8 +447,8 @@ async function runPicker(
 				return;
 			}
 
-			// Arrow up or k
-			if (char === "\x1b[A" || char === "k") {
+			// Arrow up
+			if (char === "\x1b[A") {
 				if (total > 0) {
 					cursor = cursor > 0 ? cursor - 1 : total - 1;
 					render();
@@ -355,8 +456,8 @@ async function runPicker(
 				return;
 			}
 
-			// Arrow down or j
-			if (char === "\x1b[B" || char === "j") {
+			// Arrow down
+			if (char === "\x1b[B") {
 				if (total > 0) {
 					cursor = cursor < total - 1 ? cursor + 1 : 0;
 					render();

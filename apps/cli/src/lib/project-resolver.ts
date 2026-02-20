@@ -19,7 +19,12 @@ import {
 	findProjectBySlug,
 	listManagedProjects,
 } from "./control-plane.ts";
-import { getAllPaths, unregisterPath } from "./paths-index.ts";
+import {
+	type PathWithLink,
+	getAllPaths,
+	getAllPathsWithLinks,
+	unregisterPath,
+} from "./paths-index.ts";
 import {
 	type DeployMode,
 	type LocalProjectLink,
@@ -76,6 +81,9 @@ export interface ResolvedProject {
 
 	// Tags (from local project link)
 	tags?: string[];
+
+	// Custom domain hostnames (from control plane)
+	domains?: string[];
 }
 
 /**
@@ -125,6 +133,20 @@ function fromManagedProject(managed: ManagedProject): ResolvedProject {
 		? `https://${managed.owner_username}-${managed.slug}.runjack.xyz`
 		: `https://${managed.slug}.runjack.xyz`;
 
+	// Parse domain hostnames from JSON array string
+	let domains: string[] | undefined;
+	if (managed.domain_hostnames) {
+		try {
+			const parsed = JSON.parse(managed.domain_hostnames);
+			const filtered = Array.isArray(parsed)
+				? parsed.filter((h: unknown) => typeof h === "string" && h.length > 0)
+				: [];
+			if (filtered.length > 0) domains = filtered;
+		} catch {
+			// Invalid JSON, ignore
+		}
+	}
+
 	return {
 		name: managed.name,
 		slug: managed.slug,
@@ -143,6 +165,7 @@ function fromManagedProject(managed: ManagedProject): ResolvedProject {
 		createdAt: managed.created_at,
 		updatedAt: managed.updated_at,
 		tags,
+		domains,
 	};
 }
 
@@ -166,6 +189,8 @@ function mergeProjects(local: ResolvedProject, managed: ResolvedProject): Resolv
 		updatedAt: managed.updatedAt || local.updatedAt,
 		// Local tags take priority; fall back to remote if local has none
 		tags: local.tags?.length ? local.tags : managed.tags,
+		// Domains come from control plane only
+		domains: managed.domains,
 	};
 }
 
@@ -326,71 +351,62 @@ export async function resolveProject(
  * Merges and dedupes by project_id
  */
 export async function listAllProjects(): Promise<ResolvedProject[]> {
+	// Kick off local reads + cloud fetch in parallel
+	const localDataPromise = getAllPathsWithLinks();
+	const cloudDataPromise = getAuthState().then(async (state) => {
+		if (state === "logged-in") {
+			try {
+				return { state, projects: await listManagedProjects() };
+			} catch {
+				return { state: "logged-in" as const, projects: [] as ManagedProject[] };
+			}
+		}
+		return { state, projects: [] as ManagedProject[] };
+	});
+
 	const projectMap = new Map<string, ResolvedProject>();
 
-	// Get all local projects from paths index
-	const allPaths = await getAllPaths();
-
-	for (const [projectId, paths] of Object.entries(allPaths)) {
-		// Read the first valid path's link
-		for (const localPath of paths) {
-			const link = await readProjectLink(localPath);
-			if (link) {
-				const resolved = fromLocalLink(link, localPath);
-				projectMap.set(projectId, resolved);
-				break; // Use first valid path
-			}
-		}
+	// Build local projects from validated paths+links (no redundant readProjectLink)
+	const allPathsWithLinks = await localDataPromise;
+	for (const [projectId, { path, link }] of allPathsWithLinks) {
+		projectMap.set(projectId, fromLocalLink(link, path));
 	}
 
-	// Get all managed projects based on auth state
-	const authState = await getAuthState();
+	// Merge cloud data
+	const { state: authState, projects: managedProjects } = await cloudDataPromise;
 
 	if (authState === "logged-in") {
-		try {
-			const managedProjects = await listManagedProjects();
+		const activeProjects = managedProjects.filter((p) => p.status !== "deleted");
 
-			// Filter out deleted projects - they're orphaned control plane records
-			const activeProjects = managedProjects.filter((p) => p.status !== "deleted");
+		for (const managed of activeProjects) {
+			const existing = projectMap.get(managed.id);
 
-			for (const managed of activeProjects) {
-				const existing = projectMap.get(managed.id);
-
-				if (existing) {
-					// Merge with local data - control plane is authoritative
-					projectMap.set(managed.id, mergeProjects(existing, fromManagedProject(managed)));
-				} else {
-					// New project not in local index
-					const resolved = fromManagedProject(managed);
-
-					// Check if we have a local path for this project
-					const localPaths = allPaths[managed.id];
-					if (localPaths && localPaths.length > 0) {
-						resolved.localPath = localPaths[0];
-						resolved.sources.filesystem = true;
-					}
-
-					projectMap.set(managed.id, resolved);
+			if (existing) {
+				projectMap.set(managed.id, mergeProjects(existing, fromManagedProject(managed)));
+			} else {
+				const resolved = fromManagedProject(managed);
+				const localEntry = allPathsWithLinks.get(managed.id);
+				if (localEntry) {
+					resolved.localPath = localEntry.path;
+					resolved.sources.filesystem = true;
 				}
+				projectMap.set(managed.id, resolved);
 			}
+		}
 
-			// Mark orphaned local managed projects (not found on control plane) as errors
-			for (const [, project] of projectMap) {
-				if (
-					project.deployMode === "managed" &&
-					project.status === "syncing" &&
-					!project.sources.controlPlane
-				) {
-					project.status = "error";
-					project.errorMessage = "Project not found in jack cloud";
-				}
+		// Mark orphaned local managed projects as errors
+		for (const [, project] of projectMap) {
+			if (
+				project.deployMode === "managed" &&
+				project.status === "syncing" &&
+				!project.sources.controlPlane
+			) {
+				project.status = "error";
+				project.errorMessage = "Project not found in jack cloud";
 			}
-		} catch {
-			// Control plane unavailable, use local-only data
 		}
 	} else if (authState === "session-expired") {
-		// Mark all managed projects as auth-expired
-		for (const [projectId, project] of projectMap) {
+		for (const [, project] of projectMap) {
 			if (project.deployMode === "managed" && project.status === "syncing") {
 				project.status = "auth-expired";
 				project.errorMessage = "Session expired. Run: jack login";
@@ -399,6 +415,86 @@ export async function listAllProjects(): Promise<ResolvedProject[]> {
 	}
 
 	return Array.from(projectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Stream projects: local first, then all (with cloud merged).
+ * Allows progressive rendering — picker can show local projects immediately.
+ */
+export function streamAllProjects(): {
+	localProjects: Promise<ResolvedProject[]>;
+	allProjects: Promise<ResolvedProject[]>;
+} {
+	const localDataPromise = getAllPathsWithLinks();
+	const cloudDataPromise = getAuthState().then(async (state) => {
+		if (state === "logged-in") {
+			try {
+				return { state, projects: await listManagedProjects() };
+			} catch {
+				return { state: "logged-in" as const, projects: [] as ManagedProject[] };
+			}
+		}
+		return { state, projects: [] as ManagedProject[] };
+	});
+
+	const localProjects = localDataPromise.then((allPathsWithLinks) => {
+		const projects: ResolvedProject[] = [];
+		for (const [, { path, link }] of allPathsWithLinks) {
+			projects.push(fromLocalLink(link, path));
+		}
+		return projects.sort((a, b) => a.name.localeCompare(b.name));
+	});
+
+	const allProjects = Promise.all([localDataPromise, cloudDataPromise]).then(
+		([allPathsWithLinks, { state: authState, projects: managedProjects }]) => {
+			const projectMap = new Map<string, ResolvedProject>();
+
+			for (const [projectId, { path, link }] of allPathsWithLinks) {
+				projectMap.set(projectId, fromLocalLink(link, path));
+			}
+
+			if (authState === "logged-in") {
+				const activeProjects = managedProjects.filter((p) => p.status !== "deleted");
+
+				for (const managed of activeProjects) {
+					const existing = projectMap.get(managed.id);
+					if (existing) {
+						projectMap.set(managed.id, mergeProjects(existing, fromManagedProject(managed)));
+					} else {
+						const resolved = fromManagedProject(managed);
+						const localEntry = allPathsWithLinks.get(managed.id);
+						if (localEntry) {
+							resolved.localPath = localEntry.path;
+							resolved.sources.filesystem = true;
+						}
+						projectMap.set(managed.id, resolved);
+					}
+				}
+
+				for (const [, project] of projectMap) {
+					if (
+						project.deployMode === "managed" &&
+						project.status === "syncing" &&
+						!project.sources.controlPlane
+					) {
+						project.status = "error";
+						project.errorMessage = "Project not found in jack cloud";
+					}
+				}
+			} else if (authState === "session-expired") {
+				for (const [, project] of projectMap) {
+					if (project.deployMode === "managed" && project.status === "syncing") {
+						project.status = "auth-expired";
+						project.errorMessage = "Session expired. Run: jack login";
+					}
+				}
+			}
+
+			return Array.from(projectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+		},
+	);
+
+	return { localProjects, allProjects };
 }
 
 /**
