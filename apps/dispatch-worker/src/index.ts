@@ -206,8 +206,8 @@ app.all("/*", async (c) => {
 			{},
 			{
 				limits: {
-					cpuMs: isPaid ? 50 : 10,
-					subRequests: isPaid ? 200 : 50,
+					cpuMs: isPaid ? 5000 : 50,
+					subRequests: isPaid ? 1000 : 50,
 				},
 			},
 		);
@@ -234,6 +234,12 @@ app.all("/*", async (c) => {
 		});
 
 		const response = await worker.fetch(sanitizedRequest);
+
+		// Keep dispatch context alive so tenant worker's waitUntil promises
+		// have time to complete. Without this, the dispatch worker's context
+		// ends after returning, which cascades cancellation to the tenant worker.
+		const keepAliveMs = isPaid ? 30_000 : 5_000;
+		ctx.waitUntil(new Promise((resolve) => setTimeout(resolve, keepAliveMs)));
 
 		// Write usage data point (fire-and-forget, 0ms latency impact)
 		ctx.waitUntil(

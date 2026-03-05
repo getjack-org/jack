@@ -50,6 +50,26 @@ jack services db query "SELECT * FROM users"
 
 ${fullText}
 
+## Background Work & waitUntil
+
+For normal HTTP requests, \`c.executionCtx.waitUntil()\` works for up to 30s (paid) or 5s (free) of background work after the response is sent.
+
+For cron/scheduled handlers (\`POST /__scheduled\`), **always \`await\` your work before returning the response**. Do not use \`waitUntil\` — background tasks may be killed before they complete:
+
+\`\`\`typescript
+// WRONG — background work may be killed in cron handlers
+app.post('/__scheduled', async (c) => {
+  c.executionCtx.waitUntil(doWork(c.env));
+  return c.json({ ok: true });
+});
+
+// CORRECT
+app.post('/__scheduled', async (c) => {
+  await doWork(c.env);
+  return c.json({ ok: true });
+});
+\`\`\`
+
 ## For AI Agents
 
 ### MCP Tools

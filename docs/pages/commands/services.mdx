@@ -118,12 +118,16 @@ Minimum interval is 15 minutes. Maximum 5 schedules per project.
 
 Jack Cloud invokes crons by sending `POST /__scheduled` to your worker's HTTP handler. You must add an explicit route for this. Cloudflare's native `scheduled()` export does **not** work with Jack Cloud — Jack uses HTTP, not the Workers scheduled event.
 
+:::warning
+**`await` your work before returning the response.** Do not use `waitUntil` for cron work — background tasks started with `c.executionCtx.waitUntil()` may be killed before they complete. The cron handler should finish all work before sending the response.
+:::
+
 Hono example:
 
 ```typescript
 app.post('/__scheduled', async (c) => {
   const cron = c.req.header('X-Jack-Cron');
-  // your cron logic here
+  await doWork(c.env);  // finish work before responding
   return c.json({ ok: true });
 });
 ```
@@ -135,7 +139,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/__scheduled') {
-      // your cron logic here
+      await doWork(env);  // finish work before responding
       return Response.json({ ok: true });
     }
     // ... other routes
