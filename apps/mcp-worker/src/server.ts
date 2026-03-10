@@ -4,10 +4,11 @@ import { ControlPlaneClient } from "./control-plane.ts";
 import { askProject } from "./tools/ask-project.ts";
 import { createDatabase, executeSql, listDatabases } from "./tools/database.ts";
 import { deploy } from "./tools/deploy-code.ts";
+import { testEndpoint } from "./tools/endpoint-test.ts";
 import { getLogs } from "./tools/logs.ts";
 import { getProjectStatus, listProjects } from "./tools/projects.ts";
 import { rollbackProject } from "./tools/rollback.ts";
-import { listProjectFiles, readProjectFile } from "./tools/source.ts";
+import { listProjectFiles, listStagedChanges, readProjectFile, updateFile } from "./tools/source.ts";
 import type { Bindings } from "./types.ts";
 
 export function createMcpServer(token: string, env: Bindings): McpServer {
@@ -17,15 +18,19 @@ export function createMcpServer(token: string, env: Bindings): McpServer {
 	});
 
 	const client = new ControlPlaneClient(token, env.CONTROL_PLANE_URL || undefined);
+	const kv = env.OAUTH_KV;
 
 	server.tool(
 		"deploy",
-		`Deploy to Jack Cloud. Three modes (pass exactly one):
+		`Deploy to Jack Cloud. Four modes (pass exactly one):
 - files: Full file set for a brand-new project. Pass all source files as { "path": "content" }. Only use this for the FIRST deploy of a new custom project.
 - template: Deploy a prebuilt template (hello, api, miniapp, nextjs, saas). Always creates a new project.
 - changes: Partial update to an existing project. Pass only changed/added files as { "path": "new content" } or { "path": null } to delete. Requires project_id.
+- staged: Deploy files previously staged via update_file. Set staged=true with project_id. Use this when files are too large to pass inline in a single changes call.
 
-IMPORTANT: To update an existing project, ALWAYS use changes mode with project_id. Do NOT use files mode for existing projects — it replaces all files and may create a duplicate project. If the user mentions an existing app, call list_projects first to find its project_id, then use changes.`,
+IMPORTANT: To update an existing project, ALWAYS use changes mode with project_id. Do NOT use files mode for existing projects — it replaces all files and may create a duplicate project. If the user mentions an existing app, call list_projects first to find its project_id, then use changes.
+
+For large files (>15KB): Use update_file to stage files one at a time, then deploy(staged=true, project_id). This avoids output token limits that can truncate large inline content.`,
 		{
 			files: z
 				.record(z.string(), z.string())
@@ -43,10 +48,16 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 				.describe(
 					'Partial file changes as { "path": "new content" } or { "path": null } to delete. Requires project_id.',
 				),
+			staged: z
+				.boolean()
+				.optional()
+				.describe(
+					"Deploy files previously staged via update_file calls. Requires project_id. Use when files are too large for inline changes.",
+				),
 			project_id: z
 				.string()
 				.optional()
-				.describe("Existing project ID (required for changes, optional for files)"),
+				.describe("Existing project ID (required for changes/staged, optional for files)"),
 			project_name: z
 				.string()
 				.optional()
@@ -57,7 +68,45 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 				.describe('Worker compatibility flags (default: ["nodejs_compat"])'),
 		},
 		async (params) => {
-			return deploy(client, params);
+			return deploy(client, params, kv);
+		},
+	);
+
+	server.tool(
+		"update_file",
+		`Stage a file change for later deployment. Use this to build up changes across multiple calls, then deploy them all at once with deploy(staged=true).
+
+Best for:
+- Large files that exceed output token limits when passed inline via changes
+- Multi-file updates where you want to stage all changes before deploying
+- Splitting a monolithic file into multiple smaller files
+
+After staging all changes, call deploy(project_id, staged=true) to deploy.
+Staged changes expire after 10 minutes if not deployed.
+Pass content=null to mark a file for deletion.`,
+		{
+			project_id: z.string().describe("The project ID to stage changes for"),
+			path: z
+				.string()
+				.describe("Relative file path within the project (e.g. 'src/index.ts', 'public/styles.css')"),
+			content: z
+				.string()
+				.nullable()
+				.describe("File content to write, or null to delete the file"),
+		},
+		async ({ project_id, path, content }) => {
+			return updateFile(kv, project_id, path, content);
+		},
+	);
+
+	server.tool(
+		"list_staged_changes",
+		"List files currently staged via update_file that haven't been deployed yet. Use to review pending changes before calling deploy(staged=true).",
+		{
+			project_id: z.string().describe("The project ID"),
+		},
+		async ({ project_id }) => {
+			return listStagedChanges(kv, project_id);
 		},
 	);
 
@@ -107,6 +156,27 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 	);
 
 	server.tool(
+		"test_endpoint",
+		"Make an HTTP request to a deployed project's endpoint and return the status, headers, and body. Use after deploying to verify the app works, or to debug endpoint issues. More reliable than asking the user to check manually.",
+		{
+			project_id: z.string().describe("The project ID"),
+			path: z
+				.string()
+				.optional()
+				.default("/")
+				.describe("Endpoint path to test (e.g. '/api/health', '/'). Defaults to '/'."),
+			method: z
+				.enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+				.optional()
+				.default("GET")
+				.describe("HTTP method (default: GET)"),
+		},
+		async ({ project_id, path, method }) => {
+			return testEndpoint(client, project_id, path || "/", method);
+		},
+	);
+
+	server.tool(
 		"get_logs",
 		"Open a LIVE log stream for up to 5 seconds and return any log entries captured during that window. This is NOT historical — it only shows logs from requests that happen WHILE listening. To capture logs: call this tool, then immediately ask the user to visit the app URL (or make a request yourself). If no requests hit the worker during the 5-second window, the result will be empty. Use to debug runtime errors after deploying.",
 		{
@@ -142,7 +212,7 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 
 	server.tool(
 		"create_database",
-		"Create a D1 SQL database for a project. Accessible in Worker code via env.DB (or custom binding_name). After creation, redeploy the project with deploy(changes) for the binding to activate. Use list_databases first to check if one already exists.",
+		"Create a D1 SQL database for a project. If a database with the same binding already exists, returns the existing one (idempotent). Accessible in Worker code via env.DB (or custom binding_name). After creation, redeploy the project with deploy(changes) for the binding to activate.",
 		{
 			project_id: z.string().describe("The project ID"),
 			name: z.string().optional().describe("Database name (auto-generated if omitted)"),
@@ -171,7 +241,7 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 
 	server.tool(
 		"execute_sql",
-		"Execute SQL against a project's D1 database. Read-only by default (SELECT, PRAGMA). Set allow_write=true for INSERT, UPDATE, DELETE, CREATE TABLE. Destructive operations (DROP, TRUNCATE, ALTER) are always blocked — use the Jack CLI for those.",
+		"Execute SQL against a project's D1 database. Read-only by default (SELECT, PRAGMA). Set allow_write=true for INSERT, UPDATE, DELETE, CREATE TABLE, and ALTER TABLE. Set allow_destructive=true for DROP and TRUNCATE (use with caution).",
 		{
 			project_id: z.string().describe("The project ID"),
 			sql: z.string().describe("SQL statement to execute"),
@@ -180,11 +250,17 @@ IMPORTANT: To update an existing project, ALWAYS use changes mode with project_i
 				.boolean()
 				.optional()
 				.describe(
-					"Allow write operations (INSERT, UPDATE, DELETE, CREATE TABLE). Default: false (read-only).",
+					"Allow write operations (INSERT, UPDATE, DELETE, CREATE TABLE, ALTER TABLE). Default: false (read-only).",
+				),
+			allow_destructive: z
+				.boolean()
+				.optional()
+				.describe(
+					"Allow destructive operations (DROP, TRUNCATE). Default: false. Use with caution.",
 				),
 		},
-		async ({ project_id, sql, params, allow_write }) => {
-			return executeSql(client, project_id, sql, params, allow_write);
+		async ({ project_id, sql, params, allow_write, allow_destructive }) => {
+			return executeSql(client, project_id, sql, params, allow_write, allow_destructive);
 		},
 	);
 

@@ -22,30 +22,36 @@ src/
 ├── types.ts          # Bindings
 ├── control-plane.ts  # ControlPlaneClient (HTTP client for control.getjack.org)
 ├── bundler.ts        # esbuild-wasm bundler for deploy_from_code
+├── staging.ts        # KV-backed file staging for multi-call deploys
 ├── utils.ts          # Shared response helpers (ok/err)
 └── tools/
     ├── deploy-code.ts    # Bundle + upload source files as a Worker
     ├── deploy-template.ts # Deploy prebuilt template via control plane
+    ├── endpoint-test.ts  # HTTP request to deployed endpoints
     ├── projects.ts       # list_projects, get_project_status
-    ├── source.ts         # list_project_files, read_project_file
+    ├── source.ts         # list/read project files, update_file staging
     ├── logs.ts           # get_logs
     ├── database.ts       # create_database, list_databases, execute_sql
     └── rollback.ts       # rollback_project
 ```
 
-## Tools (10 total)
+## Tools (14 total)
 
 | Tool | Type | Description |
 |------|------|-------------|
-| `deploy` | write | Unified deploy: `files` for custom code, `template` for prebuilt apps |
+| `deploy` | write | Unified deploy: `files`, `template`, `changes`, or `staged` mode |
+| `update_file` | write | Stage a file change for later deployment via `deploy(staged=true)` |
+| `list_staged_changes` | read | List files staged via `update_file` pending deployment |
 | `list_projects` | read | List all user's projects with URLs |
 | `get_project_status` | read | Deployment status, URL, resources for a project |
+| `test_endpoint` | read | HTTP request to a deployed endpoint, returns status + body |
 | `list_project_files` | read | File tree of deployed project's source |
 | `read_project_file` | read | Read single source file from deployed project |
 | `get_logs` | read | Start log session and collect entries |
-| `create_database` | write | Create D1 database for a project |
+| `create_database` | write | Create D1 database for a project (idempotent) |
 | `list_databases` | read | List D1 databases for a project |
-| `execute_sql` | write | Execute SQL against project's D1 database |
+| `execute_sql` | write | Execute SQL (now supports ALTER TABLE with allow_write) |
+| `ask_project` | read | Evidence-backed debugging questions about a project |
 | `rollback_project` | write | Roll back to a previous deployment |
 
 ### The Deploy + Iterate Loop
@@ -61,11 +67,17 @@ This is the core workflow the tools enable:
    → LLM calls list_project_files(project_id) → sees current files
    → LLM calls read_project_file(project_id, "src/index.ts") → gets source
    → LLM modifies the code
-   → LLM calls deploy(files: {...}, project_id) → redeploys
+   → LLM calls deploy(changes: {"src/index.ts": "..."}, project_id) → redeploys
 
 3. User: "something's broken"
    → LLM calls get_logs(project_id) → sees errors
    → LLM reads source, fixes, redeploys
+   → LLM calls test_endpoint(project_id, "/api/health") → verifies fix
+
+4. Large file update (>15KB):
+   → LLM calls update_file(project_id, "src/index.ts", content) → stages file
+   → LLM calls update_file(project_id, "src/styles.css", content) → stages another
+   → LLM calls deploy(project_id, staged=true) → deploys all staged changes
 ```
 
 Source is preserved across deploys (stored as source.zip in R2). Template-deployed projects can also be iterated on via code upload — the control plane doesn't restrict this.
