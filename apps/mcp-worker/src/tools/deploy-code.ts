@@ -179,6 +179,13 @@ export async function deploy(
 
 	// Staged mode: deploy from accumulated update_file calls
 	if (staged) {
+		if (files || template || changes) {
+			return err(
+				"VALIDATION_ERROR",
+				"staged=true cannot be combined with files, template, or changes.",
+				"Use staged=true alone with project_id, or use one of the other modes.",
+			);
+		}
 		if (!project_id) {
 			return err(
 				"VALIDATION_ERROR",
