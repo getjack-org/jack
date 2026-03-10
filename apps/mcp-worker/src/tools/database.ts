@@ -8,6 +8,22 @@ export async function createDatabase(
 	bindingName?: string,
 ): Promise<McpToolResult> {
 	try {
+		// Check if a database already exists to avoid duplicates
+		const { resources } = await client.listDatabases(projectId);
+		const targetBinding = bindingName || "DB";
+		const existing = resources.find(
+			(r) => r.binding_name === targetBinding || (name && r.resource_name === name),
+		);
+		if (existing) {
+			return ok({
+				database_id: existing.id,
+				database_name: existing.resource_name,
+				binding_name: existing.binding_name,
+				already_exists: true,
+				note: `Database already exists with binding '${existing.binding_name}'. No new database created. Use execute_sql to interact with it.`,
+			});
+		}
+
 		const result = await client.createDatabase(projectId, name, bindingName);
 		return ok({
 			database_id: result.resource.id,
@@ -40,17 +56,19 @@ export async function listDatabases(
 	}
 }
 
-function classifySql(sql: string): "read" | "write" | "destructive" {
+function classifySql(sql: string): "read" | "write" | "migration" | "destructive" {
 	const stripped = sql
 		.replace(/--.*$/gm, "")
 		.replace(/\/\*[\s\S]*?\*\//g, "")
 		.trim();
 	const firstWord = stripped.split(/\s+/)[0]?.toUpperCase();
 
-	const destructive = ["DROP", "TRUNCATE", "ALTER"];
+	const destructive = ["DROP", "TRUNCATE"];
+	const migration = ["ALTER"];
 	const write = ["INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "UPSERT"];
 
 	if (destructive.includes(firstWord ?? "")) return "destructive";
+	if (migration.includes(firstWord ?? "")) return "migration";
 	if (write.includes(firstWord ?? "")) return "write";
 	return "read";
 }
@@ -61,13 +79,23 @@ export async function executeSql(
 	sql: string,
 	params?: unknown[],
 	allowWrite?: boolean,
+	allowDestructive?: boolean,
 ): Promise<McpToolResult> {
 	const classification = classifySql(sql);
 
-	if (classification === "destructive") {
+	if (classification === "destructive" && !allowDestructive) {
 		return err(
 			"DESTRUCTIVE_BLOCKED",
-			"DROP/TRUNCATE/ALTER are blocked via MCP. Use the Jack CLI for destructive operations.",
+			"DROP/TRUNCATE are blocked by default via MCP.",
+			"Set allow_destructive=true to allow destructive operations, or use the Jack CLI.",
+		);
+	}
+
+	if (classification === "migration" && !allowWrite) {
+		return err(
+			"WRITE_NOT_ALLOWED",
+			"ALTER TABLE requires allow_write=true.",
+			"Set allow_write=true to allow schema migrations (ALTER TABLE).",
 		);
 	}
 
