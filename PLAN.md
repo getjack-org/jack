@@ -1,290 +1,190 @@
-# Plan: Ask Feature 10x
+# Analysis: Jack Deploy Limits Feedback
 
-## Overview
+## Context
 
-Four improvements to the post-deployment `ask` feature:
+- **Client**: claude.ai (web interface)
+- **MCP Server**: Remote MCP at `mcp.getjack.org` (`apps/mcp-worker/`)
+- **NOT** the local CLI MCP (`apps/cli/src/mcp/`)
 
-1. **LLM Synthesis** — replace deterministic `pickAnswer()` with Claude on the server side
-2. **Session Transcript at Deploy** — automatically capture and upload the Claude Code session context when deploying
-3. **Git/JJ Diff at Deploy** — capture actual VCS diff in the CLI and store it with the deployment
-4. **Real AST Parsing** — replace regex symbol extraction with `acorn` + `acorn-typescript`
+This is critical — the remote MCP worker has a completely different tool surface from the local CLI MCP. The `deploy` tool in the remote MCP **does** accept inline `changes` and `files` parameters.
+
+## Architecture of the Remote MCP Deploy
+
+The `deploy` tool (`apps/mcp-worker/src/tools/deploy-code.ts`) has three modes:
+
+1. **`files`**: `Record<string, string>` — Full file set for new projects
+2. **`template`**: `string` — Prebuilt template name
+3. **`changes`**: `Record<string, string | null>` — Partial update to existing project (requires `project_id`)
+
+### What happens in `changes` mode (lines 107-140):
+1. Fetches existing source files from control plane via `getAllSourceFiles(project_id)`
+2. Merges changes into existing files (null = delete)
+3. Bundles merged files with esbuild-wasm
+4. Zips and uploads via `client.uploadDeployment()`
+
+### Existing size limits in the pipeline:
+- **Source files**: 500KB total (`deploy-code.ts:154`) — `"Source files too large"`
+- **Bundled output**: 10MB (`deploy-code.ts:175`) — Workers platform limit
 
 ---
 
-## Feature 1: LLM Synthesis
+## Root Cause: The Real Bottleneck
 
-Replace the heuristic `pickAnswer()` in `ask-project.ts` with a real Claude API call.
+The user's 38KB `src/index.ts` is well within Jack's 500KB source limit. The problem is **upstream of Jack entirely**:
 
-### What changes
+### Claude's output token limit truncates the MCP tool call
 
-**`apps/control-plane/src/types.ts`**
-- Add `ANTHROPIC_API_KEY?: string` to `Bindings`
+From the user's answer:
+> "My (Claude's) response generation hit the output token limit mid-tool-call. The jack:deploy changes parameter was being written as I generated, and my response was cut off partway through the JSON value for src/index.ts."
 
-**`apps/control-plane/wrangler.toml`**
-- Add comment: `# - ANTHROPIC_API_KEY  # Anthropic API key for ask_project synthesis`
+The flow:
+1. Claude generates a tool call with `changes: { "src/index.ts": "<38KB string>" }`
+2. Claude's **output token limit** (~16K tokens per turn) is exhausted mid-JSON
+3. The tool call is never fully formed — it's truncated in Claude's output
+4. MCP server receives nothing (incomplete JSON-RPC is never transmitted)
+5. No error from Jack because no valid request arrived
 
-**`apps/control-plane/package.json`**
-- Add `@anthropic-ai/sdk` dependency
+**This is a Claude platform constraint, not a Jack constraint.** Jack's deploy pipeline would handle 38KB without issue.
 
-**`apps/control-plane/src/ask-project.ts`**
-- Add `synthesizeWithLLM(evidence, question, opts?)` function:
-  - Formats evidence as a structured markdown block for Claude
-  - Includes session transcript excerpt (if available) and VCS diff stat (if available)
-  - Calls `claude-haiku-4-5-20251001` via Anthropic SDK
-  - Returns `{ answer: string, root_cause?: string, suggested_fix?: string, confidence: "high" | "medium" | "low" }`
-  - Falls back to `pickAnswer()` if `ANTHROPIC_API_KEY` is not set or the call fails
-- Update `answerProjectQuestion()` to call `synthesizeWithLLM()` instead of `pickAnswer()`
-- Keep `pickAnswer()` as the fallback
-- Extend API response shape to include `root_cause?`, `suggested_fix?`, `confidence`
+### Why this matters for Jack anyway
 
-### Prompt structure for Claude
+Even though it's not Jack's bug, it's Jack's user's problem. The remote MCP's value proposition is "build and iterate on apps from Claude." If Claude can't send >16K tokens of code in a single tool call, the `changes` mode breaks for any non-trivial app.
+
+---
+
+## Feedback Items: Root Cause Analysis
+
+### 1. Deploy payload truncation — Claude output token limit
+- **Root cause**: Claude's per-turn output limit (~16K tokens) can't fit a 38KB file inside a tool call parameter
+- **Jack's pipeline limit**: 500KB source, 10MB bundle — plenty of headroom
+- **Possible Jack-side mitigations**: See plan below
+
+### 2. "tool_search required before first use" — NOT from Jack
+- Not a Jack tool. Likely claude.ai's MCP tool discovery/approval UI
+- No action needed
+
+### 3. "No approval received" on create_database — Likely claude.ai approval flow
+- The exact error `{"error": "No approval received."}` is NOT from Jack's MCP
+- Jack's error format is `{ success: false, error: { code, message, suggestion } }` (`apps/mcp-worker/src/utils.ts`)
+- This is claude.ai's human-in-the-loop approval prompt timing out or being dismissed
+- The DB already existed (auto-created with project) — user's workaround of using `list_databases` was correct
+- **Possible Jack improvement**: `create_database` could check for existing DBs and return a clear "already exists" message instead of creating a duplicate
+
+### 4. "No way to verify deploy" — Partially valid
+- `get_project_status` returns deployment status + URL
+- But the agent can't `fetch()` the URL from within Claude to verify it works
+- **Jack already has**: `ask_project` tool that does evidence-backed debugging including endpoint checks
+- **Gap**: No simple "ping this URL and tell me the HTTP status" tool in the remote MCP
+- The local CLI MCP has `test_endpoint` but the remote MCP doesn't
+
+### 5. "Destructive SQL blocked" — By design, but painful in remote-only context
+- `execute_sql` blocks DROP, TRUNCATE, ALTER TABLE
+- In local CLI, users can fall back to `jack db execute --destructive`
+- In remote MCP (claude.ai), there's no escape hatch — users are stuck
+- User had to create `quizzes_new` instead of `ALTER TABLE quizzes ADD COLUMN`
+
+### 6. Template literal escaping — Real friction
+- Embedding JS in a TS template literal breaks on `${` and backticks
+- User had to use `string[].join('\n')` workaround
+- This is inherent to inline code as JSON strings — not fixable by Jack directly
+
+---
+
+## Proposed Plan (Ordered by Impact)
+
+### P0: Add chunked/streaming file upload to `deploy` tool
+
+The core problem is that Claude can't emit 38KB in a single tool call parameter. Jack can mitigate this:
+
+**Option A: Add `write_file` + `deploy_from_disk` pattern**
+- New tool `write_file(project_id, path, content, append?)` that stages file changes server-side
+- New tool or mode `deploy(project_id, commit: true)` that deploys staged changes
+- Agent writes files across multiple calls (each under token limit), then triggers deploy
+- **Pros**: Works within Claude's token limits, clean separation
+- **Cons**: More tool calls per deploy, needs server-side staging state
+
+**Option B: Add `append_file` support to existing `changes` mode**
+- New parameter: `changes_append: Record<string, string>` — content appended to previous `write_file` calls in the same session
+- Agent sends file in chunks across multiple `deploy` calls, final call triggers actual deploy
+- **Cons**: Overloads the `deploy` tool semantics
+
+**Option C: Base64 + compression**
+- Accept gzipped base64 content in `changes` to reduce token count ~50%
+- **Pros**: Simple change
+- **Cons**: Still hits the limit for files >32KB; Claude has to emit base64 which is also tokens
+
+**Recommendation: Option A** — it's the cleanest and scales to any file size.
+
+Implementation in `apps/mcp-worker/`:
+- New tool `update_file` in `src/tools/source.ts` (alongside existing `read_project_file`)
+- Stores pending changes in control plane (new endpoint) or in a Durable Object session
+- `deploy(project_id, staged: true)` triggers deploy from staged changes
+- Each `update_file` call is small (<16K tokens), agent can make as many as needed
+
+### P1: Add `test_endpoint` tool to remote MCP
+
+Port `test_endpoint` from local CLI MCP to remote MCP. Simple HTTP fetch + status check.
 
 ```
-You are a debugging assistant for deployed Cloudflare Workers projects.
-Given evidence collected about a project, answer the user's question concisely.
-
-Question: <question>
-
-Evidence:
-<formatted evidence list — type, source, summary, relation>
-
-[If session transcript available]:
-Context from deploy session (last 30 messages):
-<transcript excerpt>
-
-[If VCS diff available]:
-Code changed in this deployment:
-<diff_stat>
-
-Respond with JSON:
-{
-  "answer": "...",
-  "root_cause": "..." | null,
-  "suggested_fix": "..." | null,
-  "confidence": "high" | "medium" | "low"
-}
+Tool: test_endpoint
+Parameters:
+  - project_id: string
+  - path: string (e.g. "/api/health")
+  - method: string (optional, default GET)
 ```
 
----
+Returns HTTP status, headers, and truncated body. Lets agents verify deploys without user intervention.
 
-## Feature 2: Session Transcript at Deploy
+**Location**: New file `apps/mcp-worker/src/tools/endpoint-test.ts`, register in `server.ts`
 
-Automatically capture the Claude Code session transcript at deploy time and store it as a deployment artifact. The `ask` feature then uses it as context.
+### P2: Allow ALTER TABLE in `execute_sql`
 
-### Mechanism
+Split destructive operations into tiers:
+- **Migration ops** (ALTER TABLE): Allow with `allow_write: true`
+- **Destructive ops** (DROP, TRUNCATE): Keep blocked, or add new `allow_destructive: true` flag
 
-Two paths, both automatic (no agent opt-in):
+**Location**: `apps/mcp-worker/src/tools/database.ts` — the SQL validation logic
 
-**Path A — CLI deploy** (`jack deploy` run as a Bash tool by Claude Code):
-- Extend the existing `SessionStart` hook in `installClaudeCodeHooks()` to also export `CLAUDE_TRANSCRIPT_PATH` via `CLAUDE_ENV_FILE`
-- After a successful deploy, `jack deploy` checks for `CLAUDE_TRANSCRIPT_PATH` env var and uploads the transcript
+Also check: `apps/cli/src/lib/services/db-execute.ts` for the shared validation (remote MCP may proxy to control plane which has its own check)
 
-**Path B — MCP deploy** (`deploy_project` MCP tool called by Claude Code):
-- Add a `PostToolUse` hook in `installClaudeCodeHooks()` that fires when `tool_name === "deploy_project"`
-- Hook reads `transcript_path` and `tool_response` from stdin
-- Extracts `deploymentId` and `projectId` from tool response JSON
-- Calls `jack _internal upload-session-transcript --project <id> --deployment <id> --transcript-path <path>`
+### P3: Idempotent `create_database`
 
-### What changes
+Before creating, check if a DB with that binding already exists. Return the existing DB info instead of erroring or creating a duplicate.
 
-**`apps/cli/src/lib/claude-hooks-installer.ts`**
-- Extend `installClaudeCodeHooks()` to also install:
-  - Updated `SessionStart` hook command that exports `CLAUDE_TRANSCRIPT_PATH` and `CLAUDE_SESSION_ID` via `CLAUDE_ENV_FILE`
-  - New `PostToolUse` hook entry with `matcher: "deploy_project"` that runs `jack _internal upload-session-transcript ...`
-- Keep existing hook deduplication logic
+**Location**: `apps/mcp-worker/src/tools/database.ts` `createDatabase()` handler
 
-**`apps/cli/src/lib/session-transcript.ts`** (new file)
-- `readAndTruncateTranscript(path: string): Promise<string | null>`:
-  - Reads JSONL file from `transcript_path`
-  - Keeps only `type: "user" | "assistant"` lines
-  - Truncates to last 200 messages or 100KB, whichever is smaller
-  - Returns truncated JSONL string
-- `uploadSessionTranscript(opts: { projectId, deploymentId, transcriptPath, authToken, baseUrl })`:
-  - Calls `readAndTruncateTranscript()`
-  - PUTs to `/v1/projects/:projectId/deployments/:deploymentId/session-transcript`
+### P4: Improve deploy tool description for large files
 
-**`apps/cli/src/commands/internal.ts`** (new command or extend existing)
-- Add `jack _internal upload-session-transcript` subcommand
-- Reads `--project-id`, `--deployment-id`, `--transcript-path` args
-- Calls `uploadSessionTranscript()` using saved auth token
-- Silent: exits 0 even on failure (hook errors must not block the user)
+Add guidance in the tool description that agents should split large HTML/CSS/JS into separate files when content exceeds ~10KB. This aligns with better Workers architecture and avoids the token limit.
 
-**`apps/cli/src/lib/managed-deploy.ts`** (or wherever deploy completes)
-- After successful deploy: check `process.env.CLAUDE_TRANSCRIPT_PATH`
-- If set, call `uploadSessionTranscript()` asynchronously (fire-and-forget, silent)
-
-**`apps/control-plane/src/index.ts`**
-- New endpoint: `PUT /v1/projects/:projectId/deployments/:deploymentId/session-transcript`
-  - Auth: same JWT org membership check
-  - Body: raw text (JSONL)
-  - Stores to R2: `projects/{projectId}/deployments/{deploymentId}/session-transcript.jsonl`
-  - Updates `deployments SET has_session_transcript = 1 WHERE id = ?`
-
-**`apps/control-plane/migrations/0031_add_deployment_context.sql`** (new)
-```sql
-ALTER TABLE deployments ADD COLUMN has_session_transcript INTEGER DEFAULT 0;
-ALTER TABLE deployments ADD COLUMN vcs_type TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_sha TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_message TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_diff_stat TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_diff TEXT;
-```
-
-**`apps/control-plane/src/ask-project.ts`**
-- Before calling `synthesizeWithLLM()`: if `deployment.has_session_transcript`, fetch from R2 and pass last 30 messages as context
-- Add `"session_transcript"` evidence type — summary says e.g. "Deploy session had 47 turns. Agent was working on: ..."
+**Location**: `apps/mcp-worker/src/server.ts` line 23-28 (deploy tool description)
 
 ---
 
-## Feature 3: Git/JJ Diff at Deploy
+## What the user's suggestions would actually require
 
-Capture the actual VCS diff in the CLI at deploy time and store it with the deployment.
-
-### What changes
-
-**`apps/cli/src/lib/vcs.ts`** (new file)
-```typescript
-interface VcsDiff {
-  vcs: "git" | "jj";
-  sha: string;
-  message: string;      // commit/change description
-  diff_stat: string;    // max 2KB
-  diff: string;         // max 15KB, truncated with notice if over
-}
-
-async function captureVcsDiff(projectDir: string): Promise<VcsDiff | null>
-```
-
-- Detects VCS by checking for `.git/` (git) or `.jj/` (jj) in `projectDir` and parents
-- Git commands:
-  - `git -C <dir> rev-parse HEAD` → sha
-  - `git -C <dir> log -1 --pretty=%s` → message
-  - `git -C <dir> diff HEAD~1 --stat` → diff_stat (if no parent commit, diff against empty tree)
-  - `git -C <dir> diff HEAD~1 --unified=3` → diff (truncated to 15KB)
-- JJ commands:
-  - `jj --no-pager log -r @ --no-graph --template 'commit_id.short()'` → sha
-  - `jj --no-pager log -r @ --no-graph --template 'description.first_line()'` → message
-  - `jj --no-pager diff --stat` → diff_stat
-  - `jj --no-pager diff` → diff (truncated to 15KB)
-- Silent fallback: catches all errors, returns `null` if anything fails or VCS not found
-
-**`apps/cli/src/lib/managed-deploy.ts`** (or deploy request builder)
-- Call `captureVcsDiff(projectDir)` before deploy request
-- Include `vcs` field in request body if non-null
-
-**`apps/control-plane/src/index.ts`** (deploy endpoint)
-- Accept optional `vcs?: VcsDiff` in deploy request body
-- Pass through to `createCodeDeployment()`
-
-**`apps/control-plane/src/deployment-service.ts`**
-- `createCodeDeployment()` accepts optional `vcs` field
-- Stores `vcs_type`, `vcs_sha`, `vcs_message`, `vcs_diff_stat`, `vcs_diff` on deployment record
-
-**`apps/control-plane/src/ask-project.ts`**
-- For "what changed" questions: pull `vcs_diff_stat` + `vcs_sha` + `vcs_message` from deployment
-- Add `"vcs_diff"` evidence type with summary like "Deployed from commit abc1234: 'fix auth middleware'. Changed 3 files, +47 -12 lines."
-- Pass `vcs_diff` to `synthesizeWithLLM()` for full diff context
+| Suggestion | Assessment |
+|------------|-----------|
+| "Multi-file deploy via URL or upload" | Jack already deploys multi-file zips. The gap is getting content INTO the tool call, not out of it. `write_file` staging (P0 Option A) addresses this. |
+| "Static asset support" | Already exists in local CLI (assets binding + assets.zip). NOT yet exposed in remote MCP deploy. Would need manifest bindings + asset file support in `deploy-code.ts`. Worth adding but secondary to the token limit fix. |
+| "Chunked deploy" | Exactly right — P0 Option A implements this via `write_file` staging. |
+| "Base64/compressed payload" | Marginal improvement (~50% reduction). Doesn't solve the fundamental token limit for large files. |
 
 ---
 
-## Feature 4: Real AST Parsing
+## File Changes Summary
 
-Replace regex-based symbol extraction with a proper parser to get accurate symbols, imports, and a lightweight call graph.
+| File | Change | Priority |
+|------|--------|----------|
+| `apps/mcp-worker/src/server.ts` | Add `update_file` + `test_endpoint` tool registrations | P0, P1 |
+| `apps/mcp-worker/src/tools/source.ts` | Add `updateFile()` handler (stage changes server-side) | P0 |
+| `apps/mcp-worker/src/tools/deploy-code.ts` | Add `staged: true` mode to deploy from staged changes | P0 |
+| `apps/mcp-worker/src/control-plane.ts` | Add methods for staging files + fetching staged state | P0 |
+| `apps/mcp-worker/src/tools/endpoint-test.ts` | New — HTTP fetch tool for deploy verification | P1 |
+| `apps/mcp-worker/src/tools/database.ts` | Allow ALTER TABLE, make create_database idempotent | P2, P3 |
+| `apps/mcp-worker/src/server.ts` | Update deploy description with large-file guidance | P4 |
+| `apps/control-plane/src/index.ts` | New endpoint for file staging (if using control plane storage) | P0 |
 
-### Parser choice: `acorn` + `acorn-walk` + `acorn-typescript`
+## Key Takeaway
 
-- Pure JS, ~300KB total — no Wasm, works in Cloudflare Workers
-- Handles JS, JSX, TS, TSX (TypeScript stripped before parse via lightweight type stripping)
-- Acorn is battle-tested and used by many JS tools
-
-Alternative considered: `tree-sitter` Wasm (more accurate but 2-5MB Wasm bundle per language, cold start cost). Skip for now.
-
-### What changes
-
-**`apps/control-plane/package.json`**
-- Add `acorn`, `acorn-walk`, `acorn-typescript`
-
-**`apps/control-plane/src/ask-code-index.ts`**
-- Replace `jsTsAdapter` regex implementation with AST-based extraction
-- New/improved symbol extraction:
-
-| Kind | Before (regex) | After (AST) |
-|------|---------------|-------------|
-| `route` | basic `app.get("/x")` pattern | + object router `{ GET: handler }`, `pathname === "/x"` chained routes |
-| `function` | name only | name + param count + async/generator in signature |
-| `class` | name only | name + method names listed in signature |
-| `export` | any `export` keyword | distinguishes named/default/re-export |
-| `env_binding` | `env.UPPER_SNAKE` | same, but accurate (no false positives in strings/comments) |
-| `sql_ref` | SQL keyword match | same, more accurate (avoids matches in comments) |
-| `import` | not extracted | **new**: `from` module path + imported names |
-| `interface` | not extracted | **new**: TypeScript interface names |
-| `type_alias` | not extracted | **new**: TypeScript `type X = ...` |
-
-- New `meta` column on symbol rows (stored as JSON string) holds:
-  - For `function`: `{ params: string[], async: bool, callees: string[] }` — lightweight call graph
-  - For `import`: `{ from: string, names: string[] }`
-  - For `class`: `{ methods: string[] }`
-
-**`apps/control-plane/migrations/0031_add_deployment_context.sql`** (same migration as above)
-```sql
-ALTER TABLE ask_code_symbols_latest ADD COLUMN meta TEXT;
-ALTER TABLE ask_code_index_runs ADD COLUMN parser_version TEXT;
-```
-
-- Bump `PARSER_VERSION` constant in `ask-code-index.ts` to trigger re-index on next deploy
-
----
-
-## Migration summary
-
-One new migration file: `0031_add_deployment_context.sql`
-
-```sql
--- Deployment context columns
-ALTER TABLE deployments ADD COLUMN has_session_transcript INTEGER DEFAULT 0;
-ALTER TABLE deployments ADD COLUMN vcs_type TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_sha TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_message TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_diff_stat TEXT;
-ALTER TABLE deployments ADD COLUMN vcs_diff TEXT;
-
--- AST parser meta column
-ALTER TABLE ask_code_symbols_latest ADD COLUMN meta TEXT;
-```
-
----
-
-## New files
-
-| File | Purpose |
-|------|---------|
-| `apps/cli/src/lib/vcs.ts` | Git/JJ diff capture |
-| `apps/cli/src/lib/session-transcript.ts` | Transcript read, truncate, upload |
-| `apps/control-plane/migrations/0031_add_deployment_context.sql` | Schema additions |
-
----
-
-## Modified files
-
-| File | Change |
-|------|--------|
-| `apps/control-plane/src/types.ts` | Add `ANTHROPIC_API_KEY?` to Bindings |
-| `apps/control-plane/wrangler.toml` | Add secret comment |
-| `apps/control-plane/package.json` | Add `@anthropic-ai/sdk`, `acorn`, `acorn-walk`, `acorn-typescript` |
-| `apps/control-plane/src/ask-project.ts` | Add `synthesizeWithLLM()`, load transcript + VCS diff context |
-| `apps/control-plane/src/ask-code-index.ts` | Replace regex with AST parser |
-| `apps/control-plane/src/index.ts` | New `PUT .../session-transcript` endpoint; accept `vcs` in deploy |
-| `apps/control-plane/src/deployment-service.ts` | Store VCS fields on deployment |
-| `apps/cli/src/lib/claude-hooks-installer.ts` | Add SessionStart env export + PostToolUse hook |
-| `apps/cli/src/lib/managed-deploy.ts` | Capture VCS diff + upload transcript after deploy |
-| `apps/cli/src/commands/` | Add `jack _internal upload-session-transcript` |
-
----
-
-## Open questions (no blockers)
-
-1. **Codex CLI**: no hooks API exists yet (open issue #2765). Transcript capture for Codex is deferred — the `vcs` diff path will still work for Codex users since it's CLI-side.
-
-2. **Model for LLM synthesis**: plan uses `claude-haiku-4-5-20251001`. If response quality is insufficient, swap to `claude-sonnet-4-5-20250929` — just a one-line constant change.
-
-3. **PostToolUse hook `tool_response` parsing**: the `deploy_project` MCP tool returns `{ deploymentId, projectId, ... }` wrapped in `formatSuccessResponse`. The hook script will parse the text content JSON. If the shape changes, the hook silently fails (no user impact — transcript upload is always best-effort).
+The user's diagnosis was **correct**: the `deploy` tool's `changes` parameter passes file content inline, and large files get truncated. The truncation happens at Claude's output token limit (not Jack's 500KB source limit), but the fix belongs in Jack: add a multi-call file staging mechanism (`update_file` + deploy from staged) so agents can send content in chunks that fit within their output token budget.
