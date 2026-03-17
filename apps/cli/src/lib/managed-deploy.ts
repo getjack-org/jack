@@ -18,7 +18,7 @@ import { formatSize } from "./format.ts";
 import { createFileCountProgress, createUploadProgress } from "./progress.ts";
 import type { OperationReporter } from "./project-operations.ts";
 import { getProjectTags } from "./tags.ts";
-import { findTranscriptPath, uploadDeltaSessionTranscript } from "./session-transcript.ts";
+import { uploadDeltaSessionTranscript } from "./session-transcript.ts";
 import { Events, track, trackActivationIfFirst } from "./telemetry.ts";
 import { findWranglerConfig } from "./wrangler-config.ts";
 import { packageForDeploy } from "./zip-packager.ts";
@@ -96,7 +96,12 @@ export interface ManagedCodeDeployOptions {
  */
 export async function deployCodeToManagedProject(
 	options: ManagedCodeDeployOptions,
-): Promise<{ deploymentId: string; status: string; errorMessage: string | null }> {
+): Promise<{
+	deploymentId: string;
+	status: string;
+	errorMessage: string | null;
+	warnings?: string[];
+}> {
 	const { projectId, projectPath, reporter } = options;
 
 	// Track deploy start
@@ -206,6 +211,9 @@ export async function deployCodeToManagedProject(
 
 		uploadProgress.complete();
 		reporter?.success("Deployed to jack cloud");
+		for (const warning of result.warnings ?? []) {
+			reporter?.warn(warning);
+		}
 
 		// Track success
 		track(Events.MANAGED_DEPLOY_COMPLETED, {
@@ -227,18 +235,14 @@ export async function deployCodeToManagedProject(
 		// Source snapshot for forking is now derived from deployment artifacts on the control plane.
 		// No separate upload needed — clone/fork reads from the latest live deployment's source.zip.
 
-		// Best-effort: upload Claude Code session transcript if running under Claude Code.
-		// Uses findTranscriptPath() which checks env var first, then filesystem discovery.
+		// Best-effort: upload coding-session transcript (Claude/Codex) when available.
+		// Let adapter detection arbitrate the active source instead of biasing via a helper hint.
 		// Awaited so the upload completes before the process exits, but errors are silenced.
-		const transcriptPath = findTranscriptPath(projectPath);
-		if (transcriptPath) {
-			await uploadDeltaSessionTranscript({
-				projectId,
-				deploymentId: result.id,
-				transcriptPath,
-				projectDir: projectPath,
-			}).catch(() => {});
-		}
+		await uploadDeltaSessionTranscript({
+			projectId,
+			deploymentId: result.id,
+			projectDir: projectPath,
+		}).catch(() => {});
 
 		// Ensure Claude Code hooks are installed (retroactively for projects that missed initial install)
 		await import("./claude-hooks-installer.ts")
@@ -249,6 +253,7 @@ export async function deployCodeToManagedProject(
 			deploymentId: result.id,
 			status: result.status,
 			errorMessage: result.error_message,
+			warnings: result.warnings,
 		};
 	} catch (error) {
 		reporter?.stop();
@@ -275,7 +280,12 @@ export async function deployToManagedProject(
 	projectPath: string,
 	reporter?: OperationReporter,
 	message?: string,
-): Promise<{ deploymentId: string; status: string; errorMessage: string | null }> {
+): Promise<{
+	deploymentId: string;
+	status: string;
+	errorMessage: string | null;
+	warnings?: string[];
+}> {
 	return deployCodeToManagedProject({
 		projectId,
 		projectPath,

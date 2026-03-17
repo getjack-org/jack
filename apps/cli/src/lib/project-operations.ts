@@ -1779,7 +1779,14 @@ export async function deployProject(options: DeployOptions = {}): Promise<Deploy
 
 	let workerUrl: string | null = null;
 	let deployOutput: string | undefined;
-	let managedDeployResult: { deploymentId: string; status: string; errorMessage: string | null } | undefined;
+	let managedDeployResult:
+		| {
+				deploymentId: string;
+				status: string;
+				errorMessage: string | null;
+				warnings?: string[];
+		  }
+		| undefined;
 
 	// Deploy based on mode
 	if (deployMode === "managed") {

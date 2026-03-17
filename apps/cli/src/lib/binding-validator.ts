@@ -7,6 +7,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { validateManagedAssetsConfigInput } from "@getjack/managed-deploy";
 import type { WranglerConfig } from "./build-helper.ts";
 
 /**
@@ -113,6 +114,17 @@ export function validateBindings(
 	}
 
 	// Validate assets directory if configured
+	if (config.assets) {
+		const assetsValidation = validateManagedAssetsConfigInput(config.assets, "assets");
+		if (!assetsValidation.valid) {
+			for (const error of assetsValidation.errors) {
+				errors.push(
+					`✗ ${error}\n  Fix: Remove unsupported assets fields from wrangler.jsonc, or use 'wrangler deploy' for full control.`,
+				);
+			}
+		}
+	}
+
 	const assetsValidation = validateAssetsDirectory(config, projectPath);
 	if (!assetsValidation.valid) {
 		errors.push(...assetsValidation.errors);

@@ -41,6 +41,7 @@
 		"bun-types": "latest"
 	},
 	"dependencies": {
+		"@getjack/managed-deploy": "workspace:*",
 		"@clack/prompts": "^0.11.0",
 		"@modelcontextprotocol/sdk": "^1.25.1",
 		"archiver": "^7.0.1",

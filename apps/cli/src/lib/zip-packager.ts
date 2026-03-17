@@ -4,6 +4,14 @@ import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import archiver from "archiver";
+import {
+	CURRENT_MANAGED_DEPLOYMENT_MANIFEST_VERSION,
+	type ManagedDeploymentManifest,
+	type ManagedManifestBindings,
+	normalizeManagedAssetsBinding,
+	validateManagedAssetsConfigInput,
+	validateManagedDeploymentManifest,
+} from "@getjack/managed-deploy";
 import { type AssetManifest, computeAssetHash } from "./asset-hash.ts";
 import type { BuildOutput, WranglerConfig } from "./build-helper.ts";
 import { debug } from "./debug.ts";
@@ -21,48 +29,7 @@ export interface ZipPackageResult {
 	cleanup: () => Promise<void>;
 }
 
-export interface ManifestData {
-	version: 1;
-	entrypoint: string;
-	compatibility_date: string;
-	compatibility_flags?: string[];
-	module_format: "esm";
-	assets_dir?: string;
-	built_at: string;
-	bindings?: {
-		d1?: { binding: string };
-		ai?: { binding: string };
-		assets?: {
-			binding: string;
-			directory: string;
-			not_found_handling?: "single-page-application" | "404-page" | "none";
-			html_handling?:
-				| "auto-trailing-slash"
-				| "force-trailing-slash"
-				| "drop-trailing-slash"
-				| "none";
-		};
-		vars?: Record<string, string>;
-		r2?: Array<{ binding: string; bucket_name: string }>;
-		kv?: Array<{ binding: string }>;
-		vectorize?: Array<{
-			binding: string;
-			preset?: string;
-			dimensions?: number;
-			metric?: string;
-		}>;
-		durable_objects?: Array<{
-			binding: string;
-			class_name: string;
-		}>;
-	};
-	migrations?: Array<{
-		tag: string;
-		new_sqlite_classes?: string[];
-		deleted_classes?: string[];
-		renamed_classes?: Array<{ from: string; to: string }>;
-	}>;
-}
+export type ManifestData = ManagedDeploymentManifest;
 
 export type ZipProgressCallback = (current: number, total: number) => void;
 
@@ -189,10 +156,10 @@ export async function createAssetManifest(assetsDir: string): Promise<AssetManif
  * Extracts binding intent from wrangler config for the manifest.
  * Returns undefined if no bindings are configured.
  */
-function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindings"] | undefined {
+function extractBindingsFromConfig(config?: WranglerConfig): ManagedManifestBindings | undefined {
 	if (!config) return undefined;
 
-	const bindings: NonNullable<ManifestData["bindings"]> = {};
+	const bindings: ManagedManifestBindings = {};
 
 	// Extract D1 database binding (use first one if multiple)
 	if (config.d1_databases && config.d1_databases.length > 0) {
@@ -209,12 +176,12 @@ function extractBindingsFromConfig(config?: WranglerConfig): ManifestData["bindi
 
 	// Extract assets binding (defaults: binding="ASSETS", directory="./dist")
 	if (config.assets) {
-		bindings.assets = {
-			binding: config.assets.binding || "ASSETS",
-			directory: config.assets.directory || "./dist",
-			not_found_handling: config.assets.not_found_handling,
-			html_handling: config.assets.html_handling,
-		};
+		const validation = validateManagedAssetsConfigInput(config.assets, "assets");
+		if (!validation.valid) {
+			throw new Error(validation.errors.join("\n"));
+		}
+
+		bindings.assets = normalizeManagedAssetsBinding(config.assets);
 	}
 
 	// Extract vars
@@ -311,7 +278,7 @@ export async function packageForDeploy(
 
 	// 3. Create manifest.json
 	const manifest: ManifestData = {
-		version: 1,
+		version: CURRENT_MANAGED_DEPLOYMENT_MANIFEST_VERSION,
 		entrypoint: buildOutput.entrypoint,
 		compatibility_date: buildOutput.compatibilityDate,
 		compatibility_flags:
@@ -330,6 +297,11 @@ export async function packageForDeploy(
 			deleted_classes: m.deleted_classes,
 			renamed_classes: m.renamed_classes,
 		}));
+	}
+
+	const manifestValidation = validateManagedDeploymentManifest(manifest);
+	if (!manifestValidation.valid) {
+		throw new Error(manifestValidation.errors.join("\n"));
 	}
 
 	await Bun.write(manifestPath, JSON.stringify(manifest, null, 2));

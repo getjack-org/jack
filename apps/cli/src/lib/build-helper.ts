@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { $ } from "bun";
+import type { ManagedAssetsConfigInput } from "@getjack/managed-deploy";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { parseJsonc } from "./jsonc.ts";
 import type { OperationReporter } from "./project-operations.ts";
@@ -29,13 +30,7 @@ export interface WranglerConfig {
 	// Supported bindings
 	d1_databases?: Array<{ binding: string; database_name?: string; database_id?: string }>;
 	ai?: { binding?: string };
-	assets?: {
-		directory?: string;
-		binding?: string;
-		not_found_handling?: "single-page-application" | "404-page" | "none";
-		html_handling?: "auto-trailing-slash" | "force-trailing-slash" | "drop-trailing-slash" | "none";
-		run_worker_first?: boolean;
-	};
+	assets?: ManagedAssetsConfigInput;
 	vars?: Record<string, string>;
 	r2_buckets?: Array<{
 		binding: string;
