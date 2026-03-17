@@ -89,6 +89,7 @@ export interface CreateDeploymentResponse {
 	project_id: string;
 	status: "queued" | "building" | "live" | "failed";
 	source: string;
+	warnings?: string[];
 	created_at: string;
 }
 
@@ -506,8 +507,29 @@ export interface DeploymentInfo {
 	source: string;
 	error_message: string | null;
 	message: string | null;
+	has_session_transcript?: boolean;
+	session_digest?: string | null;
+	session_transcript_meta?: SessionTranscriptMeta;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface SessionTranscriptMeta {
+	provider: string | null;
+	provider_session_id: string | null;
+	schema_version: string | null;
+	turn_count: number;
+	user_turn_count: number;
+	assistant_turn_count: number;
+	event_count: number;
+	message_count: number;
+	tool_call_count: number;
+	tool_result_count: number;
+	reasoning_count: number;
+	other_event_count: number;
+	first_turn_at: string | null;
+	last_turn_at: string | null;
+	has_raw: boolean;
 }
 
 export interface DeploymentListResult {

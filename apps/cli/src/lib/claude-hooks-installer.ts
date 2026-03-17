@@ -4,13 +4,15 @@ import { join } from "node:path";
 
 const MCP_CONTEXT_COMMAND = "jack mcp context 2>/dev/null || true";
 const POST_DEPLOY_COMMAND = "jack _internal post-deploy 2>/dev/null || true";
+const POST_DEPLOY_MATCHERS = ["deploy_project", "mcp__jack__deploy_project"] as const;
 
 /**
  * Install Claude Code hooks to the project's .claude/settings.json:
  *
  * - SessionStart: runs `jack mcp context` (project context for Claude Code)
- * - PostToolUse(deploy_project): runs `jack _internal post-deploy` to upload the session
- *   transcript to the control plane after an MCP-triggered deploy
+ * - PostToolUse(deploy_project + mcp__jack__deploy_project): runs
+ *   `jack _internal post-deploy` to upload the session transcript to the
+ *   control plane after an MCP-triggered deploy
  *
  * Non-destructive: preserves existing hooks and deduplicates.
  */
@@ -54,13 +56,17 @@ export async function installClaudeCodeHooks(projectPath: string): Promise<boole
 		// --- PostToolUse hooks ---
 		const postToolUse = (hooks.PostToolUse as Array<Record<string, unknown>>) ?? [];
 
-		const hasPostDeploy = postToolUse.some((entry) => {
-			const entryHooks = entry.hooks as Array<Record<string, string>> | undefined;
-			return entryHooks?.some((h) => h.command?.includes("jack _internal post-deploy"));
-		});
-		if (!hasPostDeploy) {
+		const hasMatcher = (matcher: string): boolean =>
+			postToolUse.some((entry) => {
+				if (entry.matcher !== matcher) return false;
+				const entryHooks = entry.hooks as Array<Record<string, string>> | undefined;
+				return entryHooks?.some((h) => h.command?.includes("jack _internal post-deploy")) ?? false;
+			});
+
+		for (const matcher of POST_DEPLOY_MATCHERS) {
+			if (hasMatcher(matcher)) continue;
 			postToolUse.push({
-				matcher: "deploy_project",
+				matcher,
 				hooks: [{ type: "command", command: POST_DEPLOY_COMMAND }],
 			});
 		}

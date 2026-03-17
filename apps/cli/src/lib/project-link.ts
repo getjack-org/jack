@@ -32,6 +32,26 @@ export interface LocalProjectLink {
 	owner_username?: string;
 	last_transcript_path?: string;
 	last_transcript_byte_offset?: number;
+	transcript_checkpoints?: Record<
+		string,
+		{
+			source_id: string;
+			cursor: string;
+			updated_at: string;
+		}
+	>;
+	transcript_session_checkpoints?: Record<
+		string,
+		Record<
+			string,
+			{
+				provider_session_id: string | null;
+				source_id: string;
+				cursor: string;
+				updated_at: string;
+			}
+		>
+	>;
 }
 
 /**
