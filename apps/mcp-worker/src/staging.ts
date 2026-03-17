@@ -1,7 +1,7 @@
 /**
  * File staging for multi-call deploys.
  *
- * Uses KV to accumulate file changes across multiple update_file calls,
+ * Uses KV to accumulate file changes across multiple stage_file calls,
  * then deploy reads and clears the staged changes. This works around
  * LLM output token limits that prevent sending large files in a single
  * tool call.

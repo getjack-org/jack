@@ -107,11 +107,12 @@ When uploading Workers to Cloudflare's dispatch namespace, upload ALL files from
 
 ## Jack MCP (for AI Agents)
 
-**CRITICAL:** When Jack MCP is connected, always prefer `mcp__jack__*` tools over CLI commands or wrangler. MCP tools are cloud-aware and work with Jack Cloud mode where wrangler won't.
+When Jack MCP is connected, prefer `mcp__jack__*` tools for **cloud operations** (deploy, databases, logs, crons, domains, storage, vectorize) over CLI commands or wrangler. MCP tools are cloud-aware and work with Jack Cloud mode where wrangler won't.
 
-- Check your available tools for anything prefixed with `mcp__jack__`
-- Use those instead of `jack` CLI commands or `wrangler` commands
+- For deployments, databases, logs, and services: use `mcp__jack__*` tools
+- For file editing: always use built-in Read/Edit/Write tools, never remote MCP tools like `stage_file` or `read_deployed_file`
 - If a capability isn't available via MCP, ask the user to run it via CLI
+- The local MCP (`mcp__jack__*`) and remote MCP (`mcp__jack_cloud__*`) are mutually exclusive — never connect both simultaneously
 
 ## Deploy Mode: Managed vs BYO
 
@@ -238,3 +239,13 @@ Rules:
    - `findWranglerConfig()` in `wrangler-config.ts` — wrangler config path resolution (supports .jsonc, .json, .toml)
    - `parseJsonc()` in `jsonc.ts` — JSONC parsing (never use regex comment stripping)
    - `readProjectLink()` + `getDeployMode()` in `project-link.ts` — project link and deploy mode
+
+**After modifying shell integration (`shell-integration.ts`), regenerate the shell file for local testing.**
+
+`jack update` only regenerates `~/.config/jack/shell.sh` after a successful npm update — it won't pick up local dev changes. After editing `shell-integration.ts`, run:
+
+```bash
+bun -e "import { writeShellFile } from './apps/cli/src/lib/shell-integration.ts'; writeShellFile();"
+```
+
+Then open a new terminal (or `source ~/.zshrc`) to load the updated shell function. Without this, you'll be testing against the stale shell.sh from the last published version.

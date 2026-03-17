@@ -34,7 +34,7 @@ export async function readProjectFile(
 		return err(
 			"NOT_FOUND",
 			message,
-			"Check the file path. Use list_project_files to see available files.",
+			"Check the file path. Use browse_deployed_source to see available files.",
 		);
 	}
 }
@@ -93,7 +93,7 @@ export async function listStagedChanges(
 		return ok({
 			staged_files: 0,
 			files: [],
-			note: "No staged changes. Use update_file to stage file changes before deploying.",
+			note: "No staged changes. Use stage_file to stage file changes before deploying.",
 		});
 	}
 

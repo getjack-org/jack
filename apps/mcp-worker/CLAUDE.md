@@ -29,24 +29,36 @@ src/
     ├── deploy-template.ts # Deploy prebuilt template via control plane
     ├── endpoint-test.ts  # HTTP request to deployed endpoints
     ├── projects.ts       # list_projects, get_project_status
-    ├── source.ts         # list/read project files, update_file staging
+    ├── source.ts         # browse/read deployed files, stage_file staging
     ├── logs.ts           # get_logs
     ├── database.ts       # create_database, list_databases, execute_sql
     └── rollback.ts       # rollback_project
 ```
+
+## Local vs Remote MCP — Mutually Exclusive
+
+The local MCP (`jack mcp serve`, stdio) and remote MCP (`mcp.getjack.org`, HTTP) serve different environments and should **never be connected simultaneously**:
+
+| Environment | MCP Server | Why |
+|-------------|-----------|-----|
+| Claude Code (has terminal + local FS) | Local only (`jack`) | Agent has Read/Edit/Write for files, local MCP for cloud ops |
+| claude.ai web (no terminal) | Remote only (`jack-cloud`) | No local FS, must use stage_file + deploy for file changes |
+| Claude Desktop | One or the other | Depends on whether shell access is available |
+
+If both are connected, agents use remote file tools (`stage_file`, `read_deployed_file`) instead of local filesystem tools, causing partial deploys and failures. The `jack mcp install` command detects and removes remote MCP configs to prevent this.
 
 ## Tools (14 total)
 
 | Tool | Type | Description |
 |------|------|-------------|
 | `deploy` | write | Unified deploy: `files`, `template`, `changes`, or `staged` mode |
-| `update_file` | write | Stage a file change for later deployment via `deploy(staged=true)` |
-| `list_staged_changes` | read | List files staged via `update_file` pending deployment |
+| `stage_file` | write | Stage a file change for later deployment via `deploy(staged=true)` |
+| `list_staged_files` | read | List files staged via `stage_file` pending deployment |
 | `list_projects` | read | List all user's projects with URLs |
 | `get_project_status` | read | Deployment status, URL, resources for a project |
 | `test_endpoint` | read | HTTP request to a deployed endpoint, returns status + body |
-| `list_project_files` | read | File tree of deployed project's source |
-| `read_project_file` | read | Read single source file from deployed project |
+| `browse_deployed_source` | read | File tree of deployed project's source |
+| `read_deployed_file` | read | Read single source file from deployed project |
 | `get_logs` | read | Start log session and collect entries |
 | `create_database` | write | Create D1 database for a project (idempotent) |
 | `list_databases` | read | List D1 databases for a project |
@@ -64,8 +76,8 @@ This is the core workflow the tools enable:
    → Returns project_id + live URL
 
 2. User: "add a /forecast endpoint"
-   → LLM calls list_project_files(project_id) → sees current files
-   → LLM calls read_project_file(project_id, "src/index.ts") → gets source
+   → LLM calls browse_deployed_source(project_id) → sees current files
+   → LLM calls read_deployed_file(project_id, "src/index.ts") → gets source
    → LLM modifies the code
    → LLM calls deploy(changes: {"src/index.ts": "..."}, project_id) → redeploys
 
@@ -75,8 +87,8 @@ This is the core workflow the tools enable:
    → LLM calls test_endpoint(project_id, "/api/health") → verifies fix
 
 4. Large file update (>15KB):
-   → LLM calls update_file(project_id, "src/index.ts", content) → stages file
-   → LLM calls update_file(project_id, "src/styles.css", content) → stages another
+   → LLM calls stage_file(project_id, "src/index.ts", content) → stages file
+   → LLM calls stage_file(project_id, "src/styles.css", content) → stages another
    → LLM calls deploy(project_id, staged=true) → deploys all staged changes
 ```
 
@@ -106,7 +118,7 @@ The remote MCP (this worker) has 10 tools. The local MCP (`apps/cli/src/mcp/`) h
 | Category | Local MCP | Remote MCP | Notes |
 |----------|-----------|------------|-------|
 | Deploy/Projects | create_project, deploy_project, get_project_status, list_projects, rollback_project | deploy, list_projects, get_project_status, rollback_project | Remote merged create+deploy into `deploy` |
-| Source | — | list_project_files, read_project_file | Remote-only (new) |
+| Source | — | browse_deployed_source, read_deployed_file | Remote-only (new) |
 | Logs | start_log_session, tail_logs | get_logs | Remote merged into one |
 | Database | create_database, list_databases, execute_sql | create_database, list_databases, execute_sql | Aligned |
 | Vectorize | create/list/delete/get_vectorize_index | — | Not yet in remote |

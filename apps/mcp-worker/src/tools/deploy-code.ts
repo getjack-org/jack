@@ -177,7 +177,7 @@ export async function deploy(
 	const { files, template, changes, staged, project_id, project_name, compatibility_flags } =
 		params;
 
-	// Staged mode: deploy from accumulated update_file calls
+	// Staged mode: deploy from accumulated stage_file calls
 	if (staged) {
 		if (files || template || changes) {
 			return err(
@@ -202,7 +202,7 @@ export async function deploy(
 			return err(
 				"VALIDATION_ERROR",
 				"No staged changes found for this project.",
-				"Use update_file to stage file changes before deploying with staged=true.",
+				"Use stage_file to stage file changes before deploying with staged=true.",
 			);
 		}
 
@@ -252,7 +252,7 @@ export async function deploy(
 		return err(
 			"VALIDATION_ERROR",
 			"Exactly one of files, template, changes, or staged=true must be provided.",
-			"Pass files for a full deploy, template for a prebuilt app, changes for a partial update, or staged=true to deploy files from update_file calls.",
+			"Pass files for a full deploy, template for a prebuilt app, changes for a partial update, or staged=true to deploy files from stage_file calls.",
 		);
 	}
 	if (modeCount > 1) {

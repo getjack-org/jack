@@ -128,6 +128,45 @@ export function isAppInstalled(appId: string): boolean {
 }
 
 /**
+ * Check if an MCP server entry looks like a remote Jack MCP connection.
+ */
+function isRemoteJackMcpEntry(entry: unknown): boolean {
+	if (!entry || typeof entry !== "object") return false;
+	const obj = entry as Record<string, unknown>;
+
+	if (typeof obj.url === "string" && obj.url.includes("getjack.org")) {
+		return true;
+	}
+
+	if (typeof obj.command === "string" && obj.command.includes("getjack.org")) {
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Scan mcpServers for remote Jack MCP entries and remove them.
+ * Remote entries conflict with the local stdio-based MCP server.
+ */
+function removeRemoteJackMcpEntries(mcpServers: Record<string, unknown>): void {
+	const keysToRemove: string[] = [];
+
+	for (const [name, entry] of Object.entries(mcpServers)) {
+		if (name === "jack-cloud" || isRemoteJackMcpEntry(entry)) {
+			keysToRemove.push(name);
+		}
+	}
+
+	for (const key of keysToRemove) {
+		console.error(
+			`\n⚠ Removing remote Jack MCP server ("${key}") — it conflicts with the local server.\n  Local MCP covers all remote capabilities when you have filesystem access.\n  Remote MCP is only needed in terminal-less environments (claude.ai web).\n`,
+		);
+		delete mcpServers[key];
+	}
+}
+
+/**
  * Install MCP config to a single app
  * Reads existing config, merges jack server, writes back
  * Returns true on success
@@ -162,6 +201,9 @@ export async function installMcpConfigToApp(appId: string): Promise<boolean> {
 
 	// Get or create mcpServers object
 	const mcpServers = (existingConfig[appConfig.key] as Record<string, unknown>) || {};
+
+	// Detect and remove remote Jack MCP server entries that conflict with local
+	removeRemoteJackMcpEntries(mcpServers);
 
 	// Add/update jack MCP server
 	mcpServers.jack = getJackMcpConfig();

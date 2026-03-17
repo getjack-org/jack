@@ -119,10 +119,12 @@ This project is managed by jack.
 
 ## MCP Tools Available
 
-If connected, prefer \`mcp__jack__*\` tools over CLI:
+For cloud operations (deploy, databases, logs, services), prefer \`mcp__jack__*\` tools over CLI:
 - \`mcp__jack__deploy_project\` - Deploy changes
 - \`mcp__jack__execute_sql\` - Query databases
 - \`mcp__jack__get_project_status\` - Check status
+
+For file editing, always use built-in Read/Edit/Write tools — never remote MCP tools.
 
 ## Documentation
 

@@ -13,7 +13,7 @@ import type { Bindings } from "./types.ts";
 
 export function createMcpServer(token: string, env: Bindings): McpServer {
 	const server = new McpServer({
-		name: "jack",
+		name: "jack-cloud",
 		version: "1.0.0",
 	});
 
@@ -26,11 +26,11 @@ export function createMcpServer(token: string, env: Bindings): McpServer {
 - files: Full file set for a brand-new project. Pass all source files as { "path": "content" }. Only use this for the FIRST deploy of a new custom project.
 - template: Deploy a prebuilt template (hello, api, miniapp, nextjs, saas). Always creates a new project.
 - changes: Partial update to an existing project. Pass only changed/added files as { "path": "new content" } or { "path": null } to delete. Requires project_id.
-- staged: Deploy files previously staged via update_file. Set staged=true with project_id. Use this when files are too large to pass inline in a single changes call.
+- staged: Deploy files previously staged via stage_file. Set staged=true with project_id. Use this when files are too large to pass inline in a single changes call.
 
 IMPORTANT: To update an existing project, ALWAYS use changes mode with project_id. Do NOT use files mode for existing projects — it replaces all files and may create a duplicate project. If the user mentions an existing app, call list_projects first to find its project_id, then use changes.
 
-For large files (>15KB): Use update_file to stage files one at a time, then deploy(staged=true, project_id). This avoids output token limits that can truncate large inline content.`,
+For large files (>15KB): Use stage_file to stage files one at a time, then deploy(staged=true, project_id). This avoids output token limits that can truncate large inline content.`,
 		{
 			files: z
 				.record(z.string(), z.string())
@@ -52,7 +52,7 @@ For large files (>15KB): Use update_file to stage files one at a time, then depl
 				.boolean()
 				.optional()
 				.describe(
-					"Deploy files previously staged via update_file calls. Requires project_id. Use when files are too large for inline changes.",
+					"Deploy files previously staged via stage_file calls. Requires project_id. Use when files are too large for inline changes.",
 				),
 			project_id: z
 				.string()
@@ -73,8 +73,10 @@ For large files (>15KB): Use update_file to stage files one at a time, then depl
 	);
 
 	server.tool(
-		"update_file",
-		`Stage a file change for later deployment. Use this to build up changes across multiple calls, then deploy them all at once with deploy(staged=true).
+		"stage_file",
+		`Stage a file for cloud deployment via deploy(staged=true). Only use this in environments WITHOUT local filesystem access (e.g. claude.ai web, Claude Desktop without terminal).
+
+If you have built-in Read/Edit/Write tools available, do NOT use this tool — edit files locally and deploy with deploy_project or jack ship instead.
 
 Best for:
 - Large files that exceed output token limits when passed inline via changes
@@ -100,8 +102,8 @@ Pass content=null to mark a file for deletion.`,
 	);
 
 	server.tool(
-		"list_staged_changes",
-		"List files currently staged via update_file that haven't been deployed yet. Use to review pending changes before calling deploy(staged=true).",
+		"list_staged_files",
+		"List files currently staged via stage_file that haven't been deployed yet. Use to review pending changes before calling deploy(staged=true).",
 		{
 			project_id: z.string().describe("The project ID"),
 		},
@@ -188,8 +190,12 @@ Pass content=null to mark a file for deletion.`,
 	);
 
 	server.tool(
-		"list_project_files",
-		"List all source files in a deployed project. Use before read_project_file to see what files exist, or before deploying with changes to understand current project structure.",
+		"browse_deployed_source",
+		`List all source files in the DEPLOYED version of a project on Jack Cloud. Shows the file tree as it exists in production, not local files.
+
+If you have local filesystem access (e.g. Claude Code with Glob/LS tools), read the local project directory instead — it's faster and more accurate.
+
+Use before read_deployed_file to see what files exist, or before deploying with changes to understand current project structure.`,
 		{
 			project_id: z.string().describe("The project ID"),
 		},
@@ -199,11 +205,15 @@ Pass content=null to mark a file for deletion.`,
 	);
 
 	server.tool(
-		"read_project_file",
-		"Read the contents of a single source file from a deployed project. Use after list_project_files to inspect specific files before making changes with deploy(changes).",
+		"read_deployed_file",
+		`Read the contents of a single source file from the DEPLOYED version on Jack Cloud. Returns the file as it exists in production.
+
+If you have local filesystem access (e.g. Claude Code with the Read tool), read the local file instead — it's faster and always up-to-date with your working copy.
+
+Use after browse_deployed_source to inspect specific files before making changes with deploy(changes).`,
 		{
 			project_id: z.string().describe("The project ID"),
-			path: z.string().describe("File path from list_project_files (e.g. 'src/index.ts')"),
+			path: z.string().describe("File path from browse_deployed_source (e.g. 'src/index.ts')"),
 		},
 		async ({ project_id, path }) => {
 			return readProjectFile(client, project_id, path);
