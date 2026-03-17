@@ -262,7 +262,7 @@ async function outputProjectContext(): Promise<void> {
 			lines.push("- Status: `mcp__jack__get_project_status` or `jack info`");
 			lines.push("");
 			lines.push(
-				"Prefer `mcp__jack__*` tools or `jack` CLI over raw `wrangler` commands for consistency.",
+				"For cloud operations, prefer `mcp__jack__*` tools or `jack` CLI over raw `wrangler` commands. For file editing, use built-in Read/Edit/Write tools.",
 			);
 		}
 
@@ -272,7 +272,7 @@ async function outputProjectContext(): Promise<void> {
 		);
 		lines.push("");
 		lines.push(
-			"**Always prefer `mcp__jack__*` tools over CLI commands or wrangler** — they are cloud-aware and work in all deploy modes.",
+			"**For cloud operations (deploy, databases, logs, services), prefer `mcp__jack__*` tools over CLI commands or wrangler** — they are cloud-aware and work in all deploy modes. For file editing, always use built-in Read/Edit/Write tools.",
 		);
 		sections.push(lines.join("\n"));
 
