@@ -10,6 +10,7 @@
 	},
 	"dependencies": {
 		"@getjack/auth": "workspace:*",
+		"@getjack/managed-deploy": "workspace:*",
 		"cron-parser": "^4.9.0",
 		"cronstrue": "^2.50.0",
 		"fflate": "^0.8.2",

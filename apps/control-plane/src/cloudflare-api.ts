@@ -304,6 +304,8 @@ export interface AssetConfig {
 	html_handling?: "auto-trailing-slash" | "force-trailing-slash" | "drop-trailing-slash" | "none";
 	/** How to handle requests that don't match any asset */
 	not_found_handling?: "single-page-application" | "404-page" | "none";
+	/** Whether matching requests should run the user worker before the asset worker */
+	run_worker_first?: boolean | string[];
 }
 
 /**

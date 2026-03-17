@@ -119,8 +119,41 @@ export interface Deployment {
 	message: string | null;
 	has_session_transcript: number; // SQLite boolean (0 or 1)
 	session_digest: string | null;
+	transcript_provider: string | null;
+	transcript_provider_session_id: string | null;
+	transcript_schema_version: string | null;
+	transcript_turn_count: number;
+	transcript_user_turn_count: number;
+	transcript_assistant_turn_count: number;
+	transcript_event_count: number;
+	transcript_message_count: number;
+	transcript_tool_call_count: number;
+	transcript_tool_result_count: number;
+	transcript_reasoning_count: number;
+	transcript_other_event_count: number;
+	transcript_first_turn_at: string | null;
+	transcript_last_turn_at: string | null;
+	has_raw_session_transcript: number; // SQLite boolean (0 or 1)
 	created_at: string;
 	updated_at: string;
+}
+
+export interface SessionTranscriptMeta {
+	provider: string | null;
+	provider_session_id: string | null;
+	schema_version: string | null;
+	turn_count: number;
+	user_turn_count: number;
+	assistant_turn_count: number;
+	event_count: number;
+	message_count: number;
+	tool_call_count: number;
+	tool_result_count: number;
+	reasoning_count: number;
+	other_event_count: number;
+	first_turn_at: string | null;
+	last_turn_at: string | null;
+	has_raw: boolean;
 }
 
 export type LogSessionStatus = "active" | "expired" | "revoked";

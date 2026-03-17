@@ -1,5 +1,13 @@
 import { unzipSync } from "fflate";
 import {
+	getManagedAssetsUploadConfig,
+	type ManifestValidationResult,
+	type ManagedAssetsBinding,
+	type ManagedDeploymentManifest,
+	type ManagedManifestBindings,
+	validateManagedDeploymentManifest,
+} from "@getjack/managed-deploy";
+import {
 	type AssetManifest,
 	CloudflareClient,
 	type DispatchScriptBinding,
@@ -7,258 +15,38 @@ import {
 	createAssetManifest,
 	getMimeType,
 } from "./cloudflare-api";
+import {
+	buildRoutingVerificationTargets,
+	describeProbeMismatch,
+	listAssetPathsFromManifest,
+	listAssetPathsFromZipEntries,
+	type RoutingVerificationProbe,
+	type RoutingVerificationRecord,
+	ROUTING_VERIFICATION_REQUEST_HEADER,
+	ROUTING_VERIFICATION_RESPONSE_HEADER,
+	summarizeRoutingVerification,
+} from "./assets-routing-verification";
 import { generateMeteringWrapper } from "./metering-wrapper";
 import { ProvisioningService } from "./provisioning";
 import { ProjectCacheService } from "./repositories/project-cache-service";
+import { generateVerificationWrapper } from "./verification-wrapper";
 import type { Bindings, Deployment, Project, ProjectConfig, Resource } from "./types";
 
 const DISPATCH_NAMESPACE = "jack-tenants";
-
-interface ManifestData {
-	version: 1;
-	entrypoint: string;
-	compatibility_date: string;
-	compatibility_flags?: string[];
-	module_format: "esm";
-	assets_dir?: string;
-	built_at: string;
-	// Binding intent from CLI
-	bindings?: {
-		d1?: { binding: string };
-		ai?: { binding: string };
-		r2?: Array<{ binding: string; bucket_name: string }>;
-		kv?: Array<{ binding: string }>;
-		vectorize?: Array<{
-			binding: string;
-			preset?: string;
-			dimensions?: number;
-			metric?: string;
-		}>;
-		assets?: {
-			binding: string;
-			directory: string;
-			not_found_handling?: "single-page-application" | "404-page" | "none";
-			html_handling?:
-				| "auto-trailing-slash"
-				| "force-trailing-slash"
-				| "drop-trailing-slash"
-				| "none";
-		};
-		durable_objects?: Array<{
-			binding: string;
-			class_name: string;
-		}>;
-		vars?: Record<string, string>;
-	};
-	migrations?: Array<{
-		tag: string;
-		new_sqlite_classes?: string[];
-		deleted_classes?: string[];
-		renamed_classes?: Array<{ from: string; to: string }>;
-	}>;
-}
-
-const SUPPORTED_BINDING_KEYS = [
-	"d1",
-	"ai",
-	"r2",
-	"kv",
-	"vectorize",
-	"assets",
-	"vars",
-	"durable_objects",
-] as const;
-
-export interface ManifestValidationResult {
-	valid: boolean;
-	errors: string[];
-}
+type ManifestData = ManagedDeploymentManifest;
 
 /**
  * Validates a deployment manifest at the API boundary.
  * This provides defense-in-depth when CLI validation is bypassed.
  */
 export function validateManifest(manifest: unknown): ManifestValidationResult {
-	const errors: string[] = [];
-
-	if (!manifest || typeof manifest !== "object") {
-		return { valid: false, errors: ["Manifest must be a valid object"] };
+	const result = validateManagedDeploymentManifest(manifest);
+	if (!result.valid || !manifest || typeof manifest !== "object") {
+		return result;
 	}
 
 	const m = manifest as Record<string, unknown>;
-
-	// Check required fields
-	if (typeof m.entrypoint !== "string" || !m.entrypoint) {
-		errors.push("manifest.entrypoint is required");
-	}
-
-	if (typeof m.compatibility_date !== "string" || !m.compatibility_date) {
-		errors.push("manifest.compatibility_date is required");
-	}
-
-	// Validate bindings if present
-	if (m.bindings !== undefined) {
-		if (typeof m.bindings !== "object" || m.bindings === null) {
-			errors.push("manifest.bindings must be an object if present");
-		} else {
-			const bindings = m.bindings as Record<string, unknown>;
-
-			// Check for unsupported binding keys in manifest.bindings
-			// Note: These would indicate someone trying to bypass CLI validation
-			for (const key of Object.keys(bindings)) {
-				if (!SUPPORTED_BINDING_KEYS.includes(key as (typeof SUPPORTED_BINDING_KEYS)[number])) {
-					errors.push(
-						`Unsupported binding type in manifest: ${key}. ` +
-							`Managed deploy supports: ${SUPPORTED_BINDING_KEYS.join(", ")}`,
-					);
-				}
-			}
-
-			// Validate D1 binding structure
-			if (bindings.d1 !== undefined) {
-				const d1 = bindings.d1 as Record<string, unknown>;
-				if (typeof d1 !== "object" || typeof d1.binding !== "string") {
-					errors.push("manifest.bindings.d1.binding must be a string");
-				}
-			}
-
-			// Validate AI binding structure
-			if (bindings.ai !== undefined) {
-				const ai = bindings.ai as Record<string, unknown>;
-				if (typeof ai !== "object" || typeof ai.binding !== "string") {
-					errors.push("manifest.bindings.ai.binding must be a string");
-				}
-			}
-
-			// Validate R2 binding structure
-			if (bindings.r2 !== undefined) {
-				if (!Array.isArray(bindings.r2)) {
-					errors.push("manifest.bindings.r2 must be an array");
-				} else {
-					for (let i = 0; i < bindings.r2.length; i++) {
-						const r2 = bindings.r2[i] as Record<string, unknown>;
-						if (typeof r2 !== "object" || r2 === null) {
-							errors.push(`manifest.bindings.r2[${i}] must be an object`);
-						} else {
-							if (typeof r2.binding !== "string") {
-								errors.push(`manifest.bindings.r2[${i}].binding must be a string`);
-							}
-							if (typeof r2.bucket_name !== "string") {
-								errors.push(`manifest.bindings.r2[${i}].bucket_name must be a string`);
-							}
-						}
-					}
-				}
-			}
-
-			// Validate KV binding structure
-			if (bindings.kv !== undefined) {
-				if (!Array.isArray(bindings.kv)) {
-					errors.push("manifest.bindings.kv must be an array");
-				} else {
-					for (let i = 0; i < bindings.kv.length; i++) {
-						const kv = bindings.kv[i] as Record<string, unknown>;
-						if (typeof kv !== "object" || kv === null) {
-							errors.push(`manifest.bindings.kv[${i}] must be an object`);
-						} else {
-							if (typeof kv.binding !== "string") {
-								errors.push(`manifest.bindings.kv[${i}].binding must be a string`);
-							}
-						}
-					}
-				}
-			}
-
-			// Validate Vectorize binding structure
-			if (bindings.vectorize !== undefined) {
-				if (!Array.isArray(bindings.vectorize)) {
-					errors.push("manifest.bindings.vectorize must be an array");
-				} else {
-					for (let i = 0; i < bindings.vectorize.length; i++) {
-						const vec = bindings.vectorize[i] as Record<string, unknown>;
-						if (typeof vec !== "object" || vec === null) {
-							errors.push(`manifest.bindings.vectorize[${i}] must be an object`);
-						} else {
-							if (typeof vec.binding !== "string") {
-								errors.push(`manifest.bindings.vectorize[${i}].binding must be a string`);
-							}
-							// preset, dimensions, and metric are optional
-							if (vec.preset !== undefined && typeof vec.preset !== "string") {
-								errors.push(`manifest.bindings.vectorize[${i}].preset must be a string`);
-							}
-							if (vec.dimensions !== undefined && typeof vec.dimensions !== "number") {
-								errors.push(`manifest.bindings.vectorize[${i}].dimensions must be a number`);
-							}
-							if (vec.metric !== undefined && typeof vec.metric !== "string") {
-								errors.push(`manifest.bindings.vectorize[${i}].metric must be a string`);
-							}
-						}
-					}
-				}
-			}
-
-			// Validate Durable Object binding structure
-			if (bindings.durable_objects !== undefined) {
-				if (!Array.isArray(bindings.durable_objects)) {
-					errors.push("manifest.bindings.durable_objects must be an array");
-				} else {
-					for (let i = 0; i < bindings.durable_objects.length; i++) {
-						const dob = bindings.durable_objects[i] as Record<string, unknown>;
-						if (typeof dob !== "object" || dob === null) {
-							errors.push(`manifest.bindings.durable_objects[${i}] must be an object`);
-						} else {
-							if (typeof dob.binding !== "string") {
-								errors.push(`manifest.bindings.durable_objects[${i}].binding must be a string`);
-							}
-							if (typeof dob.class_name !== "string") {
-								errors.push(`manifest.bindings.durable_objects[${i}].class_name must be a string`);
-							}
-							// Reject __JACK_ prefixed binding or class names
-							if (typeof dob.binding === "string" && dob.binding.startsWith("__JACK_")) {
-								errors.push(
-									`manifest.bindings.durable_objects[${i}].binding uses reserved __JACK_ prefix`,
-								);
-							}
-							if (typeof dob.class_name === "string" && dob.class_name.startsWith("__JACK_")) {
-								errors.push(
-									`manifest.bindings.durable_objects[${i}].class_name uses reserved __JACK_ prefix`,
-								);
-							}
-						}
-					}
-				}
-			}
-
-			// Validate assets binding structure
-			if (bindings.assets !== undefined) {
-				const assets = bindings.assets as Record<string, unknown>;
-				if (typeof assets !== "object") {
-					errors.push("manifest.bindings.assets must be an object");
-				} else {
-					if (typeof assets.binding !== "string") {
-						errors.push("manifest.bindings.assets.binding must be a string");
-					}
-					if (typeof assets.directory !== "string") {
-						errors.push("manifest.bindings.assets.directory must be a string");
-					}
-				}
-			}
-
-			// Validate vars structure
-			if (bindings.vars !== undefined) {
-				if (typeof bindings.vars !== "object" || bindings.vars === null) {
-					errors.push("manifest.bindings.vars must be an object");
-				} else {
-					const vars = bindings.vars as Record<string, unknown>;
-					for (const [key, value] of Object.entries(vars)) {
-						if (typeof value !== "string") {
-							errors.push(`manifest.bindings.vars.${key} must be a string`);
-						}
-					}
-				}
-			}
-		}
-	}
+	const errors = [...result.errors];
 
 	// Require nodejs_compat when DO bindings are present
 	if (m.bindings && typeof m.bindings === "object") {
@@ -311,6 +99,11 @@ interface CodeDeploymentInput {
 	message?: string;
 	/** Override deployment source label (default: 'code:v1') */
 	source?: string;
+}
+
+interface CodeDeploymentResult {
+	deployment: Deployment;
+	warnings: string[];
 }
 
 // Template definitions
@@ -732,7 +525,7 @@ export class DeploymentService {
 	async resolveBindingsFromManifest(
 		projectId: string,
 		orgId: string,
-		intent: ManifestData["bindings"],
+		intent: ManagedManifestBindings | undefined,
 	): Promise<{
 		bindings: DispatchScriptBinding[];
 		vectorizeBindingMap: Array<{ bindingName: string; indexName: string }>;
@@ -994,8 +787,9 @@ export class DeploymentService {
 	/**
 	 * Create a code deployment from uploaded artifacts
 	 */
-	async createCodeDeployment(input: CodeDeploymentInput): Promise<Deployment> {
+	async createCodeDeployment(input: CodeDeploymentInput): Promise<CodeDeploymentResult> {
 		const deploymentId = `dep_${crypto.randomUUID()}`;
+		const warnings: string[] = [];
 
 		// Insert deployment record with status 'queued'
 		await this.db
@@ -1014,6 +808,12 @@ export class DeploymentService {
 				await this.codeBucket.put(`${artifactPrefix}/source.zip`, input.sourceZip);
 			}
 			await this.codeBucket.put(`${artifactPrefix}/manifest.json`, JSON.stringify(input.manifest));
+			if (input.assetManifest) {
+				await this.codeBucket.put(
+					`${artifactPrefix}/asset-manifest.json`,
+					JSON.stringify(input.assetManifest),
+				);
+			}
 			if (input.assetsZip && input.assetsZip.byteLength > 0) {
 				await this.codeBucket.put(`${artifactPrefix}/assets.zip`, input.assetsZip);
 			}
@@ -1068,6 +868,29 @@ export class DeploymentService {
 				.prepare("DELETE FROM do_enforcement WHERE project_id = ?")
 				.bind(input.projectId)
 				.run();
+
+			const verification = await this.verifyManagedAssetsRouting(
+				input.projectId,
+				input.manifest,
+				input.assetsZip,
+				input.assetManifest,
+			);
+
+			if (verification) {
+				await this.codeBucket.put(
+					`${artifactPrefix}/routing-verification.json`,
+					JSON.stringify(verification, null, 2),
+				);
+				warnings.push(...verification.warnings);
+
+				const summary = summarizeRoutingVerification(verification);
+				if (summary && !input.message) {
+					await this.db
+						.prepare("UPDATE deployments SET message = ? WHERE id = ?")
+						.bind(summary, deploymentId)
+						.run();
+				}
+			}
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Deployment failed";
 			await this.db
@@ -1085,7 +908,7 @@ export class DeploymentService {
 			.bind(deploymentId)
 			.first<Deployment>();
 		if (!deployment) throw new Error("Failed to retrieve created deployment");
-		return deployment;
+		return { deployment, warnings };
 	}
 
 	private async refreshProjectCache(projectId: string): Promise<void> {
@@ -1150,6 +973,111 @@ export class DeploymentService {
 		await this.cacheService.setProjectConfig(projectConfig);
 		await this.cacheService.setSlugLookup(project.org_id, project.slug, projectId);
 		await this.cacheService.clearNotFound(project.slug, project.owner_username);
+	}
+
+	private async getProjectUrl(projectId: string): Promise<string | null> {
+		const project = await this.db
+			.prepare("SELECT slug, owner_username FROM projects WHERE id = ? AND status != 'deleted'")
+			.bind(projectId)
+			.first<{ slug: string; owner_username: string | null }>();
+
+		if (!project) return null;
+
+		return project.owner_username
+			? `https://${project.owner_username}-${project.slug}.runjack.xyz`
+			: `https://${project.slug}.runjack.xyz`;
+	}
+
+	private async runRoutingVerificationProbe(
+		baseUrl: string,
+		target: {
+			kind: RoutingVerificationProbe["kind"];
+			path: string;
+			headers?: Record<string, string>;
+			expectedWorkerReached: boolean | null;
+		},
+	): Promise<RoutingVerificationProbe> {
+		try {
+			const response = await fetch(new URL(target.path, baseUrl), {
+				method: "GET",
+				redirect: "manual",
+				headers: {
+					[ROUTING_VERIFICATION_REQUEST_HEADER]: "1",
+					"Cache-Control": "no-cache",
+					Pragma: "no-cache",
+					...(target.headers ?? {}),
+				},
+			});
+
+			return {
+				kind: target.kind,
+				path: target.path,
+				expected_worker_reached: target.expectedWorkerReached,
+				worker_reached:
+					response.headers.get(ROUTING_VERIFICATION_RESPONSE_HEADER) === "1",
+				status: response.status,
+			};
+		} catch (error) {
+			return {
+				kind: target.kind,
+				path: target.path,
+				expected_worker_reached: target.expectedWorkerReached,
+				worker_reached: false,
+				error: error instanceof Error ? error.message : "probe failed",
+			};
+		}
+	}
+
+	private async verifyManagedAssetsRouting(
+		projectId: string,
+		manifest: ManifestData,
+		assetsZip: ArrayBuffer | null,
+		assetManifest?: AssetManifest,
+	): Promise<RoutingVerificationRecord | null> {
+		const assets = manifest.bindings?.assets;
+		if (!assets || !assetsZip || assetsZip.byteLength === 0) {
+			return null;
+		}
+
+		const baseUrl = await this.getProjectUrl(projectId);
+		if (!baseUrl) {
+			return null;
+		}
+
+		const assetPathsFromManifest = listAssetPathsFromManifest(assetManifest);
+		const assetPaths =
+			assetPathsFromManifest.length > 0
+				? assetPathsFromManifest
+				: listAssetPathsFromZipEntries(Object.keys(unzipSync(new Uint8Array(assetsZip))));
+		const targets = buildRoutingVerificationTargets(assets, assetPaths);
+		const probes: RoutingVerificationProbe[] = [];
+
+		for (const target of targets.filter((candidate) => candidate.kind !== "api")) {
+			probes.push(await this.runRoutingVerificationProbe(baseUrl, target));
+		}
+
+		for (const target of targets.filter((candidate) => candidate.kind === "api")) {
+			const probe = await this.runRoutingVerificationProbe(baseUrl, target);
+			probes.push(probe);
+			if (probe.worker_reached) {
+				break;
+			}
+		}
+
+		const warnings = probes
+			.map((probe) => describeProbeMismatch(probe))
+			.filter((warning): warning is string => Boolean(warning));
+
+		if (probes.length > 0 && probes.every((probe) => probe.error)) {
+			warnings.unshift(`Could not reach ${baseUrl} for routing verification`);
+		}
+
+		return {
+			checked_at: new Date().toISOString(),
+			base_url: baseUrl,
+			warnings,
+			probes,
+		};
 	}
 
 	/**
@@ -1217,7 +1145,8 @@ export class DeploymentService {
 		const workerCode = new TextDecoder().decode(mainModule.content);
 
 		// Generate metering wrapper if DO or vectorize bindings present
-		let wrapperModule: WorkerModule | null = null;
+		let meteringWrapperModule: WorkerModule | null = null;
+		let verificationWrapperModule: WorkerModule | null = null;
 		let doMigrations:
 			| { old_tag: string; new_tag: string; steps: Array<Record<string, unknown>> }
 			| undefined;
@@ -1236,9 +1165,20 @@ export class DeploymentService {
 				vectorizeBindings: hasVectorize ? vectorizeBindingMap : undefined,
 			});
 
-			wrapperModule = {
+			meteringWrapperModule = {
 				name: "__jack_meter.mjs",
 				content: new TextEncoder().encode(wrapperSource),
+				mimeType: "application/javascript+module",
+			};
+		}
+
+		if (hasAssetsBinding) {
+			const verificationSource = generateVerificationWrapper(
+				meteringWrapperModule?.name ?? mainModule.name,
+			);
+			verificationWrapperModule = {
+				name: "__jack_verify.mjs",
+				content: new TextEncoder().encode(verificationSource),
 				mimeType: "application/javascript+module",
 			};
 		}
@@ -1299,7 +1239,8 @@ export class DeploymentService {
 				precomputedAssetManifest,
 				mainModule.name,
 				additionalModules,
-				wrapperModule,
+				meteringWrapperModule,
+				verificationWrapperModule,
 				doMigrations,
 			);
 		} else {
@@ -1307,16 +1248,16 @@ export class DeploymentService {
 			// When metering wrapper is the main module, include the original mainModule as
 			// an additional module (so the wrapper can import from it) but don't include
 			// the wrapper itself (it's already sent as the main script content).
-			const allModules = wrapperModule
+			const allModules = meteringWrapperModule
 				? [
 						...additionalModules,
 						{ name: mainModule.name, content: mainModule.content, mimeType: mainModule.mimeType },
 					]
 				: additionalModules;
 
-			const uploadMainModule = wrapperModule ? "__jack_meter.mjs" : mainModule.name;
-			const uploadCode = wrapperModule
-				? new TextDecoder().decode(wrapperModule.content)
+			const uploadMainModule = meteringWrapperModule ? "__jack_meter.mjs" : mainModule.name;
+			const uploadCode = meteringWrapperModule
+				? new TextDecoder().decode(meteringWrapperModule.content)
 				: workerCode;
 
 			await this.cfClient.uploadDispatchScript(
@@ -1360,7 +1301,8 @@ export class DeploymentService {
 		precomputedManifest?: AssetManifest,
 		mainModuleName?: string,
 		additionalModules?: WorkerModule[],
-		wrapperModule?: WorkerModule | null,
+		meteringWrapperModule?: WorkerModule | null,
+		verificationWrapperModule?: WorkerModule | null,
 		doMigrations?: { old_tag: string; new_tag: string; steps: Array<Record<string, unknown>> },
 	): Promise<void> {
 		// 1. Unzip assets
@@ -1433,27 +1375,35 @@ export class DeploymentService {
 		// 5. Upload script with assets binding
 		const assetsBinding = manifest.bindings?.assets?.binding || "ASSETS";
 
-		// Handle metering wrapper: wrapper becomes main_module, original main becomes additional
+		// Compose wrappers from the inside out: original main -> metering -> verification.
 		const allModules = additionalModules ? [...additionalModules] : [];
-		let finalMainModule = mainModuleName;
-		let finalWorkerCode = workerCode;
+		let finalMainModule = mainModuleName ?? "worker.js";
+		let finalMainContent = new TextEncoder().encode(workerCode);
 
-		if (wrapperModule) {
-			// Add original main module as additional module (so wrapper can import it).
-			// Don't add the wrapper itself — it's sent as the main script content.
+		if (meteringWrapperModule) {
 			allModules.push({
-				name: mainModuleName ?? "worker.js",
-				content: new TextEncoder().encode(workerCode),
+				name: finalMainModule,
+				content: finalMainContent,
 				mimeType: "application/javascript+module",
 			});
-			finalMainModule = "__jack_meter.mjs";
-			finalWorkerCode = new TextDecoder().decode(wrapperModule.content);
+			finalMainModule = meteringWrapperModule.name;
+			finalMainContent = meteringWrapperModule.content;
+		}
+
+		if (verificationWrapperModule) {
+			allModules.push({
+				name: finalMainModule,
+				content: finalMainContent,
+				mimeType: "application/javascript+module",
+			});
+			finalMainModule = verificationWrapperModule.name;
+			finalMainContent = verificationWrapperModule.content;
 		}
 
 		await this.cfClient.uploadDispatchScriptWithAssets(
 			DISPATCH_NAMESPACE,
 			workerName,
-			finalWorkerCode,
+			new TextDecoder().decode(finalMainContent),
 			bindings,
 			completionJwt,
 			assetsBinding,
@@ -1462,11 +1412,7 @@ export class DeploymentService {
 				compatibilityFlags: manifest.compatibility_flags,
 				mainModule: finalMainModule,
 				additionalModules: allModules,
-				assetConfig: {
-					html_handling: manifest.bindings?.assets?.html_handling || "auto-trailing-slash",
-					not_found_handling:
-						manifest.bindings?.assets?.not_found_handling || "single-page-application",
-				},
+				assetConfig: getManagedAssetsUploadConfig(manifest),
 				migrations: doMigrations,
 			},
 		);
@@ -1651,6 +1597,6 @@ export class DeploymentService {
 			source: `prebuilt:${templateId}-v${cliVersion}`,
 		});
 
-		return { deploymentId: deployment.id };
+		return { deploymentId: deployment.deployment.id };
 	}
 }

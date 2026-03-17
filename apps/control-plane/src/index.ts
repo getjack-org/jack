@@ -49,6 +49,7 @@ import type {
 	ProjectConfig,
 	ProjectStatus,
 	Resource,
+	SessionTranscriptMeta,
 } from "./types";
 import { PAID_STATUSES } from "./types";
 export { LogStreamDO } from "./log-stream-do";
@@ -160,6 +161,182 @@ function d1DatetimeToIso(value: string): string {
 	// D1 CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" in UTC.
 	if (value.includes("T")) return value;
 	return `${value.replace(" ", "T")}Z`;
+}
+
+interface TranscriptStats {
+	eventCount: number;
+	messageCount: number;
+	toolCallCount: number;
+	toolResultCount: number;
+	reasoningCount: number;
+	otherEventCount: number;
+	turnCount: number;
+	userTurnCount: number;
+	assistantTurnCount: number;
+	firstTurnAt: string | null;
+	lastTurnAt: string | null;
+}
+
+function normalizeIsoTimestamp(value: string | null | undefined): string | null {
+	if (!value) return null;
+	const parsed = Date.parse(value);
+	if (Number.isNaN(parsed)) return null;
+	return new Date(parsed).toISOString();
+}
+
+function parseTextContentBlocks(content: unknown): string {
+	if (typeof content === "string") {
+		return content;
+	}
+
+	if (Array.isArray(content)) {
+		return content
+			.map((item) => {
+				if (typeof item === "string") return item;
+				if (typeof item !== "object" || item === null) return "";
+				const record = item as Record<string, unknown>;
+				if (typeof record.text === "string") return record.text;
+				return "";
+			})
+			.filter(Boolean)
+			.join(" ")
+			.trim();
+	}
+
+	if (typeof content === "object" && content !== null) {
+		const record = content as Record<string, unknown>;
+		if (typeof record.text === "string") return record.text;
+	}
+
+	return "";
+}
+
+function extractTranscriptTimestamp(parsed: Record<string, unknown>): string | null {
+	const candidates: unknown[] = [
+		parsed.timestamp,
+		(parsed.meta as Record<string, unknown> | undefined)?.timestamp,
+	];
+
+	for (const candidate of candidates) {
+		if (typeof candidate !== "string" || candidate.length === 0) continue;
+		const normalized = normalizeIsoTimestamp(candidate);
+		if (normalized) return normalized;
+	}
+
+	return null;
+}
+
+function computeTranscriptStatsFromNdjson(raw: string): TranscriptStats {
+	const stats: TranscriptStats = {
+		eventCount: 0,
+		messageCount: 0,
+		toolCallCount: 0,
+		toolResultCount: 0,
+		reasoningCount: 0,
+		otherEventCount: 0,
+		turnCount: 0,
+		userTurnCount: 0,
+		assistantTurnCount: 0,
+		firstTurnAt: null,
+		lastTurnAt: null,
+	};
+
+	const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+	let firstTsMs: number | null = null;
+	let lastTsMs: number | null = null;
+
+	for (const line of lines) {
+		try {
+			const parsed = JSON.parse(line) as Record<string, unknown>;
+			const type = typeof parsed.type === "string" ? parsed.type : null;
+			if (!type) continue;
+
+			stats.eventCount++;
+			if (type === "user" || type === "assistant" || type === "message") {
+				stats.messageCount++;
+			} else if (type === "tool_call") {
+				stats.toolCallCount++;
+			} else if (type === "tool_result") {
+				stats.toolResultCount++;
+			} else if (type === "reasoning") {
+				stats.reasoningCount++;
+			} else {
+				stats.otherEventCount++;
+			}
+
+			if (type === "user" || type === "assistant") {
+				// Ensure turn lines actually have text content.
+				let contentText = "";
+				if (typeof parsed.message === "string") {
+					contentText = parsed.message;
+				} else {
+					const message = parsed.message as Record<string, unknown> | undefined;
+					if (message) {
+						contentText = parseTextContentBlocks(message.content);
+					}
+				}
+				if (contentText.trim()) {
+					stats.turnCount++;
+					if (type === "user") stats.userTurnCount++;
+					if (type === "assistant") stats.assistantTurnCount++;
+				}
+			}
+
+			const timestamp = extractTranscriptTimestamp(parsed);
+			if (!timestamp) continue;
+			const tsMs = Date.parse(timestamp);
+			if (Number.isNaN(tsMs)) continue;
+
+			if (firstTsMs == null || tsMs < firstTsMs) {
+				firstTsMs = tsMs;
+				stats.firstTurnAt = new Date(tsMs).toISOString();
+			}
+			if (lastTsMs == null || tsMs > lastTsMs) {
+				lastTsMs = tsMs;
+				stats.lastTurnAt = new Date(tsMs).toISOString();
+			}
+		} catch {
+			// Ignore malformed lines.
+		}
+	}
+
+	return stats;
+}
+
+function buildSessionTranscriptMeta(deployment: {
+	transcript_provider?: string | null;
+	transcript_provider_session_id?: string | null;
+	transcript_schema_version?: string | null;
+	transcript_turn_count?: number | null;
+	transcript_user_turn_count?: number | null;
+	transcript_assistant_turn_count?: number | null;
+	transcript_event_count?: number | null;
+	transcript_message_count?: number | null;
+	transcript_tool_call_count?: number | null;
+	transcript_tool_result_count?: number | null;
+	transcript_reasoning_count?: number | null;
+	transcript_other_event_count?: number | null;
+	transcript_first_turn_at?: string | null;
+	transcript_last_turn_at?: string | null;
+	has_raw_session_transcript?: number | null;
+}): SessionTranscriptMeta {
+	return {
+		provider: deployment.transcript_provider ?? null,
+		provider_session_id: deployment.transcript_provider_session_id ?? null,
+		schema_version: deployment.transcript_schema_version ?? null,
+		turn_count: deployment.transcript_turn_count ?? 0,
+		user_turn_count: deployment.transcript_user_turn_count ?? 0,
+		assistant_turn_count: deployment.transcript_assistant_turn_count ?? 0,
+		event_count: deployment.transcript_event_count ?? 0,
+		message_count: deployment.transcript_message_count ?? 0,
+		tool_call_count: deployment.transcript_tool_call_count ?? 0,
+		tool_result_count: deployment.transcript_tool_result_count ?? 0,
+		reasoning_count: deployment.transcript_reasoning_count ?? 0,
+		other_event_count: deployment.transcript_other_event_count ?? 0,
+		first_turn_at: normalizeIsoTimestamp(deployment.transcript_first_turn_at ?? null),
+		last_turn_at: normalizeIsoTimestamp(deployment.transcript_last_turn_at ?? null),
+		has_raw: (deployment.has_raw_session_transcript ?? 0) === 1,
+	};
 }
 
 const POSTHOG_CAPTURE_DEFAULT_HOST = "https://eu.i.posthog.com";
@@ -1292,7 +1469,14 @@ api.get("/projects/:projectId/overview", async (c) => {
 			 FROM resources WHERE project_id = ?`,
 		).bind(projectId),
 		c.env.DB.prepare(
-			`SELECT id, status, source, error_message, message, created_at, updated_at
+			`SELECT id, status, source, error_message, message,
+			        transcript_provider, transcript_provider_session_id, transcript_schema_version,
+			        transcript_turn_count, transcript_user_turn_count, transcript_assistant_turn_count,
+			        transcript_event_count, transcript_message_count,
+			        transcript_tool_call_count, transcript_tool_result_count,
+			        transcript_reasoning_count, transcript_other_event_count,
+			        transcript_first_turn_at, transcript_last_turn_at, has_raw_session_transcript,
+			        created_at, updated_at
 			 FROM deployments WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`,
 		).bind(projectId),
 		c.env.DB.prepare(
@@ -1324,6 +1508,34 @@ api.get("/projects/:projectId/overview", async (c) => {
 				source: latestDep.source as string,
 				error_message: (latestDep.error_message as string | null) ?? null,
 				message: (latestDep.message as string | null) ?? null,
+				session_transcript_meta: buildSessionTranscriptMeta({
+					transcript_provider: (latestDep.transcript_provider as string | null) ?? null,
+					transcript_provider_session_id:
+						(latestDep.transcript_provider_session_id as string | null) ?? null,
+					transcript_schema_version:
+						(latestDep.transcript_schema_version as string | null) ?? null,
+					transcript_turn_count: (latestDep.transcript_turn_count as number | null) ?? 0,
+					transcript_user_turn_count:
+						(latestDep.transcript_user_turn_count as number | null) ?? 0,
+					transcript_assistant_turn_count:
+						(latestDep.transcript_assistant_turn_count as number | null) ?? 0,
+					transcript_event_count: (latestDep.transcript_event_count as number | null) ?? 0,
+					transcript_message_count: (latestDep.transcript_message_count as number | null) ?? 0,
+					transcript_tool_call_count:
+						(latestDep.transcript_tool_call_count as number | null) ?? 0,
+					transcript_tool_result_count:
+						(latestDep.transcript_tool_result_count as number | null) ?? 0,
+					transcript_reasoning_count:
+						(latestDep.transcript_reasoning_count as number | null) ?? 0,
+					transcript_other_event_count:
+						(latestDep.transcript_other_event_count as number | null) ?? 0,
+					transcript_first_turn_at:
+						(latestDep.transcript_first_turn_at as string | null) ?? null,
+					transcript_last_turn_at:
+						(latestDep.transcript_last_turn_at as string | null) ?? null,
+					has_raw_session_transcript:
+						(latestDep.has_raw_session_transcript as number | null) ?? 0,
+				}),
 				created_at: d1DatetimeToIso(latestDep.created_at as string),
 				updated_at: d1DatetimeToIso(latestDep.updated_at as string),
 			}
@@ -2832,6 +3044,7 @@ api.get("/projects/:projectId/deployments", async (c) => {
 		message: d.message,
 		has_session_transcript: d.has_session_transcript === 1,
 		session_digest: d.session_digest,
+		session_transcript_meta: buildSessionTranscriptMeta(d),
 		created_at: d1DatetimeToIso(d.created_at),
 		updated_at: d1DatetimeToIso(d.updated_at),
 	}));
@@ -2878,6 +3091,7 @@ api.get("/projects/:projectId/deployments/latest", async (c) => {
 			source: d.source,
 			error_message: d.error_message,
 			message: d.message,
+			session_transcript_meta: buildSessionTranscriptMeta(d),
 			created_at: d1DatetimeToIso(d.created_at),
 			updated_at: d1DatetimeToIso(d.updated_at),
 		},
@@ -3707,9 +3921,9 @@ api.post("/projects/:projectId/deployments/upload", async (c) => {
 			assetManifest,
 			message: deployMessage ?? undefined,
 		});
-		scheduleLatestCodeIndex(c.env, c.executionCtx, projectId, deployment);
+		scheduleLatestCodeIndex(c.env, c.executionCtx, projectId, deployment.deployment);
 
-		return c.json(deployment, 201);
+		return c.json({ ...deployment.deployment, warnings: deployment.warnings }, 201);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Deployment creation failed";
 		return c.json({ error: "internal_error", message }, 500);
@@ -3796,31 +4010,184 @@ api.put("/projects/:projectId/deployments/:deploymentId/session-transcript", asy
 		return c.json({ error: "not_found", message: "Deployment not found" }, 404);
 	}
 
-	const body = await c.req.text();
-	if (!body) {
-		return c.json({ error: "invalid_request", message: "Empty body" }, 400);
+	interface TranscriptUploadPayload {
+		schema_version: string;
+		provider: string;
+		provider_session_id?: string | null;
+		canonical_format: string;
+		canonical_ndjson: string;
+		raw_ndjson?: string;
+		stats: {
+			event_count?: number;
+			message_count?: number;
+			tool_call_count?: number;
+			tool_result_count?: number;
+			reasoning_count?: number;
+			other_event_count?: number;
+			turn_count: number;
+			user_turn_count: number;
+			assistant_turn_count: number;
+			first_turn_at: string | null;
+			last_turn_at: string | null;
+		};
 	}
 
-	// Limit to 1MB to avoid unbounded storage
+	const contentTypeHeader = c.req.header("content-type") ?? "";
+	const contentType = contentTypeHeader.split(";")[0]?.trim().toLowerCase() ?? "";
+
+	let canonicalTranscript = "";
+	let rawTranscript: string | null = null;
+	let transcriptProvider = "unknown";
+	let transcriptProviderSessionId: string | null = null;
+	let transcriptSchemaVersion = "legacy";
+
+	if (contentType === "application/json") {
+		let payload: TranscriptUploadPayload | null = null;
+		try {
+			payload = await c.req.json<TranscriptUploadPayload>();
+		} catch {
+			return c.json({ error: "invalid_request", message: "Invalid JSON body" }, 400);
+		}
+
+		if (!payload) {
+			return c.json({ error: "invalid_request", message: "Missing body" }, 400);
+		}
+
+		if (payload.schema_version !== "jack.transcript-upload.v1") {
+			return c.json({ error: "invalid_request", message: "Unsupported schema_version" }, 400);
+		}
+		if (payload.canonical_format !== "jack.turn.v1" && payload.canonical_format !== "jack.event.v1") {
+			return c.json({ error: "invalid_request", message: "Unsupported canonical_format" }, 400);
+		}
+		if (!payload.provider || typeof payload.provider !== "string") {
+			return c.json({ error: "invalid_request", message: "provider is required" }, 400);
+		}
+		if (!payload.canonical_ndjson || typeof payload.canonical_ndjson !== "string") {
+			return c.json({ error: "invalid_request", message: "canonical_ndjson is required" }, 400);
+		}
+		if (typeof payload.stats !== "object" || payload.stats === null) {
+			return c.json({ error: "invalid_request", message: "stats is required" }, 400);
+		}
+
+		canonicalTranscript = payload.canonical_ndjson.trim();
+		rawTranscript =
+			typeof payload.raw_ndjson === "string" && payload.raw_ndjson.trim().length > 0
+				? payload.raw_ndjson.trim()
+				: null;
+		transcriptProvider = payload.provider.trim();
+		transcriptProviderSessionId =
+			typeof payload.provider_session_id === "string" &&
+			payload.provider_session_id.trim().length > 0
+				? payload.provider_session_id.trim()
+				: null;
+		transcriptSchemaVersion = payload.canonical_format;
+	} else {
+		const legacyBody = await c.req.text();
+		if (!legacyBody || legacyBody.trim().length === 0) {
+			return c.json({ error: "invalid_request", message: "Empty body" }, 400);
+		}
+		canonicalTranscript = legacyBody.trim();
+	}
+
+	if (!canonicalTranscript) {
+		return c.json({ error: "invalid_request", message: "Empty canonical transcript" }, 400);
+	}
+
 	const MAX_TRANSCRIPT_BYTES = 1_000_000;
-	const bodyBytes = new TextEncoder().encode(body).length;
-	if (bodyBytes > MAX_TRANSCRIPT_BYTES) {
+	const canonicalBytes = new TextEncoder().encode(canonicalTranscript).length;
+	if (canonicalBytes > MAX_TRANSCRIPT_BYTES) {
 		return c.json({ error: "payload_too_large", message: "Transcript exceeds 1MB limit" }, 413);
 	}
 
-	const r2Key = `projects/${projectId}/deployments/${deploymentId}/session-transcript.jsonl`;
-	await c.env.CODE_BUCKET.put(r2Key, body, {
+	if (rawTranscript) {
+		const rawBytes = new TextEncoder().encode(rawTranscript).length;
+		if (rawBytes > MAX_TRANSCRIPT_BYTES) {
+			return c.json(
+				{ error: "payload_too_large", message: "Raw transcript exceeds 1MB limit" },
+				413,
+			);
+		}
+	}
+
+	const stats = computeTranscriptStatsFromNdjson(canonicalTranscript);
+
+	const canonicalKey = `projects/${projectId}/deployments/${deploymentId}/session-transcript.jsonl`;
+	await c.env.CODE_BUCKET.put(canonicalKey, canonicalTranscript, {
 		httpMetadata: { contentType: "application/x-ndjson" },
 	});
 
-	await c.env.DB.prepare("UPDATE deployments SET has_session_transcript = 1 WHERE id = ?")
-		.bind(deploymentId)
+	let hasRaw = 0;
+	if (rawTranscript) {
+		const rawKey = `projects/${projectId}/deployments/${deploymentId}/session-transcript.raw.jsonl`;
+		await c.env.CODE_BUCKET.put(rawKey, rawTranscript, {
+			httpMetadata: { contentType: "application/x-ndjson" },
+		});
+		hasRaw = 1;
+	}
+
+	await c.env.DB.prepare(
+		`UPDATE deployments
+     SET has_session_transcript = 1,
+         transcript_provider = ?,
+         transcript_provider_session_id = ?,
+         transcript_schema_version = ?,
+         transcript_turn_count = ?,
+         transcript_user_turn_count = ?,
+         transcript_assistant_turn_count = ?,
+         transcript_event_count = ?,
+         transcript_message_count = ?,
+         transcript_tool_call_count = ?,
+         transcript_tool_result_count = ?,
+         transcript_reasoning_count = ?,
+         transcript_other_event_count = ?,
+         transcript_first_turn_at = ?,
+         transcript_last_turn_at = ?,
+         has_raw_session_transcript = ?
+     WHERE id = ?`,
+	)
+		.bind(
+			transcriptProvider,
+			transcriptProviderSessionId,
+			transcriptSchemaVersion,
+			stats.turnCount,
+			stats.userTurnCount,
+			stats.assistantTurnCount,
+			stats.eventCount,
+			stats.messageCount,
+			stats.toolCallCount,
+			stats.toolResultCount,
+			stats.reasoningCount,
+			stats.otherEventCount,
+			stats.firstTurnAt,
+			stats.lastTurnAt,
+			hasRaw,
+			deploymentId,
+		)
 		.run();
 
 	// Generate a prose digest in the background — never blocks the response
-	c.executionCtx.waitUntil(generateSessionDigest(c.env, deploymentId, body));
+	c.executionCtx.waitUntil(generateSessionDigest(c.env, deploymentId, canonicalTranscript));
 
-	return c.json({ ok: true });
+	return c.json({
+		ok: true,
+		session_transcript_meta: buildSessionTranscriptMeta({
+			transcript_provider: transcriptProvider,
+			transcript_provider_session_id: transcriptProviderSessionId,
+			transcript_schema_version: transcriptSchemaVersion,
+			transcript_turn_count: stats.turnCount,
+			transcript_user_turn_count: stats.userTurnCount,
+			transcript_assistant_turn_count: stats.assistantTurnCount,
+			transcript_event_count: stats.eventCount,
+			transcript_message_count: stats.messageCount,
+			transcript_tool_call_count: stats.toolCallCount,
+			transcript_tool_result_count: stats.toolResultCount,
+			transcript_reasoning_count: stats.reasoningCount,
+			transcript_other_event_count: stats.otherEventCount,
+			transcript_first_turn_at: stats.firstTurnAt,
+			transcript_last_turn_at: stats.lastTurnAt,
+			has_raw_session_transcript: hasRaw,
+		}),
+	});
 });
 
 // Secrets endpoints - never stores secrets in D1, passes directly to Cloudflare
