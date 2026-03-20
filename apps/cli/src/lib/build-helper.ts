@@ -1,13 +1,15 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { $ } from "bun";
 import type { ManagedAssetsConfigInput } from "@getjack/managed-deploy";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { parseJsonc } from "./jsonc.ts";
 import type { OperationReporter } from "./project-operations.ts";
 import { findWranglerConfig } from "./wrangler-config.ts";
+
+const BUILD_TIMEOUT_MS = 120_000;
 
 export interface BuildOutput {
 	outDir: string;
@@ -121,18 +123,19 @@ export async function needsOpenNextBuild(projectPath: string): Promise<boolean> 
 export async function runViteBuild(projectPath: string): Promise<void> {
 	// Use local vite if installed to avoid module resolution issues
 	// bunx vite installs to temp dir, but vite.config.js may require('vite') from node_modules
-	// Don't use project's build script - it might do more than just vite build (e.g., Tauri)
 	let buildCommand: string[];
 
 	if (existsSync(join(projectPath, "node_modules", ".bin", "vite"))) {
-		// Local vite installed - use it directly
 		buildCommand = ["bun", "run", "vite", "build"];
 	} else {
-		// Fallback to bunx
 		buildCommand = ["bunx", "vite", "build"];
 	}
 
-	const buildResult = await $`${buildCommand}`.cwd(projectPath).nothrow().quiet();
+	const buildResult = await $`${buildCommand}`
+		.cwd(projectPath)
+		.nothrow()
+		.quiet()
+		.timeout(BUILD_TIMEOUT_MS);
 
 	if (buildResult.exitCode !== 0) {
 		throw new JackError(
@@ -155,7 +158,11 @@ export async function runViteBuild(projectPath: string): Promise<void> {
 export async function runOpenNextBuild(projectPath: string): Promise<void> {
 	// OpenNext builds Next.js for Cloudflare Workers
 	// Outputs to .open-next/worker.js and .open-next/assets/
-	const buildResult = await $`bunx opennextjs-cloudflare build`.cwd(projectPath).nothrow().quiet();
+	const buildResult = await $`bunx opennextjs-cloudflare build`
+		.cwd(projectPath)
+		.nothrow()
+		.quiet()
+		.timeout(BUILD_TIMEOUT_MS);
 
 	if (buildResult.exitCode !== 0) {
 		throw new JackError(
@@ -182,6 +189,8 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 	// Parse wrangler config first
 	const config = await parseWranglerConfig(projectPath);
 
+	let buildRan = false;
+
 	// Check if OpenNext build is needed (Next.js + Cloudflare)
 	const hasOpenNext = await needsOpenNextBuild(projectPath);
 	if (hasOpenNext) {
@@ -189,6 +198,7 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 		await runOpenNextBuild(projectPath);
 		reporter?.stop();
 		reporter?.success("Built assets");
+		buildRan = true;
 	}
 
 	// Check if Vite build is needed and run it (skip if OpenNext already built)
@@ -198,6 +208,14 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 		await runViteBuild(projectPath);
 		reporter?.stop();
 		reporter?.success("Built assets");
+		buildRan = true;
+	}
+
+	// Fallback: if assets are configured but no framework build ran,
+	// try running the project's package.json build script
+	if (config.assets && !buildRan) {
+		const ran = await runPackageJsonBuild(projectPath, config.assets, reporter);
+		if (ran) buildRan = true;
 	}
 
 	// Create unique temp directory for build output
@@ -253,6 +271,93 @@ export async function buildProject(options: BuildOptions): Promise<BuildOutput> 
 		compatibilityFlags: config.compatibility_flags || [],
 		moduleFormat: "esm",
 	};
+}
+
+async function readPackageJsonScripts(dir: string): Promise<Record<string, string> | null> {
+	const pkgPath = join(dir, "package.json");
+	if (!existsSync(pkgPath)) return null;
+	try {
+		const content = await readFile(pkgPath, "utf-8");
+		const pkg = JSON.parse(content);
+		return pkg.scripts ?? null;
+	} catch {
+		return null;
+	}
+}
+
+async function runBuildScript(dir: string): Promise<void> {
+	const result = await $`bun run build`.cwd(dir).nothrow().quiet().timeout(BUILD_TIMEOUT_MS);
+
+	if (result.exitCode !== 0) {
+		const stderr = result.stderr.toString();
+		const stdout = result.stdout.toString();
+		// Include last 20 lines of stdout if stderr is empty (many build tools write errors to stdout)
+		const output = stderr || stdout.split("\n").slice(-20).join("\n");
+		throw new JackError(
+			JackErrorCode.BUILD_FAILED,
+			"Frontend build failed",
+			"Check your build script and source files for errors",
+			{ exitCode: result.exitCode, stderr: output },
+		);
+	}
+}
+
+function assetsAreFresh(projectPath: string, assets: ManagedAssetsConfigInput): boolean {
+	const assetsDir = assets.directory || "dist";
+	const assetsDirPath = resolve(projectPath, assetsDir);
+	const sourceDir = resolve(projectPath, dirname(assetsDir));
+
+	if (!existsSync(assetsDirPath)) return false;
+	if (sourceDir === resolve(projectPath)) return false;
+
+	try {
+		const assetsMtime = statSync(assetsDirPath).mtimeMs;
+		const srcDir = join(sourceDir, "src");
+		const sourceMtime = existsSync(srcDir) ? statSync(srcDir).mtimeMs : statSync(sourceDir).mtimeMs;
+		const pkgMtime = existsSync(join(sourceDir, "package.json"))
+			? statSync(join(sourceDir, "package.json")).mtimeMs
+			: 0;
+
+		return assetsMtime > sourceMtime && assetsMtime > pkgMtime;
+	} catch {
+		return false;
+	}
+}
+
+async function runPackageJsonBuild(
+	projectPath: string,
+	assets: ManagedAssetsConfigInput,
+	reporter?: OperationReporter,
+): Promise<boolean> {
+	if (assetsAreFresh(projectPath, assets)) {
+		return false;
+	}
+
+	// Check root package.json for a build script
+	const rootScripts = await readPackageJsonScripts(projectPath);
+	if (rootScripts?.build) {
+		reporter?.start("Building frontend...");
+		await runBuildScript(projectPath);
+		reporter?.stop();
+		reporter?.success("Built frontend");
+		return true;
+	}
+
+	// Check assets directory's parent for its own package.json with a build script
+	const assetsDir = assets.directory || "dist";
+	const assetsParent = resolve(projectPath, dirname(assetsDir));
+	if (assetsParent !== resolve(projectPath)) {
+		const parentScripts = await readPackageJsonScripts(assetsParent);
+		if (parentScripts?.build) {
+			reporter?.start("Building frontend...");
+			await runBuildScript(assetsParent);
+			reporter?.stop();
+			reporter?.success("Built frontend");
+			return true;
+		}
+	}
+
+	return false;
 }
 
 async function resolveEntrypoint(outDir: string, main?: string): Promise<string> {
