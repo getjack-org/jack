@@ -1,190 +1,224 @@
-# Jack + Claude Code Channels: One-Way Deploy Notifications
+# Jack + Claude Code Channels Integration
 
-## Decision
+## Summary
 
-**Extend `jack mcp serve`** to push deploy status events into Claude Code sessions.
+Two independent improvements to Jack's Claude Code experience:
 
-Scope: Local Claude Code users only. Session-scoped (events flow while Claude Code is running). Phase 1 is deploy notifications only.
+1. **Fix `deploy_project` to return final status** — Make the MCP tool poll until the deployment resolves instead of returning "building". No channels needed. ~15 LOC.
+2. **Production error streaming via channel** — Push real-time production errors into Claude's session so it can auto-investigate. This is the genuine channels use case. ~150 LOC.
 
 ## Context
 
 ### What are Claude Code channels?
 
-An MCP server that declares `claude/channel` capability and emits `notifications/claude/channel` events. Claude receives these as `<channel source="jack" ...>` tags. The channel is a stdio subprocess — strictly local, no cloud/remote support.
+An MCP server that declares `claude/channel` capability and emits `notifications/claude/channel` events. Claude receives these as `<channel source="jack" ...>` tags. Strictly local (stdio subprocess), session-scoped (events flow only while Claude Code is running).
 
-### Constraints discovered
+### Why NOT use channels for deploy notifications
 
-- **Channels are local-only**: stdio subprocess on user's machine. Won't work with claude.ai web, `claude --remote`, or GitHub Actions.
-- **Control plane has no push mechanism**: Deploy status requires polling `GET /v1/projects/{id}/deployments/latest`. No webhooks, no pub/sub.
-- **Local and remote MCP don't share code**: Local MCP (27 tools, stdio) and remote MCP at mcp.getjack.org (14 tools, HTTP) are independent. Channels can only attach to local.
-- **Research preview**: Custom channels require `--dangerously-load-development-channels` until allowlisted by Anthropic.
+We initially planned channels for deploy status notifications. After analysis:
 
-### Why extend `jack mcp serve` (not standalone)
+- **`deploy_project` MCP tool**: Claude awaits the result. If the tool polls until resolved, Claude gets the final status inline. No channel needed.
+- **`jack ship` via Bash**: Claude sees CLI output directly. Already knows the outcome.
+- **Channels add complexity for no gain here**: Background polling, MCP server lifecycle concerns, `--channels` flag — all to deliver a notification that the tool should just return synchronously.
 
-| Factor | Extend MCP server | Standalone `jack channel serve` |
-|--------|-------------------|-------------------------------|
-| User setup | None — already configured | New `.mcp.json` entry + `--channels` flag |
-| Auth/config | Reuses in-process | Must reload from disk |
-| Process count | Same single process | Second process to manage |
-| Webhook ingestion | No | Yes (local HTTP server) |
-| Testability | Harder (mixed with tools) | Easier (isolated) |
+Deploy notifications via channels solve a problem that doesn't exist. The tool should just wait for the result.
 
-**Decision: Extend.** The standalone option's main advantage is webhook ingestion, which requires tunneling for remote CI — too much friction. If webhooks become needed later, the channel code extracts cleanly into a standalone server.
+### Where channels ARE the right primitive
+
+Events that happen **outside of any tool call**: production errors hitting your live app, cron failures, unexpected 500s. Things Claude can't know about unless something pushes them in. No other platform does this.
+
+### Constraints
+
+- **Channels are local-only**: stdio subprocess. Won't work with claude.ai web, `claude --remote`, or GitHub Actions.
+- **Control plane has no push for deploys**: Status requires polling `GET /v1/projects/{id}/deployments/latest`.
+- **Control plane HAS push for logs**: SSE stream at `GET /v1/projects/{id}/logs/stream` (1-hour sessions).
+- **Research preview**: Custom channels require `--dangerously-load-development-channels` until allowlisted.
+- **One MCP server per Claude Code session**, operating on the working directory's project.
 
 ---
 
-## Design: Deploy Status Channel
+## Priority 1: Synchronous Deploy Status (~15 LOC)
 
-### How it works
+### Problem
 
-1. Add `experimental: { 'claude/channel': {} }` to MCP server capabilities
-2. Add `instructions` string to Claude's system prompt describing events
-3. After `deploy_project` tool call completes, start polling control plane for final deployment status
-4. Emit `notifications/claude/channel` when status resolves to `live` or `failed`
-5. User enables with: `claude --channels server:jack`
+`deploy_project` MCP tool calls `deployProject()` which uploads code and returns immediately with `status: "building"` or `"queued"`. Claude doesn't know the final outcome.
 
-### Trigger: Tool-triggered polling (not always-on)
+### Fix
 
-The control plane has no push mechanism. Three polling strategies were considered:
-
-| Strategy | Description | Pros | Cons |
-|----------|-------------|------|------|
-| Always poll | Poll overview endpoint every 10s on startup | Catches all deploys | Wasteful, noisy |
-| **Tool-triggered** | Poll after `deploy_project` call until resolved | No wasted polls, natural UX | Misses deploys from other terminals |
-| Hybrid | Low-freq poll + high-freq after deploy | Best coverage | Complex |
-
-**Chosen: Tool-triggered.** Claude deploys → polls for result → gets notified. Deploys from other terminals are an edge case for later.
-
-### Notification format
-
-```xml
-<channel source="jack" event="deploy_complete" project="my-api" deployment_id="abc123" deploy_mode="managed">
-Deployment live at https://user-my-api.runjack.xyz
-</channel>
-```
-
-```xml
-<channel source="jack" event="deploy_failed" project="my-api" deployment_id="abc123" deploy_mode="managed">
-Build failed: Module not found: ./missing-import
-</channel>
-```
-
-### Channel instructions (added to Claude's system prompt)
-
-```
-Events from the jack channel are deployment status notifications. They arrive as
-<channel source="jack" event="..." ...> tags.
-
-- deploy_complete: The deployment is live. Note the URL and confirm to the user.
-- deploy_failed: The deployment failed. Read the error message, check the relevant
-  source code, and suggest a fix. Use tail_logs or test_endpoint to gather more context
-  if needed.
-```
+Add a polling loop in the MCP tool handler (not in the shared library — CLI has its own UX for this). Poll `GET /v1/projects/{id}/deployments/latest` every 3s until status resolves to `live` or `failed`, with a 5-minute timeout.
 
 ### What changes
 
 ```
-apps/cli/src/mcp/
-├── server.ts              # Add channel capability, instructions, wire up deploy watcher
-├── channel/               # NEW
-│   └── deploy-watcher.ts  # Poll control plane after deploy, emit notifications
-└── tools/index.ts         # After deploy_project succeeds, trigger watcher
+apps/cli/src/mcp/tools/index.ts  # Add polling after deployProject() call
 ```
 
 ### Implementation sketch
 
-**`apps/cli/src/mcp/server.ts`** — Add channel capability:
-```typescript
-const server = new McpServer(
-  { name: "jack", version },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
-      experimental: { "claude/channel": {} },
-    },
-    instructions: CHANNEL_INSTRUCTIONS,
-  }
-);
-```
-
-**`apps/cli/src/mcp/channel/deploy-watcher.ts`** — Poll and notify:
-```typescript
-export async function watchDeployment(
-  server: Server,
-  projectId: string,
-  deploymentId: string,
-  projectName: string,
-  deployMode: string
-) {
-  const maxAttempts = 60; // 5 min at 5s intervals
-  for (let i = 0; i < maxAttempts; i++) {
-    await sleep(5000);
-    const status = await fetchDeploymentStatus(projectId, deploymentId);
-
-    if (status === "live" || status === "failed") {
-      await server.notification({
-        method: "notifications/claude/channel",
-        params: {
-          content: status === "live"
-            ? `Deployment live at ${url}`
-            : `Build failed: ${errorMessage}`,
-          meta: {
-            event: status === "live" ? "deploy_complete" : "deploy_failed",
-            project: projectName,
-            deployment_id: deploymentId,
-            deploy_mode: deployMode,
-          },
-        },
-      });
-      return;
-    }
-  }
-}
-```
-
-**`apps/cli/src/mcp/tools/index.ts`** — Trigger watcher after deploy:
 ```typescript
 case "deploy_project": {
   const result = await deployProject(projectPath, options);
 
-  // Fire-and-forget: watch for final status in background
-  if (result.deploymentId && result.deployMode === "managed") {
-    watchDeployment(server, projectId, result.deploymentId, result.projectName, result.deployMode)
-      .catch(err => console.error("[channel] deploy watcher error:", err));
+  // For managed deploys, poll until final status
+  if (result.deploymentId && result.deployMode === "managed"
+      && result.deployStatus !== "live" && result.deployStatus !== "failed") {
+    const final = await pollDeploymentStatus(projectId, result.deploymentId, 100, 3000);
+    if (final) {
+      result.deployStatus = final.status;
+      result.errorMessage = final.error_message;
+      result.workerUrl = final.url ?? result.workerUrl;
+    }
   }
 
   return formatSuccessResponse(result, startTime);
 }
 ```
 
-### Scope boundaries
+### Post-deploy auto-verify
 
-**In scope (Phase 1):**
-- Channel capability declaration in MCP server
-- Deploy status notifications (complete/failed) after `deploy_project` tool calls
-- Managed mode only (control plane polling)
-- Single project (working directory's linked project)
+Update the MCP server `instructions` (or AGENTS.md) to tell Claude:
 
-**Out of scope (future phases):**
-- Production error streaming (Phase 2 — requires SSE log subscription)
-- BYO mode deploy watching (would need wrangler deployment polling)
-- Multi-project watching
-- Event filtering / configuration
-- Webhook ingestion (would require extracting to standalone)
-- Two-way channel (reply tools)
-- claude.ai web / remote MCP support (channels are local-only)
+> After a successful deployment, call `test_endpoint` on the project URL to verify it's responding correctly. If the endpoint returns an error, use `tail_logs` to investigate.
+
+This creates the **code → ship → verify → fix loop** that makes Jack unique. No other platform auto-verifies deploys through the AI session.
 
 ---
 
-## Discarded: Option B (Standalone `jack channel serve`)
+## Priority 2: Production Error Streaming via Channel (~150 LOC)
 
-A separate CLI command starting a channel-only MCP server with optional webhook HTTP endpoint.
+### Problem
 
-**Why discarded:**
-- Adds a second process for users to manage
-- Requires separate `.mcp.json` entry and `--channels` config
-- Main advantage (webhook ingestion) needs tunneling for remote CI — too much friction
-- Duplicates auth/config loading already available in-process
+When a production error happens (500, uncaught exception), nobody knows until a user reports it or the developer checks logs manually. Claude is sitting right there with all the tools to investigate, but has no way to learn about it.
 
-**Extraction path:** If webhook demand emerges, `channel/deploy-watcher.ts` moves cleanly into a standalone server. The notification logic is transport-agnostic.
+### Solution
+
+Extend `jack mcp serve` with `claude/channel` capability. On startup (when channel is enabled), subscribe to the project's log SSE stream. Filter for errors/exceptions. Push them into Claude's session as channel events.
+
+### How it works
+
+1. Add `experimental: { 'claude/channel': {} }` to MCP server capabilities
+2. Add `instructions` telling Claude how to handle error events
+3. On server startup, detect the linked project and start a log session
+4. Connect to the SSE stream, filter for `level: "error"` or exceptions
+5. Emit `notifications/claude/channel` for each error
+6. User enables with: `claude --channels server:jack`
+
+### Event flow
+
+```
+User hits deployed app → 500 error
+        ↓
+Tenant Worker logs error
+        ↓
+log-worker (tail consumer) → LogStreamDO
+        ↓
+SSE stream → jack MCP server (channel subscriber)
+        ↓
+notifications/claude/channel → Claude Code session
+        ↓
+Claude reads error, checks code, uses tail_logs/test_endpoint to investigate
+```
+
+### Notification format
+
+```xml
+<channel source="jack" event="error" project="my-api" level="error">
+TypeError: Cannot read property 'id' of undefined
+  at handler (src/index.ts:42:15)
+Request: GET /api/users/123 → 500
+</channel>
+
+<channel source="jack" event="exception" project="my-api">
+Uncaught ReferenceError: config is not defined
+  at scheduled (src/cron.ts:8:3)
+</channel>
+```
+
+### Channel instructions
+
+```
+Events from the jack channel are production alerts from your deployed project.
+They arrive as <channel source="jack" event="..." ...> tags.
+
+- event="error": A request to your deployed app returned an error. Read the
+  stack trace, find the relevant source code, and suggest a fix. Use tail_logs
+  to see if it's recurring. Use test_endpoint to reproduce if possible.
+- event="exception": An uncaught exception in your deployed code. This is
+  urgent — check the source, understand the cause, and suggest a fix.
+
+Do NOT redeploy automatically. Present the fix and let the user decide.
+```
+
+### What changes
+
+```
+apps/cli/src/mcp/
+├── server.ts              # Add channel capability + instructions, start log subscriber
+├── channel/               # NEW
+│   └── log-subscriber.ts  # SSE log stream → filtered channel notifications
+└── tools/index.ts         # Unchanged
+```
+
+### Scope boundaries
+
+**In scope:**
+- Channel capability declaration in MCP server
+- Log SSE subscription for the linked project (managed mode only)
+- Error/exception filtering and notification
+- Graceful handling of SSE disconnects (reconnect with backoff)
+
+**Out of scope:**
+- BYO mode (would need `wrangler tail` — different format and auth)
+- Multi-project watching
+- Event filtering configuration
+- Two-way channel (reply tools)
+- Auto-fix and redeploy (too risky — present fix, let user decide)
+
+---
+
+## Why This Makes Jack Unique
+
+### The self-verifying deploy loop (Priority 1)
+
+```
+Claude writes code
+  → deploy_project (waits for "live")
+  → test_endpoint (auto-verify)
+  → if error: tail_logs → read source → fix → redeploy
+  → repeat until healthy
+```
+
+No other platform does this. Vercel gives you a preview URL. GitHub gives you a check. Jack gives you an AI that ships, tests, and iterates until it works.
+
+### The production-aware coding session (Priority 2)
+
+```
+User's app running in production
+  → 500 error hits
+  → Claude sees it in real-time via channel
+  → Claude reads stack trace, finds bug in source
+  → Claude suggests fix (user deploys when ready)
+```
+
+No other platform streams production errors directly into your AI coding session. This turns Claude from a code-writing tool into a production partner.
+
+---
+
+## Discarded Options
+
+### Standalone `jack channel serve`
+
+Separate process with optional webhook HTTP endpoint. Discarded because:
+- Adds process management complexity
+- Webhook ingestion needs tunneling for remote CI
+- Duplicates auth/config loading
+
+Extraction path exists if webhooks become needed.
+
+### Deploy notifications via channel
+
+Initially planned, then discarded. The `deploy_project` tool should return final status synchronously. Channels are for async events Claude can't predict, not for results of tool calls Claude already made.
+
+### Background deployment polling
+
+Polling control plane every 15s to catch deploys from any source (CLI, MCP, other terminals). Discarded as overcomplicated and fickle for the value delivered.
