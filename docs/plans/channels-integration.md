@@ -204,6 +204,246 @@ No other platform streams production errors directly into your AI coding session
 
 ---
 
+## Demo: The Production Error Loop (API + Database)
+
+A reproducible demo script that can be screen-recorded. Shows real value, not vibe-imagined.
+
+### Scenario
+
+User creates an API with a database. Adds a feature (filtering by priority). Deploys it. A user hits the new endpoint — it 500s because the DB column doesn't exist. Claude sees the error in real-time, investigates, and suggests the fix.
+
+This is the #1 error pattern across all Jack templates: **code references a column/table that doesn't exist in D1**. It happens constantly when vibecoders add features without thinking about migrations.
+
+### Prerequisites
+
+- Claude Code with `jack mcp serve` configured
+- Jack CLI authenticated (managed mode)
+- Channel enabled: `claude --dangerously-load-development-channels server:jack --channels server:jack`
+
+### Script
+
+```bash
+# ── Step 1: Create and deploy a working API ──────────────────────────
+# (In Claude Code session)
+# > "Create a task API with a database. Include CRUD endpoints for tasks
+#    with title, status, and created_at fields."
+
+# Claude uses create_project + deploy_project + execute_sql to:
+# - Create project from API template
+# - Add D1 database with tasks table (id, title, status, created_at)
+# - Deploy and verify with test_endpoint
+
+# Verify it works:
+curl https://user-task-api.runjack.xyz/api/tasks
+# → {"tasks": []}
+
+curl -X POST https://user-task-api.runjack.xyz/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Ship channels feature"}'
+# → {"task": {"id": 1, "title": "Ship channels feature", "status": "todo", ...}}
+
+
+# ── Step 2: Add a feature that breaks production ─────────────────────
+# > "Add a priority field to tasks. Support filtering by priority:
+#    GET /api/tasks?priority=high"
+
+# Claude adds the priority field to the code and redeploys.
+# BUT: the D1 table still has the old schema — no "priority" column.
+# Claude may or may not remember to run the migration.
+# (This is the realistic vibecoding failure mode.)
+
+
+# ── Step 3: A user hits the broken endpoint ──────────────────────────
+# (From another terminal, simulating a real user)
+curl "https://user-task-api.runjack.xyz/api/tasks?priority=high"
+# → 500 Internal Server Error
+
+
+# ── Step 4: Claude sees the error via channel ────────────────────────
+# In Claude Code's terminal, the channel event arrives:
+#
+# <channel source="jack" event="error" project="task-api">
+# D1_ERROR: no such column: priority
+# Request: GET /api/tasks?priority=high → 500
+# </channel>
+#
+# Claude reacts:
+# "I see a production error — the `priority` column doesn't exist in the
+#  tasks table. The code filters on it but the migration was never run.
+#
+#  Fix: Run this SQL to add the column:
+#    ALTER TABLE tasks ADD COLUMN priority TEXT DEFAULT 'medium';
+#
+#  Want me to run this migration?"
+
+# User approves → Claude runs execute_sql → endpoint works
+```
+
+### Why this demo is real
+
+1. **The error is the #1 failure mode** — schema drift is the most common bug in Jack apps with D1
+2. **No fake setup** — uses the actual API template, actual D1, actual log streaming
+3. **The fix is actionable** — Claude suggests a specific SQL migration, not vague advice
+4. **End-to-end value** — from error to fix in one interaction, no context switching
+
+### What makes it compelling on video
+
+- The user isn't even at the terminal when the error happens — someone else (or curl) triggers it
+- Claude catches it in real-time and immediately knows what's wrong
+- The fix is a one-liner SQL migration Claude can execute right there
+- After the fix, Claude can call `test_endpoint` to verify it works
+
+---
+
+## Real Error Patterns Across Templates
+
+These are the actual failure modes from Jack template source code, ranked by frequency:
+
+### Tier 1: Happens constantly (demo-worthy)
+
+| Error | Templates | Log signature | Claude can fix? |
+|-------|-----------|---------------|-----------------|
+| Missing D1 column/table | api, cron, ai-chat, saas | `D1_ERROR: no such table/column` | Yes — `ALTER TABLE` or create table |
+| Missing/invalid secret | saas, telegram-bot | `TypeError: Cannot read property of undefined` (on `env.STRIPE_KEY`) | Yes — identify which secret, tell user to set it |
+| Unhandled JSON parse | api | `SyntaxError: Unexpected token` | Yes — add try/catch around `req.json()` |
+
+### Tier 2: Happens often (future channel value)
+
+| Error | Templates | Log signature | Claude can fix? |
+|-------|-----------|---------------|-----------------|
+| External fetch timeout | cron, telegram-bot | `fetch failed` or `AbortError` | Suggest — add timeout, retry logic |
+| AI quota exceeded | ai-chat, semantic-search | `429 Too Many Requests` from Workers AI | Suggest — add rate limiting or quota check |
+| Schema mismatch after update | saas (Better Auth) | `D1_ERROR: table X has no column named Y` | Yes — generate migration SQL |
+
+### Tier 3: Edge cases (nice to catch)
+
+| Error | Templates | Log signature |
+|-------|-----------|---------------|
+| Cron URL unreachable | cron | `fetch to https://... failed` in scheduled handler |
+| WebSocket upgrade failure | chat | `Expected 101 Switching Protocols` |
+| Stripe webhook signature invalid | saas | `Webhook signature verification failed` |
+
+### What the log stream actually contains
+
+From `LogStreamDO.normalizeTailEvent()`:
+
+```typescript
+{
+  type: "event",
+  ts: 1711234567890,
+  outcome: "exception",  // or "ok", "exceededCpu", "exceededMemory", etc.
+  request: { method: "GET", url: "https://user-task-api.runjack.xyz/api/tasks?priority=high" },
+  logs: [
+    { ts: 1711234567891, level: "error", message: ["D1_ERROR: no such column: priority"] }
+  ],
+  exceptions: [
+    { ts: 1711234567892, name: "Error", message: "D1_ERROR: no such column: priority" }
+  ]
+}
+```
+
+**Channel filter criteria:**
+- `exceptions.length > 0` — always push (uncaught errors)
+- `logs` with `level === "error"` — always push
+- `outcome === "exception"` or `outcome === "exceededCpu"` — always push
+- `outcome === "ok"` and no error logs — drop (normal traffic)
+
+---
+
+## Testing Strategy
+
+### Unit: Channel notification delivery
+
+Use `InMemoryTransport` from MCP SDK — no subprocess, no network:
+
+```typescript
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
+test("channel emits error notification", async () => {
+  const server = new Server(
+    { name: "jack", version: "0.1.0" },
+    { capabilities: { experimental: { "claude/channel": {} } } }
+  );
+
+  const client = new Client({ name: "test", version: "1.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+  const received: any[] = [];
+  client.setNotificationHandler(
+    { method: "notifications/claude/channel" },
+    (notification) => { received.push(notification); }
+  );
+
+  await Promise.all([
+    client.connect(clientTransport),
+    server.connect(serverTransport),
+  ]);
+
+  // Simulate an error event
+  await server.notification({
+    method: "notifications/claude/channel",
+    params: {
+      content: "D1_ERROR: no such column: priority",
+      meta: { event: "error", project: "task-api" },
+    },
+  });
+
+  expect(received).toHaveLength(1);
+  expect(received[0].params.meta.event).toBe("error");
+});
+```
+
+### Unit: Log event filtering
+
+Test that the filter correctly separates errors from normal traffic:
+
+```typescript
+test("filters error events from log stream", () => {
+  const errorEvent = {
+    type: "event", ts: Date.now(), outcome: "exception",
+    request: { method: "GET", url: "/api/tasks" },
+    logs: [{ ts: Date.now(), level: "error", message: ["D1_ERROR: no such column"] }],
+    exceptions: [{ ts: Date.now(), name: "Error", message: "D1_ERROR: no such column" }],
+  };
+
+  const okEvent = {
+    type: "event", ts: Date.now(), outcome: "ok",
+    request: { method: "GET", url: "/health" },
+    logs: [], exceptions: [],
+  };
+
+  expect(shouldEmitChannelNotification(errorEvent)).toBe(true);
+  expect(shouldEmitChannelNotification(okEvent)).toBe(false);
+});
+```
+
+### Integration: Full channel with live project
+
+```bash
+# 1. Deploy a test project
+jack new channel-test --template api
+jack ship
+
+# 2. Start Claude Code with channel
+claude --dangerously-load-development-channels server:jack --channels server:jack
+
+# 3. Trigger an error (from another terminal)
+curl -X POST https://user-channel-test.runjack.xyz/api/echo \
+  -H "Content-Type: text/plain" -d "not json"
+# → 500 (SyntaxError: Unexpected token)
+
+# 4. Verify channel event appears in Claude Code session
+# Look for: <channel source="jack" event="error" ...>
+```
+
+### E2E: The demo script above
+
+Run the full demo script. Record the terminal. This IS the test — if the error flows through and Claude reacts correctly, the feature works.
+
+---
+
 ## Discarded Options
 
 ### Standalone `jack channel serve`
