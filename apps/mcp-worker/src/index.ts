@@ -115,7 +115,39 @@ const mcpHandler = {
 	},
 };
 
-export default new OAuthProvider({
+// Public MCP endpoint for MPP-only access (no OAuth required)
+// tempo request / mppx clients hit this without any auth token
+const publicMcpHandler: HandlerWithFetch = {
+	async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
+		if (request.method !== "POST") {
+			return Response.json(
+				{ jsonrpc: "2.0", error: { code: -32000, message: "Only POST is supported." }, id: null },
+				{ status: 405 },
+			);
+		}
+
+		// Set empty props — execute_code will handle payment via MPP
+		(ctx as ExecutionContext & { props: Props }).props = {
+			accessToken: "",
+			refreshToken: "",
+			userId: "",
+			email: "",
+		};
+
+		// Inject Accept header if missing — MPP/tempo clients don't send it
+		// but the MCP SDK transport requires it
+		const accept = request.headers.get("Accept") || "";
+		if (!accept.includes("application/json") || !accept.includes("text/event-stream")) {
+			const headers = new Headers(request.headers);
+			headers.set("Accept", "application/json, text/event-stream");
+			request = new Request(request, { headers });
+		}
+
+		return mcpHandler.fetch(request, env, ctx);
+	},
+};
+
+const oauthProvider = new OAuthProvider({
 	apiRoute: "/mcp",
 	apiHandler: mcpHandler as HandlerWithFetch,
 	defaultHandler: AuthHandler as unknown as HandlerWithFetch,
@@ -158,3 +190,14 @@ export default new OAuthProvider({
 		return null;
 	},
 });
+
+// Route: /mcp/public bypasses OAuth, everything else goes through OAuthProvider
+export default {
+	async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
+		const url = new URL(request.url);
+		if (url.pathname === "/mcp/public") {
+			return publicMcpHandler.fetch(request, env, ctx);
+		}
+		return oauthProvider.fetch(request, env, ctx);
+	},
+} satisfies ExportedHandler<Bindings>;
