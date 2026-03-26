@@ -56,6 +56,7 @@ export class ComputeSession extends DurableObject<SessionEnv> {
 
 			// Build JSON-RPC shaped input that Transport.mcp() expects
 			const input = {
+				jsonrpc: "2.0" as const,
 				method: "tools/call",
 				params: {
 					_meta: credential
@@ -65,24 +66,30 @@ export class ComputeSession extends DurableObject<SessionEnv> {
 				id: crypto.randomUUID(),
 			};
 
-			const handler = (mppx as any).session({
+			const handler = (mppx as any)["tempo/session"]({
 				amount: chargeAmount,
 				unitType: "execution",
 			});
 			const result = await handler(input);
 
-			// Transport.mcp() returns JSON-RPC response objects
-			if ("error" in result) {
+			// mppx returns a wrapper with .status, .challenge, .withReceipt
+			if (result.status === 402) {
 				return Response.json(
 					{
 						status: 402,
-						challenge: (result as any).error.data,
+						challenge: (result.challenge as any).error.data,
 					},
 					{ status: 402 },
 				);
 			}
 
-			const receipt = (result as any).result?._meta?.[
+			// Materialize receipt by calling withReceipt on a dummy response
+			const wrapped = result.withReceipt({
+				jsonrpc: "2.0",
+				id: input.id,
+				result: {},
+			});
+			const receipt = (wrapped as any).result?._meta?.[
 				"org.paymentauth/receipt"
 			];
 			return Response.json({ status: 200, receipt });
