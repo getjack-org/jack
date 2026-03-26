@@ -39,6 +39,10 @@ export async function chargeSession(
 		throw new McpError(-32603, `Payment error: ${result.error}`);
 	}
 
+	if (!result.receipt) {
+		throw new McpError(-32042, "Payment required — no valid receipt received");
+	}
+
 	return { receipt: result.receipt };
 }
 

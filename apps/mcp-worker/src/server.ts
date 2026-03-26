@@ -11,6 +11,7 @@ import { getProjectStatus, listProjects } from "./tools/projects.ts";
 import { rollbackProject } from "./tools/rollback.ts";
 import { listProjectFiles, listStagedChanges, readProjectFile, updateFile } from "./tools/source.ts";
 import type { Bindings } from "./types.ts";
+import { err } from "./utils.ts";
 
 function requireAuth(token: string) {
 	if (!token) {
