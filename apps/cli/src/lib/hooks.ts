@@ -536,7 +536,14 @@ const actionHandlers: {
 						return false;
 					}
 
-					await saveSecrets([{ key: action.key, value: value.trim(), source: "prompted" }]);
+					let finalValue = value.trim();
+
+					// Apply transform if specified (e.g., strip "tempox" prefix from Tempo addresses)
+					if (action.transform === "strip_tempox" && finalValue.startsWith("tempox")) {
+						finalValue = finalValue.slice("tempox".length);
+					}
+
+					await saveSecrets([{ key: action.key, value: finalValue, source: "prompted" }]);
 					ui.success(`Saved ${action.key}`);
 					return true;
 				}

@@ -25,6 +25,7 @@ export const BUILTIN_TEMPLATES = [
 	"nextjs-clerk",
 	"nextjs-auth",
 	"telegram-bot",
+	"mpp-api",
 ];
 
 /**

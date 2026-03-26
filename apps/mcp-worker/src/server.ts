@@ -5,11 +5,19 @@ import { askProject } from "./tools/ask-project.ts";
 import { createDatabase, executeSql, listDatabases } from "./tools/database.ts";
 import { deploy } from "./tools/deploy-code.ts";
 import { testEndpoint } from "./tools/endpoint-test.ts";
+import { executeCode } from "./tools/execute-code.ts";
 import { getLogs } from "./tools/logs.ts";
 import { getProjectStatus, listProjects } from "./tools/projects.ts";
 import { rollbackProject } from "./tools/rollback.ts";
 import { listProjectFiles, listStagedChanges, readProjectFile, updateFile } from "./tools/source.ts";
 import type { Bindings } from "./types.ts";
+
+function requireAuth(token: string) {
+	if (!token) {
+		return err("VALIDATION_ERROR", "This tool requires a Jack Cloud account. Use execute_code for MPP-only access.");
+	}
+	return null;
+}
 
 export function createMcpServer(token: string, env: Bindings): McpServer {
 	const server = new McpServer({
@@ -97,6 +105,8 @@ Pass content=null to mark a file for deletion.`,
 				.describe("File content to write, or null to delete the file"),
 		},
 		async ({ project_id, path, content }) => {
+			const guard = requireAuth(token);
+			if (guard) return guard;
 			return updateFile(kv, project_id, path, content);
 		},
 	);
@@ -108,6 +118,8 @@ Pass content=null to mark a file for deletion.`,
 			project_id: z.string().describe("The project ID"),
 		},
 		async ({ project_id }) => {
+			const guard = requireAuth(token);
+			if (guard) return guard;
 			return listStagedChanges(kv, project_id);
 		},
 	);
@@ -288,6 +300,35 @@ Use after browse_deployed_source to inspect specific files before making changes
 		},
 		async ({ project_id, deployment_id }) => {
 			return rollbackProject(client, project_id, deployment_id);
+		},
+	);
+
+	server.tool(
+		"execute_code",
+		`Run JavaScript code in an isolated sandbox. Requires MPP payment ($0.01 per execution).
+
+No Jack account needed. Payment via Tempo stablecoins (USDC) using MPP. First call returns a payment challenge; respond with credential in _meta.
+
+Code must export a run() function:
+  export function run(input) { return { result: input.x + 1 }; }
+
+Limits: 50ms CPU, 500KB code, no outbound HTTP, no persistent state.`,
+		{
+			code: z
+				.string()
+				.describe("JavaScript code to execute (must export run(input))"),
+			input: z.unknown().optional().describe("Input passed to run()"),
+			language: z
+				.string()
+				.optional()
+				.describe("Language (only 'javascript')"),
+		},
+		async (params, extra) => {
+			return executeCode(
+				env,
+				params as { code: string; input?: unknown; language?: string },
+				extra as { _meta?: Record<string, unknown> },
+			);
 		},
 	);
 

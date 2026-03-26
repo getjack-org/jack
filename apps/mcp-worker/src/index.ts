@@ -1,3 +1,5 @@
+export { ComputeSession } from "./compute-session.ts";
+
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { AuthHandler } from "./auth-handler.ts";
@@ -121,6 +123,13 @@ export default new OAuthProvider({
 	tokenEndpoint: "/token",
 	clientRegistrationEndpoint: "/register",
 	async resolveExternalToken({ token }) {
+		// Allow MPP-only requests (no real auth -- execute_code handles payment itself)
+		if (token === "mpp") {
+			return {
+				props: { accessToken: "", refreshToken: "", userId: "", email: "" },
+			};
+		}
+
 		if (token.startsWith("jkt_")) {
 			return {
 				props: { accessToken: token, refreshToken: "", userId: "", email: "" },
