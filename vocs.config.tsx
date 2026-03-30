@@ -123,6 +123,7 @@ export default defineConfig({
 		{
 			text: "Guides",
 			items: [
+				{ text: "Compute", link: "/guides/compute" },
 				{ text: "OpenClaw / Claude Code", link: "/guides/openclaw" },
 				{ text: "AI & Vectorize Bindings", link: "/guides/ai-vectorize" },
 			{ text: "Durable Objects", link: "/guides/durable-objects" },

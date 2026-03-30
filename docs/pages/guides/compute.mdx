@@ -1,0 +1,78 @@
+# Compute
+
+Jack Cloud runs agent code in sandboxed V8 isolates. No account, no API key — agents pay per execution with USDC stablecoins via [MPP](https://mpp.dev).
+
+## Endpoint
+
+```
+POST https://mcp.getjack.org/execute
+```
+
+## Request
+
+```json
+{
+  "code": "export function run(input) { return { sum: input.a + input.b }; }",
+  "input": { "a": 2, "b": 3 }
+}
+```
+
+Code must export a `run(input)` function. Async functions work. Returns any JSON-serializable value.
+
+## Response
+
+```json
+{
+  "result": { "sum": 5 },
+  "duration_ms": 12,
+  "limits": { "cpu_ms_limit": 50 }
+}
+```
+
+## Limits
+
+| | |
+|---|---|
+| CPU | 50ms |
+| Code size | 500KB |
+| Outbound HTTP | Blocked |
+| Environment | Empty (no secrets, no bindings) |
+| Cost | $0.01 USDC per execution |
+
+## Payment flow
+
+1. Agent sends `POST /execute` with code
+2. Server returns HTTP 402 + `WWW-Authenticate` header (MPP challenge)
+3. Agent's payment client (tempo, mppx) pays $0.01 USDC on Tempo chain
+4. Request retried with payment credential
+5. Code executes, result returned with payment receipt
+
+## Try it
+
+```bash
+curl -L https://tempo.xyz/install | bash
+tempo add request
+tempo wallet login
+
+tempo request -t -X POST \
+  --json '{"code":"export function run(i) { return { sum: i.a + i.b } }","input":{"a":2,"b":3}}' \
+  https://mcp.getjack.org/execute
+```
+
+## Agent integration
+
+Point your agent at `https://docs.getjack.org/SKILL.md` for auto-discovery:
+
+```
+claude "Read https://docs.getjack.org/SKILL.md and compute fibonacci(20) on Jack Cloud"
+```
+
+## MCP transport
+
+MCP clients (Claude Code, Cursor) can also use the JSON-RPC endpoint:
+
+```
+POST https://mcp.getjack.org/mcp/public
+```
+
+Payment challenges use MCP error code `-32042` with the challenge in `error.data.challenges[]`.
