@@ -19,3 +19,14 @@ preview_id = "78f68a586bf74aba8fa1b1165fc8b3b3"
 [[rules]]
 type = "CompiledWasm"
 globs = ["**/*.wasm"]
+
+[[worker_loaders]]
+binding = "LOADER"
+
+[[durable_objects.bindings]]
+name = "COMPUTE_SESSION"
+class_name = "ComputeSession"
+
+[[migrations]]
+tag = "compute-session-v1"
+new_classes = ["ComputeSession"]

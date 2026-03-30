@@ -1,0 +1,100 @@
+{
+	"name": "mpp-api",
+	"description": "Paid AI API with machine payments (MPP + Tempo)",
+	"secrets": ["TEMPO_RECIPIENT", "MPP_SECRET_KEY"],
+	"capabilities": ["ai"],
+	"intent": {
+		"keywords": [
+			"mpp",
+			"payments",
+			"paid api",
+			"machine payments",
+			"tempo",
+			"stablecoin",
+			"monetize",
+			"ai proxy",
+			"402"
+		],
+		"examples": [
+			"paid AI API",
+			"monetized endpoint",
+			"API with machine payments",
+			"agent-payable service"
+		]
+	},
+	"agentContext": {
+		"summary": "A paid AI API using the Machine Payments Protocol (MPP). Agents pay per request with Tempo stablecoins — no accounts, no billing pages. Built on Hono with Cloudflare Workers AI.",
+		"full_text": "## Project Structure\n\n- `src/index.ts` - Hono API with MPP payment-gated AI endpoint\n- `src/jack-ai.ts` - Jack AI proxy wrapper (do not modify)\n- `wrangler.jsonc` - Cloudflare Workers configuration\n\n## How It Works\n\nThis API uses HTTP 402 (Payment Required) to gate access to AI endpoints. When an agent calls `/v1/chat/completions` without payment credentials, the server returns a 402 with payment instructions. The agent pays via the MPP protocol (Tempo stablecoins), then retries with proof of payment.\n\n### Payment Flow\n\n1. Agent sends `POST /v1/chat/completions` with messages\n2. Server returns HTTP 402 with `WWW-Authenticate` header containing payment details\n3. Agent authorizes payment (Tempo pathUSD stablecoin)\n4. Agent retries with `Authorization` header containing payment proof\n5. Server verifies payment, runs AI inference, returns response with `Payment-Receipt` header\n\n## API Endpoints\n\n- `GET /` - Service info and pricing (free)\n- `GET /health` - Health check (free)\n- `POST /v1/chat/completions` - AI chat completion ($0.01 per request, paid via MPP)\n\n### Chat Request\n```json\n{\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"What is the capital of France?\" }\n  ],\n  \"model\": \"@cf/meta/llama-3.3-70b-instruct-fp8-fast\"\n}\n```\n\n## Testing with mppx CLI\n\n```bash\nnpm i -g mppx\nmppx account create\nmppx POST https://your-app.runjack.xyz/v1/chat/completions -d '{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}'\n```\n\n## Environment Variables\n\n- `TEMPO_RECIPIENT` - Your Tempo wallet address for receiving payments\n\n## Pricing\n\nEdit the `amount` in `mppx.charge({ amount: '0.01' })` to change per-request pricing.\n\n## Resources\n\n- [MPP Protocol](https://mpp.dev)\n- [mppx SDK](https://github.com/wevm/mppx)\n- [Tempo Network](https://tempo.xyz)\n- [Workers AI Models](https://developers.cloudflare.com/workers-ai/models)"
+	},
+	"hooks": {
+		"preCreate": [
+			{
+				"action": "message",
+				"text": ""
+			},
+			{
+				"action": "message",
+				"text": "━━━ Machine Payments Setup ━━━"
+			},
+			{
+				"action": "message",
+				"text": ""
+			},
+			{
+				"action": "message",
+				"text": "This template creates a paid AI API using the Machine Payments Protocol."
+			},
+			{
+				"action": "message",
+				"text": "Agents pay per request with Tempo stablecoins — no accounts needed."
+			},
+			{
+				"action": "message",
+				"text": ""
+			},
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "TEMPO_RECIPIENT",
+				"message": "Tempo wallet address required to receive payments",
+				"setupUrl": "https://tempo.xyz",
+				"onMissing": "prompt",
+				"promptMessage": "Enter your Tempo wallet address (0x...):",
+			"transform": "strip_tempox"
+			},
+			{
+				"action": "require",
+				"source": "secret",
+				"key": "MPP_SECRET_KEY",
+				"message": "Generating MPP secret key for challenge verification...",
+				"onMissing": "generate",
+				"generateCommand": "openssl rand -hex 32"
+			}
+		],
+		"postDeploy": [
+			{
+				"action": "clipboard",
+				"text": "{{url}}",
+				"message": "API URL copied to clipboard"
+			},
+			{
+				"action": "shell",
+				"command": "curl -s {{url}}/health | head -c 200",
+				"message": "Testing health endpoint..."
+			},
+			{
+				"action": "box",
+				"title": "{{name}} — Paid AI API",
+				"lines": [
+					"{{url}}",
+					"",
+					"Payment: MPP + Tempo (pathUSD)",
+					"Price: $0.01 per chat request",
+					"",
+					"Test with: mppx POST {{url}}/v1/chat/completions",
+					"Install CLI: npm i -g mppx"
+				]
+			}
+		]
+	}
+}

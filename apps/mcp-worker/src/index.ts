@@ -1,3 +1,5 @@
+export { ComputeSession } from "./compute-session.ts";
+
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { AuthHandler } from "./auth-handler.ts";
@@ -113,7 +115,39 @@ const mcpHandler = {
 	},
 };
 
-export default new OAuthProvider({
+// Public MCP endpoint for MPP-only access (no OAuth required)
+// tempo request / mppx clients hit this without any auth token
+const publicMcpHandler: HandlerWithFetch = {
+	async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
+		if (request.method !== "POST") {
+			return Response.json(
+				{ jsonrpc: "2.0", error: { code: -32000, message: "Only POST is supported." }, id: null },
+				{ status: 405 },
+			);
+		}
+
+		// Set empty props — execute_code will handle payment via MPP
+		(ctx as ExecutionContext & { props: Props }).props = {
+			accessToken: "",
+			refreshToken: "",
+			userId: "",
+			email: "",
+		};
+
+		// Inject Accept header if missing — MPP/tempo clients don't send it
+		// but the MCP SDK transport requires it
+		const accept = request.headers.get("Accept") || "";
+		if (!accept.includes("application/json") || !accept.includes("text/event-stream")) {
+			const headers = new Headers(request.headers);
+			headers.set("Accept", "application/json, text/event-stream");
+			request = new Request(request, { headers });
+		}
+
+		return mcpHandler.fetch(request, env, ctx);
+	},
+};
+
+const oauthProvider = new OAuthProvider({
 	apiRoute: "/mcp",
 	apiHandler: mcpHandler as HandlerWithFetch,
 	defaultHandler: AuthHandler as unknown as HandlerWithFetch,
@@ -121,6 +155,13 @@ export default new OAuthProvider({
 	tokenEndpoint: "/token",
 	clientRegistrationEndpoint: "/register",
 	async resolveExternalToken({ token }) {
+		// Allow MPP-only requests (no real auth -- execute_code handles payment itself)
+		if (token === "mpp") {
+			return {
+				props: { accessToken: "", refreshToken: "", userId: "", email: "" },
+			};
+		}
+
 		if (token.startsWith("jkt_")) {
 			return {
 				props: { accessToken: token, refreshToken: "", userId: "", email: "" },
@@ -149,3 +190,90 @@ export default new OAuthProvider({
 		return null;
 	},
 });
+
+// Direct HTTP /execute endpoint — standard HTTP 402 + WWW-Authenticate
+// Works with tempo request, mppx, curl, any HTTP client
+async function handleHttpExecute(request: Request, env: Bindings): Promise<Response> {
+	if (request.method !== "POST") {
+		return Response.json({ error: "POST only" }, { status: 405 });
+	}
+
+	const { Mppx, tempo } = await import("mppx/server");
+
+	const mppx = Mppx.create({
+		secretKey: env.MPP_SECRET_KEY,
+		methods: [
+			tempo({
+				currency: "0x20c000000000000000000000b9537d11c60e8b50" as `0x${string}`,
+				recipient: env.TEMPO_RECIPIENT as `0x${string}`,
+			}),
+		],
+	});
+
+	let body: { code: string; input?: unknown };
+	try {
+		body = await request.clone().json();
+	} catch {
+		return Response.json({ error: "Invalid JSON" }, { status: 400 });
+	}
+
+	if (!body.code || typeof body.code !== "string") {
+		return Response.json({ error: "code field required" }, { status: 400 });
+	}
+
+	if (new TextEncoder().encode(body.code).byteLength > 500 * 1024) {
+		return Response.json({ error: "Code exceeds 500KB limit" }, { status: 413 });
+	}
+
+	const payment = await mppx.charge({ amount: "0.01" })(request);
+
+	if (payment.status === 402) {
+		return payment.challenge;
+	}
+
+	const wrappedCode = `
+import { WorkerEntrypoint } from "cloudflare:workers";
+const __mod = await import("./user-code.js");
+const __run = __mod.run || __mod.default?.run || __mod.default;
+export default class extends WorkerEntrypoint {
+  async run(input) {
+    if (typeof __run !== "function") throw new Error("Code must export a run(input) function");
+    return __run(input);
+  }
+}`;
+
+	const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body.code));
+	const workerId = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+	const startTime = Date.now();
+	try {
+		const worker = await env.LOADER.get(workerId, async () => ({
+			mainModule: "agent.js",
+			modules: { "agent.js": wrappedCode, "user-code.js": body.code },
+			compatibilityDate: "2026-03-01",
+			compatibilityFlags: ["nodejs_compat"],
+			env: {},
+			globalOutbound: null,
+		}));
+
+		const result = await worker.getEntrypoint().run(body.input ?? {});
+		return payment.withReceipt(Response.json({ result, duration_ms: Date.now() - startTime }));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Execution failed";
+		return payment.withReceipt(Response.json({ error: message }, { status: 502 }));
+	}
+}
+
+// Route: /execute for HTTP clients, /mcp/public for MCP clients, everything else through OAuth
+export default {
+	async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
+		const url = new URL(request.url);
+		if (url.pathname === "/execute") {
+			return handleHttpExecute(request, env);
+		}
+		if (url.pathname === "/mcp/public") {
+			return publicMcpHandler.fetch(request, env, ctx);
+		}
+		return oauthProvider.fetch(request, env, ctx);
+	},
+} satisfies ExportedHandler<Bindings>;
