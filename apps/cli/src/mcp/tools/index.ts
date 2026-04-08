@@ -2,7 +2,11 @@ import type { Server as McpServer } from "@modelcontextprotocol/sdk/server/index
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { authFetch } from "../../lib/auth/index.ts";
-import { getControlApiUrl, startLogSession } from "../../lib/control-plane.ts";
+import {
+	fetchProjectOverview,
+	getControlApiUrl,
+	startLogSession,
+} from "../../lib/control-plane.ts";
 import { JackError, JackErrorCode } from "../../lib/errors.ts";
 import { getDeployMode, getProjectId } from "../../lib/project-link.ts";
 import { createProject, deployProject, getProjectStatus } from "../../lib/project-operations.ts";
@@ -41,6 +45,31 @@ import { listVectorizeIndexes } from "../../lib/services/vectorize-list.ts";
 import { Events, track, withTelemetry } from "../../lib/telemetry.ts";
 import type { DebugLogger, McpServerOptions } from "../types.ts";
 import { formatErrorResponse, formatSuccessResponse } from "../utils.ts";
+
+/**
+ * Poll control plane until a deployment reaches a terminal status.
+ * Used by the deploy_project tool to return final status instead of "building".
+ */
+async function pollDeploymentStatus(
+	projectId: string,
+	deploymentId: string,
+	maxAttempts = 60,
+	intervalMs = 3000,
+): Promise<{ status: string; error_message: string | null } | null> {
+	for (let i = 0; i < maxAttempts; i++) {
+		await new Promise((r) => setTimeout(r, intervalMs));
+		try {
+			const overview = await fetchProjectOverview(projectId);
+			const dep = overview.latest_deployment;
+			if (dep?.id === deploymentId && (dep.status === "live" || dep.status === "failed")) {
+				return { status: dep.status, error_message: dep.error_message ?? null };
+			}
+		} catch {
+			// Network blip — keep polling
+		}
+	}
+	return null;
+}
 
 // Tool schemas
 const CreateProjectSchema = z.object({
@@ -1037,6 +1066,23 @@ export function registerTools(server: McpServer, _options: McpServerOptions, deb
 					);
 
 					const result = await wrappedDeployProject(args.project_path, args.message);
+
+					// For managed deploys, poll until final status
+					if (
+						result.deploymentId &&
+						result.deployMode === "managed" &&
+						result.deployStatus !== "live" &&
+						result.deployStatus !== "failed"
+					) {
+						const projectId = await getProjectId(args.project_path ?? process.cwd());
+						if (projectId) {
+							const final = await pollDeploymentStatus(projectId, result.deploymentId);
+							if (final) {
+								result.deployStatus = final.status;
+								result.errorMessage = final.error_message;
+							}
+						}
+					}
 
 					return {
 						content: [

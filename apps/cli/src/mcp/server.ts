@@ -1,6 +1,7 @@
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import pkg from "../../package.json" with { type: "json" };
+import { startChannelLogSubscriber } from "./channel/log-subscriber.ts";
 import { registerResources } from "./resources/index.ts";
 import { registerTools } from "./tools/index.ts";
 import type { McpServerOptions } from "./types.ts";
@@ -19,6 +20,20 @@ export function createDebugLogger(enabled: boolean) {
 	};
 }
 
+const CHANNEL_INSTRUCTIONS = `Events from the jack channel are production alerts from your deployed project.
+They arrive as <channel source="jack" event="..." ...> tags.
+
+- event="error": A request to your deployed app hit an error. Read the error message,
+  find the relevant source code, and suggest a fix. Use tail_logs to check if it's
+  recurring. Use test_endpoint to reproduce if possible.
+- event="exception": An uncaught exception in your deployed code. Check the source,
+  understand the cause, and suggest a fix.
+- outcome="exceededCpu" / "exceededMemory" / "exceededWallTime": A resource limit was hit.
+  Suggest code optimization rather than looking for bugs.
+
+If you see the same error repeatedly, diagnose it once and note the frequency.
+Do NOT redeploy automatically. Present the fix and let the user decide.`;
+
 export async function createMcpServer(options: McpServerOptions = {}) {
 	const debug = createDebugLogger(options.debug ?? false);
 
@@ -33,7 +48,9 @@ export async function createMcpServer(options: McpServerOptions = {}) {
 			capabilities: {
 				tools: {},
 				resources: {},
+				experimental: { "claude/channel": {} },
 			},
+			instructions: CHANNEL_INSTRUCTIONS,
 		},
 	);
 
@@ -92,6 +109,11 @@ export async function startMcpServer(options: McpServerOptions = {}) {
 	);
 
 	await server.connect(transport);
+
+	// Start channel log subscriber for production error streaming (fire-and-forget)
+	startChannelLogSubscriber(server, options, debug).catch((err) =>
+		debug("Channel log subscriber failed to start", { error: String(err) }),
+	);
 
 	debug("MCP server connected and ready");
 
