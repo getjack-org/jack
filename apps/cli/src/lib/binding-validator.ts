@@ -7,7 +7,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { validateManagedAssetsConfigInput } from "@getjack/managed-deploy";
+import { validateManagedAssetsConfigInput } from "./managed-manifest.ts";
 import type { WranglerConfig } from "./build-helper.ts";
 
 /**

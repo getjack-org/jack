@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { $ } from "bun";
-import type { ManagedAssetsConfigInput } from "@getjack/managed-deploy";
+import type { ManagedAssetsConfigInput } from "./managed-manifest.ts";
 import { JackError, JackErrorCode } from "./errors.ts";
 import { parseJsonc } from "./jsonc.ts";
 import type { OperationReporter } from "./project-operations.ts";

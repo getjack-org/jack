@@ -11,7 +11,7 @@ import {
 	normalizeManagedAssetsBinding,
 	validateManagedAssetsConfigInput,
 	validateManagedDeploymentManifest,
-} from "@getjack/managed-deploy";
+} from "./managed-manifest.ts";
 import { type AssetManifest, computeAssetHash } from "./asset-hash.ts";
 import type { BuildOutput, WranglerConfig } from "./build-helper.ts";
 import { debug } from "./debug.ts";
