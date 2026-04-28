@@ -127,10 +127,11 @@ async function downloadOne(
 	await mkdir(dirname(target), { recursive: true });
 
 	const res = await authFetch(`${getControlApiUrl()}${obj.download_path}`);
-	if (!res.ok || !res.body) {
+	if (!res.ok) {
 		throw new Error(`Download failed for ${obj.key}: ${res.status}`);
 	}
 
-	await Bun.write(target, res);
+	const body = await res.arrayBuffer();
+	await Bun.write(target, body);
 	return obj.size;
 }
