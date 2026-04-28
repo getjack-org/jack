@@ -247,6 +247,22 @@ export interface DatabaseExportResponse {
 	expires_in: number;
 }
 
+export interface StorageExportObject {
+	key: string;
+	size: number;
+	etag: string | null;
+	last_modified: string | null;
+	download_path: string;
+}
+
+export interface StorageExportPage {
+	bucket: string;
+	objects: StorageExportObject[];
+	next_cursor: string | null;
+	truncated: boolean;
+	total_listed: number;
+}
+
 export interface ExecuteSqlResponse {
 	success: boolean;
 	results: unknown[];
@@ -326,6 +342,39 @@ export async function exportManagedDatabase(projectId: string): Promise<Database
 	}
 
 	return response.json() as Promise<DatabaseExportResponse>;
+}
+
+/**
+ * Fetch one page of objects (with presigned download URLs) from a managed project's R2 bucket.
+ */
+export async function fetchStorageExportPage(
+	projectId: string,
+	bucketName: string,
+	cursor?: string,
+	limit?: number,
+): Promise<StorageExportPage> {
+	const { authFetch } = await import("./auth/index.ts");
+
+	const params = new URLSearchParams();
+	if (cursor) params.set("cursor", cursor);
+	if (limit) params.set("limit", String(limit));
+	const qs = params.toString();
+	const url = `${getControlApiUrl()}/v1/projects/${encodeURIComponent(projectId)}/storage/${encodeURIComponent(bucketName)}/export${qs ? `?${qs}` : ""}`;
+
+	const response = await authFetch(url);
+
+	if (!response.ok) {
+		if (response.status === 404) {
+			const body = (await response.json().catch(() => ({}))) as { message?: string };
+			throw new Error(body.message || "Project or bucket not found");
+		}
+		const err = (await response.json().catch(() => ({ message: "Unknown error" }))) as {
+			message?: string;
+		};
+		throw new Error(err.message || `Failed to list bucket objects: ${response.status}`);
+	}
+
+	return response.json() as Promise<StorageExportPage>;
 }
 
 /**

@@ -609,6 +609,57 @@ export class CloudflareClient {
 		}
 	}
 
+	async listR2Objects(
+		bucket: string,
+		cursor?: string,
+		limit = 500,
+	): Promise<{
+		objects: Array<{
+			key: string;
+			size: number;
+			etag: string | null;
+			last_modified: string | null;
+		}>;
+		next_cursor: string | null;
+		truncated: boolean;
+	}> {
+		const params = new URLSearchParams();
+		params.set("per_page", String(limit));
+		if (cursor) params.set("cursor", cursor);
+		const url = `${this.baseUrl}/accounts/${this.accountId}/r2/buckets/${encodeURIComponent(bucket)}/objects?${params.toString()}`;
+
+		const res = await fetch(url, {
+			headers: { Authorization: `Bearer ${this.apiToken}` },
+		});
+		if (!res.ok) {
+			const body = await res.text();
+			throw new Error(`R2 list failed (${res.status}): ${body.slice(0, 500)}`);
+		}
+		const data = (await res.json()) as {
+			result?: Array<{ key: string; size: number; etag?: string; last_modified?: string }>;
+			result_info?: { cursor?: string; is_truncated?: boolean };
+		};
+		const objects = (data.result ?? []).map((o) => ({
+			key: o.key,
+			size: o.size ?? 0,
+			etag: o.etag ?? null,
+			last_modified: o.last_modified ?? null,
+		}));
+		const next = data.result_info?.cursor;
+		return {
+			objects,
+			next_cursor: data.result_info?.is_truncated && next ? next : null,
+			truncated: !!data.result_info?.is_truncated,
+		};
+	}
+
+	async getR2Object(bucket: string, key: string): Promise<Response> {
+		const url = `${this.baseUrl}/accounts/${this.accountId}/r2/buckets/${encodeURIComponent(bucket)}/objects/${encodeURIComponent(key)}`;
+		return fetch(url, {
+			headers: { Authorization: `Bearer ${this.apiToken}` },
+		});
+	}
+
 	/**
 	 * Uploads a worker script to a dispatch namespace
 	 * @param namespace - The dispatch namespace name

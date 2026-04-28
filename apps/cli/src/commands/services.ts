@@ -224,7 +224,15 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 			if (!jsonOutput) outputSpinner.stop();
 
 			if (jsonOutput) {
-				console.log(JSON.stringify({ name: dbInfo.name, id: dbInfo.id, sizeBytes: dbInfo.sizeBytes, numTables: dbInfo.numTables, source: "managed" }));
+				console.log(
+					JSON.stringify({
+						name: dbInfo.name,
+						id: dbInfo.id,
+						sizeBytes: dbInfo.sizeBytes,
+						numTables: dbInfo.numTables,
+						source: "managed",
+					}),
+				);
 				return;
 			}
 
@@ -240,9 +248,10 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 		} catch (err) {
 			if (!jsonOutput) outputSpinner.stop();
 			if (jsonOutput) {
-				const msg = err instanceof Error && err.message.includes("No database found")
-					? "No database configured. Run 'jack services db create' to create one."
-					: `Failed to fetch database info: ${err instanceof Error ? err.message : String(err)}`;
+				const msg =
+					err instanceof Error && err.message.includes("No database found")
+						? "No database configured. Run 'jack services db create' to create one."
+						: `Failed to fetch database info: ${err instanceof Error ? err.message : String(err)}`;
 				console.log(JSON.stringify({ success: false, error: msg }));
 				process.exit(1);
 			}
@@ -291,7 +300,15 @@ async function dbInfo(options: ServiceOptions): Promise<void> {
 	}
 
 	if (jsonOutput) {
-		console.log(JSON.stringify({ name: wranglerDbInfo.name, id: dbInfo.id || wranglerDbInfo.id, sizeBytes: wranglerDbInfo.sizeBytes, numTables: wranglerDbInfo.numTables, source: "byo" }));
+		console.log(
+			JSON.stringify({
+				name: wranglerDbInfo.name,
+				id: dbInfo.id || wranglerDbInfo.id,
+				sizeBytes: wranglerDbInfo.sizeBytes,
+				numTables: wranglerDbInfo.numTables,
+				source: "byo",
+			}),
+		);
 		return;
 	}
 
@@ -901,7 +918,9 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 			});
 
 			if (jsonOutput) {
-				console.log(JSON.stringify({ success: false, error: result.error || "SQL execution failed" }));
+				console.log(
+					JSON.stringify({ success: false, error: result.error || "SQL execution failed" }),
+				);
 				process.exit(1);
 			}
 
@@ -921,13 +940,15 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 
 		// JSON output mode — structured result for agents
 		if (jsonOutput) {
-			console.log(JSON.stringify({
-				success: true,
-				results: result.results ?? [],
-				meta: result.meta,
-				risk: result.risk,
-				warning: result.warning,
-			}));
+			console.log(
+				JSON.stringify({
+					success: true,
+					results: result.results ?? [],
+					meta: result.meta,
+					risk: result.risk,
+					warning: result.warning,
+				}),
+			);
 			return;
 		}
 
@@ -965,7 +986,9 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 			});
 
 			if (jsonOutput) {
-				console.log(JSON.stringify({ success: false, error: err.message, suggestion: "Add --write flag" }));
+				console.log(
+					JSON.stringify({ success: false, error: err.message, suggestion: "Add --write flag" }),
+				);
 				process.exit(1);
 			}
 
@@ -985,7 +1008,13 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 			});
 
 			if (jsonOutput) {
-				console.log(JSON.stringify({ success: false, error: err.message, suggestion: "Destructive operations require confirmation via CLI" }));
+				console.log(
+					JSON.stringify({
+						success: false,
+						error: err.message,
+						suggestion: "Destructive operations require confirmation via CLI",
+					}),
+				);
 				process.exit(1);
 			}
 
@@ -1002,7 +1031,9 @@ async function dbExecute(args: string[], options: ServiceOptions): Promise<void>
 		});
 
 		if (jsonOutput) {
-			console.log(JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }));
+			console.log(
+				JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }),
+			);
 			process.exit(1);
 		}
 
@@ -1025,6 +1056,7 @@ function showStorageHelp(): void {
 	console.error("  info [name]    Show bucket information (default)");
 	console.error("  create         Create a new storage bucket");
 	console.error("  list           List all storage buckets in the project");
+	console.error("  export <name>  Download all objects from a bucket (managed only)");
 	console.error("  delete <name>  Delete a storage bucket");
 	console.error("");
 	console.error("Examples:");
@@ -1033,6 +1065,9 @@ function showStorageHelp(): void {
 	);
 	console.error("  jack services storage create                  Create a new storage bucket");
 	console.error("  jack services storage list                    List all storage buckets");
+	console.error(
+		"  jack services storage export my-bucket        Export bucket contents to ./my-bucket-export/",
+	);
 	console.error("  jack services storage delete my-bucket        Delete a bucket");
 	console.error("");
 }
@@ -1051,11 +1086,13 @@ async function storageCommand(args: string[], options: ServiceOptions): Promise<
 			return await storageCreate(args.slice(1), options);
 		case "list":
 			return await storageList(options);
+		case "export":
+			return await storageExport(args.slice(1), options);
 		case "delete":
 			return await storageDelete(args.slice(1), options);
 		default:
 			error(`Unknown action: ${action}`);
-			info("Available: info, create, list, delete");
+			info("Available: info, create, list, export, delete");
 			process.exit(1);
 	}
 }
@@ -1186,6 +1223,107 @@ async function storageList(options: ServiceOptions): Promise<void> {
 		outputSpinner.stop();
 		console.error("");
 		error(`Failed to list storage buckets: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * Export all objects from a storage bucket to a local directory (managed only)
+ */
+async function storageExport(args: string[], options: ServiceOptions): Promise<void> {
+	const jsonOutput = options.json ?? false;
+	const projectDir = process.cwd();
+	const link = await readProjectLink(projectDir);
+
+	if (link?.deploy_mode !== "managed") {
+		if (jsonOutput) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: "storage export is only supported for managed projects (jack cloud)",
+				}),
+			);
+			process.exit(1);
+		}
+		console.error("");
+		error("storage export is only supported for managed projects (jack cloud)");
+		info("For BYO Cloudflare projects, use: wrangler r2 object get / list");
+		console.error("");
+		process.exit(1);
+	}
+
+	const requestedBucket = parseNameFlag(args);
+	let bucketName = requestedBucket;
+	if (!bucketName) {
+		const bucketInfo = await getStorageBucketInfo(projectDir);
+		bucketName = bucketInfo?.name;
+	}
+
+	if (!bucketName) {
+		if (jsonOutput) {
+			console.log(JSON.stringify({ success: false, error: "Bucket name required" }));
+			process.exit(1);
+		}
+		console.error("");
+		error("Bucket name required");
+		info("Usage: jack services storage export <bucket-name>");
+		info("Or run from a project directory with one bucket configured");
+		console.error("");
+		process.exit(1);
+	}
+
+	const { exportStorageBucket } = await import("../lib/services/storage-export.ts");
+
+	if (!jsonOutput) outputSpinner.start(`Exporting bucket '${bucketName}'...`);
+	try {
+		const result = await exportStorageBucket(projectDir, bucketName, {
+			progress: jsonOutput
+				? undefined
+				: {
+						onPage: (i, n, cum) =>
+							outputSpinner.start(
+								`Page ${i + 1}: ${n} object${n === 1 ? "" : "s"} (downloaded so far: ${cum})`,
+							),
+						onObject: (key, done) => outputSpinner.start(`Downloaded ${done} (last: ${key})`),
+					},
+		});
+
+		if (!jsonOutput) outputSpinner.stop();
+
+		if (jsonOutput) {
+			console.log(
+				JSON.stringify({
+					success: true,
+					bucket: result.bucket,
+					outputDir: result.outputDir,
+					objectsDownloaded: result.objectsDownloaded,
+					skippedDirMarkers: result.skippedDirMarkers,
+					totalBytes: result.totalBytes,
+				}),
+			);
+			return;
+		}
+
+		console.error("");
+		success(
+			`Exported ${result.objectsDownloaded} object${result.objectsDownloaded === 1 ? "" : "s"} (${formatSize(result.totalBytes)}) to ${result.outputDir}`,
+		);
+		if (result.skippedDirMarkers > 0) {
+			item(
+				`Skipped ${result.skippedDirMarkers} directory marker${result.skippedDirMarkers === 1 ? "" : "s"} (zero-byte keys ending in /)`,
+			);
+		}
+		console.error("");
+	} catch (err) {
+		if (!jsonOutput) outputSpinner.stop();
+		const message = err instanceof Error ? err.message : String(err);
+		if (jsonOutput) {
+			console.log(JSON.stringify({ success: false, error: message }));
+			process.exit(1);
+		}
+		console.error("");
+		error(`Export failed: ${message}`);
+		console.error("");
 		process.exit(1);
 	}
 }

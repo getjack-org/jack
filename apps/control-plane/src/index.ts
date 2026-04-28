@@ -1512,29 +1512,22 @@ api.get("/projects/:projectId/overview", async (c) => {
 					transcript_provider: (latestDep.transcript_provider as string | null) ?? null,
 					transcript_provider_session_id:
 						(latestDep.transcript_provider_session_id as string | null) ?? null,
-					transcript_schema_version:
-						(latestDep.transcript_schema_version as string | null) ?? null,
+					transcript_schema_version: (latestDep.transcript_schema_version as string | null) ?? null,
 					transcript_turn_count: (latestDep.transcript_turn_count as number | null) ?? 0,
-					transcript_user_turn_count:
-						(latestDep.transcript_user_turn_count as number | null) ?? 0,
+					transcript_user_turn_count: (latestDep.transcript_user_turn_count as number | null) ?? 0,
 					transcript_assistant_turn_count:
 						(latestDep.transcript_assistant_turn_count as number | null) ?? 0,
 					transcript_event_count: (latestDep.transcript_event_count as number | null) ?? 0,
 					transcript_message_count: (latestDep.transcript_message_count as number | null) ?? 0,
-					transcript_tool_call_count:
-						(latestDep.transcript_tool_call_count as number | null) ?? 0,
+					transcript_tool_call_count: (latestDep.transcript_tool_call_count as number | null) ?? 0,
 					transcript_tool_result_count:
 						(latestDep.transcript_tool_result_count as number | null) ?? 0,
-					transcript_reasoning_count:
-						(latestDep.transcript_reasoning_count as number | null) ?? 0,
+					transcript_reasoning_count: (latestDep.transcript_reasoning_count as number | null) ?? 0,
 					transcript_other_event_count:
 						(latestDep.transcript_other_event_count as number | null) ?? 0,
-					transcript_first_turn_at:
-						(latestDep.transcript_first_turn_at as string | null) ?? null,
-					transcript_last_turn_at:
-						(latestDep.transcript_last_turn_at as string | null) ?? null,
-					has_raw_session_transcript:
-						(latestDep.has_raw_session_transcript as number | null) ?? 0,
+					transcript_first_turn_at: (latestDep.transcript_first_turn_at as string | null) ?? null,
+					transcript_last_turn_at: (latestDep.transcript_last_turn_at as string | null) ?? null,
+					has_raw_session_transcript: (latestDep.has_raw_session_transcript as number | null) ?? 0,
 				}),
 				created_at: d1DatetimeToIso(latestDep.created_at as string),
 				updated_at: d1DatetimeToIso(latestDep.updated_at as string),
@@ -2825,6 +2818,102 @@ api.get("/projects/:projectId/database/export", async (c) => {
 	}
 });
 
+async function authorizeBucketAccess(
+	db: D1Database,
+	userId: string,
+	projectId: string,
+	bucketName: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+	const project = await db
+		.prepare("SELECT id, org_id FROM projects WHERE id = ? AND status != 'deleted'")
+		.bind(projectId)
+		.first<{ id: string; org_id: string }>();
+	if (!project) return { ok: false, message: "Project not found" };
+
+	const membership = await db
+		.prepare("SELECT 1 FROM org_memberships WHERE org_id = ? AND user_id = ?")
+		.bind(project.org_id, userId)
+		.first();
+	if (!membership) return { ok: false, message: "Project not found" };
+
+	const r2Resource = await db
+		.prepare(
+			"SELECT resource_name FROM resources WHERE project_id = ? AND resource_type = 'r2' AND resource_name = ? AND status != 'deleted'",
+		)
+		.bind(projectId, bucketName)
+		.first<{ resource_name: string }>();
+	if (!r2Resource) return { ok: false, message: "Bucket not found for project" };
+
+	return { ok: true };
+}
+
+// R2 storage export — lists objects via Cloudflare REST API.
+api.get("/projects/:projectId/storage/:bucketName/export", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const bucketName = c.req.param("bucketName");
+	const cursor = c.req.query("cursor") || undefined;
+	const limitRaw = c.req.query("limit");
+	const limit = Math.min(Math.max(Number.parseInt(limitRaw || "500", 10) || 500, 1), 1000);
+
+	const access = await authorizeBucketAccess(c.env.DB, auth.userId, projectId, bucketName);
+	if (!access.ok) return c.json({ error: "not_found", message: access.message }, 404);
+
+	try {
+		const cf = new CloudflareClient(c.env);
+		const list = await cf.listR2Objects(bucketName, cursor, limit);
+		const pidEnc = encodeURIComponent(projectId);
+		const bEnc = encodeURIComponent(bucketName);
+		const objects = list.objects.map((o) => ({
+			...o,
+			download_path: `/v1/projects/${pidEnc}/storage/${bEnc}/object?key=${encodeURIComponent(o.key)}`,
+		}));
+		return c.json({
+			bucket: bucketName,
+			objects,
+			next_cursor: list.next_cursor,
+			truncated: list.truncated,
+			total_listed: objects.length,
+		});
+	} catch (err) {
+		const message = err instanceof Error ? err.message : "Export failed";
+		return c.json({ error: "list_failed", message }, 500);
+	}
+});
+
+// R2 storage download — streams a single object through the worker.
+api.get("/projects/:projectId/storage/:bucketName/object", async (c) => {
+	const auth = c.get("auth");
+	const projectId = c.req.param("projectId");
+	const bucketName = c.req.param("bucketName");
+	const key = c.req.query("key");
+	if (!key) return c.json({ error: "missing_key", message: "key query param required" }, 400);
+
+	const access = await authorizeBucketAccess(c.env.DB, auth.userId, projectId, bucketName);
+	if (!access.ok) return c.json({ error: "not_found", message: access.message }, 404);
+
+	try {
+		const cf = new CloudflareClient(c.env);
+		const upstream = await cf.getR2Object(bucketName, key);
+		if (!upstream.ok) {
+			const body = await upstream.text();
+			return c.json(
+				{ error: "download_failed", message: body.slice(0, 500) },
+				upstream.status === 404 ? 404 : 502,
+			);
+		}
+		const headers = new Headers();
+		const ct = upstream.headers.get("content-type");
+		if (ct) headers.set("content-type", ct);
+		const cl = upstream.headers.get("content-length");
+		if (cl) headers.set("content-length", cl);
+		return new Response(upstream.body, { status: 200, headers });
+	} catch (err) {
+		const message = err instanceof Error ? err.message : "Download failed";
+		return c.json({ error: "download_failed", message }, 500);
+	}
+});
+
 // =====================================================
 // Cron Schedule Endpoints
 // =====================================================
@@ -4056,7 +4145,10 @@ api.put("/projects/:projectId/deployments/:deploymentId/session-transcript", asy
 		if (payload.schema_version !== "jack.transcript-upload.v1") {
 			return c.json({ error: "invalid_request", message: "Unsupported schema_version" }, 400);
 		}
-		if (payload.canonical_format !== "jack.turn.v1" && payload.canonical_format !== "jack.event.v1") {
+		if (
+			payload.canonical_format !== "jack.turn.v1" &&
+			payload.canonical_format !== "jack.event.v1"
+		) {
 			return c.json({ error: "invalid_request", message: "Unsupported canonical_format" }, 400);
 		}
 		if (!payload.provider || typeof payload.provider !== "string") {
