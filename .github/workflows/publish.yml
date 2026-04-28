@@ -66,6 +66,10 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # Pin npm to a version that supports OIDC trusted publishing (added in 11.5.1)
+      # but predates the npm@latest self-install MODULE_NOT_FOUND bug.
+      - run: npm install -g npm@11.12.1
+
       - name: Publish CLI to npm
         working-directory: apps/cli
         run: npm publish --provenance --access public
